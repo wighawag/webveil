@@ -8,6 +8,7 @@
 import type {Config} from '../config.js';
 import type {Backend} from './types.js';
 import {createSearxngBackend} from './searxng.js';
+import {createTavilyCompatBackend} from './tavily-compat.js';
 
 /** Builds a Backend from the resolved config (knows its baseUrl / apiKey). */
 export type BackendFactory = (config: Config) => Backend;
@@ -15,6 +16,7 @@ export type BackendFactory = (config: Config) => Backend;
 /** name -> factory. New backends add an entry here. */
 const FACTORIES: Record<string, BackendFactory> = {
 	searxng: createSearxngBackend,
+	'tavily-compat': createTavilyCompatBackend,
 };
 
 /** The backend names the registry can resolve. */

@@ -3,7 +3,7 @@ title: Core foundation — config resolution, egress dispatcher + egress-bound f
 slug: core-foundation-config-egress-http
 prd: webveil-tool-and-pi-extension
 blockedBy: []
-covers: [4, 9, 10]
+covers: [2, 3, 4, 9, 10]
 ---
 
 ## What to build

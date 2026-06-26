@@ -2,7 +2,7 @@
 title: Custom local-command backend (JSON stdin/stdout contract)
 slug: backend-custom
 prd: webveil-tool-and-pi-extension
-blockedBy: [core-foundation-config-egress-http, backend-searxng]
+blockedBy: [core-foundation-config-egress-http, backend-searxng, backend-tavily-compat]
 covers: [8]
 ---
 
@@ -16,8 +16,8 @@ which round-trips the JSON stdin/stdout contract with a configured command and r
 
 ## Acceptance criteria
 
-- [ ] The registry resolves `'custom'` to this backend (registration file-orthogonal to
-      the tavily-compat one).
+- [ ] The registry resolves `'custom'` to this backend (registration appended to the
+      shared `registry`, AFTER the tavily-compat one to avoid a same-file conflict).
 - [ ] The backend spawns the configured command, writes the request JSON to stdin, and
       parses the response JSON from stdout into `SearchResult[]`.
 - [ ] Malformed command output fails clearly (does not silently return empty).
@@ -28,6 +28,8 @@ which round-trips the JSON stdin/stdout contract with a configured command and r
 
 - `core-foundation-config-egress-http` — needs the `Backend` interface.
 - `backend-searxng` — serialized because both edit the shared `registry`.
+- `backend-tavily-compat` — also edits the shared `registry`; serialized after it so the
+  two registrations cannot collide on the same file.
 
 ## Prompt
 

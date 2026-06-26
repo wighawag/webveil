@@ -3,7 +3,7 @@ title: Extractor seam — urlToMarkdown via distilly/fetch with injected egress 
 slug: extractor-distilly-fetch
 prd: webveil-tool-and-pi-extension
 blockedBy: [core-foundation-config-egress-http]
-covers: [11]
+covers: [11, 14]
 ---
 
 ## What to build

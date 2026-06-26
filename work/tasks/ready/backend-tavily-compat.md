@@ -17,8 +17,9 @@ override the distilly Extractor for fetch.
 
 ## Acceptance criteria
 
-- [ ] The registry resolves `'tavily-compat'` to this backend (registration added
-      alongside searxng's, file-orthogonal to the custom backend).
+- [ ] The registry resolves `'tavily-compat'` to this backend (registration appended to
+      the shared `registry` after searxng's; `backend-custom` is serialized AFTER this
+      task so the two cannot collide on the same file).
 - [ ] The backend parses a Tavily-shaped `/search` response into `SearchResult[]`.
 - [ ] The backend exposes `/extract` as the optional `Backend.fetch` (used later to
       override the distilly Extractor).

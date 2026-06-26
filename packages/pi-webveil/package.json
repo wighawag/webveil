@@ -11,6 +11,16 @@
 		"ollama",
 		"anonymous"
 	],
+	"author": "wighawag",
+	"homepage": "https://github.com/wighawag/webveil/tree/main/packages/pi-webveil#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/wighawag/webveil.git",
+		"directory": "packages/pi-webveil"
+	},
+	"bugs": {
+		"url": "https://github.com/wighawag/webveil/issues"
+	},
 	"publishConfig": {
 		"access": "public"
 	},
@@ -43,6 +53,7 @@
 	"scripts": {
 		"build": "tsc",
 		"dev": "as-soon -w src pnpm build",
+		"prepack": "node ../../scripts/copy-publish-assets.mjs",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	}

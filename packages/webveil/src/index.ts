@@ -5,8 +5,10 @@
 //   - core/egress.ts            : egress seam (direct | http | socks5/Tor) — dispatcher + egress fetch
 //   - core/http.ts              : the proxied `http` helper handed to backends
 //   - core/backends/types.ts    : backend seam (the Backend interface + result shapes)
+//   - core/backends/registry.ts : name -> Backend dispatcher
+//   - core/backends/searxng.ts  : the keyless self-hosted SearXNG backend
 // Still-placeholder (built by later tasks): core/search.ts, core/fetch.ts,
-//   core/backends/*, core/extract.ts, cli.ts.
+//   core/backends/{tavily-compat,custom}.ts, core/extract.ts, cli.ts.
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
 
@@ -31,7 +33,7 @@ export type {Dispatcher, EgressFetch} from './core/egress.js';
 // http helper
 export {createHttp} from './core/http.js';
 
-// backend seam (the contract + result types; consumed by no backend yet)
+// backend seam (the contract + result types)
 export type {
 	Backend,
 	Http,
@@ -41,6 +43,11 @@ export type {
 	SearchOptions,
 	FetchOptions,
 } from './core/backends/types.js';
+
+// backend registry + implementations
+export {backendNames, getBackend} from './core/backends/registry.js';
+export type {BackendFactory} from './core/backends/registry.js';
+export {createSearxngBackend} from './core/backends/searxng.js';
 
 import type {
 	SearchResult,

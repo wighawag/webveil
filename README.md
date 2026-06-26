@@ -51,8 +51,67 @@ Then `webveil search "…"` / `web_fetch` work with no config.
 >
 > or set `baseUrl` in `.pi/webveil.json` (see config seam below).
 
-Full SearXNG install options (Docker, Compose, bare-metal): the official docs at
-<https://docs.searxng.org/admin/installation.html>.
+### Other SearXNG install options
+
+webveil only needs an **HTTP `host:port`** to point `baseUrl` at. How you get one:
+
+- **Docker (above)** — binds a real TCP port directly; simplest if you only need webveil.
+- **Install script as a background service** (`sudo -H ./utils/searxng.sh install all`,
+  see <https://docs.searxng.org/admin/installation-scripts.html>) — sets SearXNG up as a
+  systemd/uWSGI service. **Gotcha:** by default this listens on a **Unix socket**
+  (`socket = /usr/local/searxng/run/socket`), NOT a TCP port — so webveil cannot reach it
+  directly (undici/`fetch` speak TCP, not socket files). Two ways to give it a port:
+  - **Front it with a reverse proxy** (this is what the SearXNG docs' nginx/apache step is
+    for — it bridges HTTP-on-a-port to the uWSGI socket, serving BOTH the browser UI and
+    webveil). **Any HTTP server works** — the docs say so explicitly; **Caddy is fine** and
+    a good pick if you already run it:
+    ```caddy
+    searxng.example.com {
+        reverse_proxy unix//usr/local/searxng/run/socket
+    }
+    ```
+    Then point webveil at the Caddy address. (Set SearXNG's `server.base_url` in
+    `settings.yml` to match, and mind the limiter/bot-protection behind a proxy.)
+  - **Or skip the proxy** by making uWSGI listen on a TCP port instead of the socket: in
+    the generated `.ini`, replace `socket = …/run/socket` with
+    `http-socket = 127.0.0.1:8888`, then point webveil at `http://127.0.0.1:8888`. Good
+    when you want ONLY webveil (no public web UI / TLS).
+
+Full SearXNG install options (Docker, Compose, script, bare-metal): the official docs at
+<https://docs.searxng.org/admin/installation.html>. Install topology details captured in
+[`work/notes/findings/searxng-install-topology.md`](work/notes/findings/searxng-install-topology.md).
+
+### Where does anonymity live? (read before turning on egress)
+
+**webveil's egress only anonymizes webveil's OWN outbound hop** (webveil → backend, and
+`web_fetch` → the target URL). It does NOT anonymize what a backend does next. This has a
+load-bearing consequence for SearXNG:
+
+- A **local** SearXNG makes its actual search-engine requests (→ Google/Bing/…) from
+  **its own process, on your machine, with your real IP**. That hop is OUTSIDE webveil's
+  egress. So setting `WEBVEIL_EGRESS=socks5` while `baseUrl` is `127.0.0.1` does **NOT**
+  make your searches anonymous — webveil would just be proxying a pointless localhost call,
+  while SearXNG crawls the web from your real IP. That is **false confidence**, the worst
+  outcome.
+- **webveil refuses this combo (fail-loud):** a non-`direct` egress (`http`/`socks5`) with
+  a **loopback `baseUrl`** is rejected with an error, rather than silently giving you fake
+  anonymity. (A *remote* SearXNG over SOCKS is legitimate and allowed — the guard keys on
+  loopback specifically.)
+
+So the correct setups:
+
+| Goal | webveil egress | backend | Who anonymizes the web hop |
+| --- | --- | --- | --- |
+| Local SearXNG, anonymous searches | `direct` | local SearXNG | **SearXNG itself** — set its `outgoing.proxies` (Tor/SOCKS) in `settings.yml` |
+| Remote SearXNG, hide your IP from it | `socks5` | the **remote** SearXNG url | webveil's hop (Mullvad/Tor) |
+| Anonymous `web_fetch` of arbitrary URLs | `socks5` | (any) | webveil's hop |
+| Non-anonymous everyday use | `direct` | local SearXNG | nobody (honest) |
+
+Rule of thumb: **proxy the hop that actually reaches the public internet.** For a
+self-hosted SearXNG that hop is SearXNG's, so the proxy goes on SearXNG
+(`outgoing.proxies`), and webveil stays `direct`. webveil's `socks5` mode is for *remote*
+backends and for `web_fetch`. See
+[`work/notes/findings/webveil-anonymity-boundary.md`](work/notes/findings/webveil-anonymity-boundary.md).
 
 ## How it works (seams)
 

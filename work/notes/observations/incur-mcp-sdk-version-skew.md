@@ -1,6 +1,6 @@
 # incur 0.4.10 `--mcp` breaks against @modelcontextprotocol/server alpha.3
 
-2026-06-26 — `incur@0.4.10` declares `@modelcontextprotocol/server@^2.0.0-alpha.2`,
+2026-06-26, `incur@0.4.10` declares `@modelcontextprotocol/server@^2.0.0-alpha.2`,
 but the published `2.0.0-alpha.3` is a breaking prerelease that moved
 `StdioServerTransport` out of the package's main entry to its `./stdio` subpath.
 incur's `dist/Mcp.js` still does `await import('@modelcontextprotocol/server')` and
@@ -21,7 +21,7 @@ kept too. `pi-webveil` is unaffected (it does not import incur).
 
 Revisit (drop BOTH the direct pin and the override) when a newer incur imports the
 SDK's `./stdio` subpath. `0.4.10` is currently the latest incur, so there is no
-fixed incur to upgrade to yet — track incur releases.
+fixed incur to upgrade to yet, track incur releases.
 
 ## Upstream report
 

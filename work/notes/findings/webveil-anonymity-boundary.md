@@ -1,5 +1,5 @@
 ---
-title: webveil's anonymity boundary — egress anonymizes webveil's OWN hop only (the local-SearXNG trap)
+title: webveil's anonymity boundary, egress anonymizes webveil's OWN hop only (the local-SearXNG trap)
 slug: webveil-anonymity-boundary
 source: 'derived from packages/webveil/src/core/{egress.ts,search.ts,fetch.ts} @ HEAD + reasoning about the SearXNG data-flow, 2026-06-26'
 ---

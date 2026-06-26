@@ -1,5 +1,5 @@
 ---
-title: SearXNG install topology — script install uses a Unix socket, not a TCP port
+title: SearXNG install topology, script install uses a Unix socket, not a TCP port
 slug: searxng-install-topology
 source: 'SearXNG docs retrieved 2026-06-26: docs.searxng.org/admin/installation-scripts.html and /admin/installation-uwsgi.html (the generated uwsgi ini)'
 ---

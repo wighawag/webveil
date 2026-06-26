@@ -49,7 +49,7 @@ Scope/precision:
 
 ## Blocked by
 
-- None — can start immediately. (Builds on the shipped egress + security modules.)
+- None, can start immediately. (Builds on the shipped egress + security modules.)
 
 ## Prompt
 

@@ -34,7 +34,7 @@ default.
 
 ## Why it is NOT urgent (and the alternatives that already exist)
 
-- **Mullvad's built-in Tor (Onion-over-VPN) needs NO chaining** — it happens server-side,
+- **Mullvad's built-in Tor (Onion-over-VPN) needs NO chaining**, it happens server-side,
   so webveil already gets Tor-over-Mullvad by pointing its single SOCKS5 url at Mullvad's
   endpoint with that feature enabled. Many users' "Tor over Mullvad" need is met this way
   with zero webveil change.
@@ -49,8 +49,8 @@ paths for a multi-hop chain) vs. leaving chaining to Mullvad-server-side Tor + t
 
 - Config shape: a `chain: [...]` array vs keeping `url` and adding `via: [...]`? How does it
   interact with the existing single `url`?
-- Fail-loud semantics for a partial chain (one hop down) — surface which hop failed.
+- Fail-loud semantics for a partial chain (one hop down), surface which hop failed.
 - Does the SSRF guard / remote-DNS behaviour compose correctly across a chain? (DNS should
   still resolve at the FINAL exit proxy.) Verify before shipping.
-- Scheme handling ties into the `socks5h-scheme-accepted-but-ignored` observation — resolve
+- Scheme handling ties into the `socks5h-scheme-accepted-but-ignored` observation, resolve
   that first so a chain's per-hop scheme story is coherent.

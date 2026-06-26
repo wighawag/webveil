@@ -3,7 +3,7 @@ title: Build agents reference a "Decisions block" in code comments but never add
 slug: agents-reference-decisions-block-they-never-write
 ---
 
-## The pattern (generalised — 3 instances, a SIGNAL not noise)
+## The pattern (generalised, 3 instances, a SIGNAL not noise)
 
 Across the webveil build drive, multiple `do` build agents made a sound, non-obvious
 in-scope decision, wrote an in-CODE comment saying "(Recorded decision; see the task's
@@ -11,12 +11,12 @@ Decisions block.)", but then did NOT add any `## Decisions` block to the done re
 `work/tasks/done/<slug>.md`. The code comment references a record that does not exist.
 
 Instances seen:
-1. **PR #1 core-foundation** — substituted `fetch-socks` for the spec-pinned
+1. **PR #1 core-foundation**, substituted `fetch-socks` for the spec-pinned
    `socks-proxy-agent` (separate note: socks-dep-is-fetch-socks-...). No decision recorded.
-2. **PR #4 core-search** — invented `DEFAULT_MAX_RESULTS = 10`; comment cites a Decisions
+2. **PR #4 core-search**, invented `DEFAULT_MAX_RESULTS = 10`; comment cites a Decisions
    block that is absent (separate note: core-search-default-max-results-...).
-3. **PR #7 backend-custom** — parses `config.baseUrl` as a whitespace-split argv for the
-   command line; comment cites "the task's Decisions block" — absent.
+3. **PR #7 backend-custom**, parses `config.baseUrl` as a whitespace-split argv for the
+   command line; comment cites "the task's Decisions block", absent.
 
 ## Why it matters
 

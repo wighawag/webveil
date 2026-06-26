@@ -1,5 +1,5 @@
 ---
-title: Public SearXNG instance + webveil egress — the no-self-hosting, still-anonymous path
+title: Public SearXNG instance + webveil egress, the no-self-hosting, still-anonymous path
 slug: public-searxng-over-egress
 ---
 

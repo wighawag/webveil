@@ -11,7 +11,7 @@ pinned by the spec (the task body, `CONTEXT.md` Stack/egress seam, the PRD Imple
 Decisions, and `docs/adr/0001` all name `socks-proxy-agent` as a PLAIN dependency).
 
 The deviation was NOT recorded by the build (no ADR, no `## Decisions` note in the done
-record) — so it is a review finding per the task template ("RECORD non-obvious in-scope
+record), so it is a review finding per the task template ("RECORD non-obvious in-scope
 decisions; an un-recorded in-scope decision is a review FINDING").
 
 ## Why the substitution is (probably) correct
@@ -35,7 +35,7 @@ The code is fine; the SPEC DOCS now lie. Reconcile so the next reader/task is no
 - `docs/adr/0001`: the "egress-bound fetch via undici { dispatcher }" consequence should
   name `fetch-socks` as the socks layer (and note WHY: it yields an undici Dispatcher).
 - The tasked PRD is a launch snapshot (not maintained), so leave it; but the
-  `readme-loc-and-publish-hygiene` task will document deps — it should list `fetch-socks`.
+  `readme-loc-and-publish-hygiene` task will document deps, it should list `fetch-socks`.
 
 This is a doc-vs-code drift fix, not a code change. Consider a one-line ADR amendment
 rather than a new ADR (the decision is small and follows from the existing dispatcher one).

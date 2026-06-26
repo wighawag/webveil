@@ -8,18 +8,18 @@ slug: core-search-default-max-results-decision-unrecorded
 `core-search` (PR #4) sets a default result cap `DEFAULT_MAX_RESULTS = 10` when the caller
 omits `maxResults`. The PRD/spec never pinned a default cap, so this is a non-obvious
 in-scope decision. The code comment says "(Recorded decision: ... see the task's Decisions
-block.)" — but the done record `work/tasks/done/core-search.md` has NO `## Decisions`
+block.)", but the done record `work/tasks/done/core-search.md` has NO `## Decisions`
 block. So the code references a decision record that does not exist.
 
 Per the task template ("RECORD non-obvious in-scope decisions; an un-recorded in-scope
-decision is a review FINDING"), this is a finding — the same class as the fetch-socks
+decision is a review FINDING"), this is a finding, the same class as the fetch-socks
 substitution on PR #1.
 
 ## Assessment
 
 The decision itself is fine and well-commented in-code: default cap 10 keeps an agent's
 context small, a caller can override per call, and dedup runs BEFORE the clamp (tested) so
-the caller gets up to N UNIQUE hits. Approved on that basis — the behaviour is correct and
+the caller gets up to N UNIQUE hits. Approved on that basis, the behaviour is correct and
 green; only the RECORD is missing.
 
 ## Follow-up

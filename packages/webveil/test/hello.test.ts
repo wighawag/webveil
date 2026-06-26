@@ -34,9 +34,39 @@ describe('webveil core', () => {
 		);
 		expect(results).toEqual([hit]);
 	});
-	it('exposes fetch (not yet implemented)', async () => {
-		await expect(fetch('https://example.com')).rejects.toThrow(
-			/not implemented/,
+	it('exposes fetch wired to the core (returns size-bounded markdown)', async () => {
+		const config: Config = {
+			backend: 'searxng',
+			baseUrl: 'http://127.0.0.1:8080',
+			egress: {mode: 'direct'},
+			fetchSize: 'm',
+		};
+		const result = await fetch(
+			'https://example.com/page',
+			{},
+			{
+				resolveConfig: () => config,
+				getBackend: () => ({
+					async search() {
+						return [];
+					},
+				}),
+				createEgressFetch: () =>
+					(() => {
+						throw new Error('egress fetch must not be called');
+					}) as never,
+				guardEgressFetch: (f) => f,
+				extract: async (url) => ({
+					url,
+					markdown: '# Example',
+					truncated: false,
+				}),
+			},
 		);
+		expect(result).toEqual({
+			url: 'https://example.com/page',
+			markdown: '# Example',
+			truncated: false,
+		});
 	});
 });

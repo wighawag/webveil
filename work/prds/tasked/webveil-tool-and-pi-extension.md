@@ -75,8 +75,7 @@ and distilly never has egress of its own (see `docs/adr/0001`).
 - **humanOnly:** omitted. Agent-taskable; the design is resolved.
 - **needsAnswers:** omitted. The three seams, the egress modes, the dependency choices
   (incur, distilly, socks-proxy-agent as a plain dep), and the tool surface are all
-  decided. A couple of small implementation calls remain (see below) but none block
-  tasking.
+  decided; none block tasking.
 - **taskedAfter:** `[distilly-engine]` — webveil's Extractor seam depends on distilly's
   `distilly/fetch` entrypoint (`urlToMarkdown`), into which webveil injects its
   egress-controlled `fetch`; distilly's network Rules (github/mdn/react.dev/vuejs.org)
@@ -84,84 +83,10 @@ and distilly never has egress of its own (see `docs/adr/0001`).
   webveil's tasks can reference it. (NOTE: cross-repo prd; the dependency is on the
   distilly REPO's prd of the same slug.)
 
-## Implementation Decisions
-
-**Layout** (already scaffolded): pnpm monorepo, `packages/webveil` (CLI+MCP, `webveil`
-bin -> `dist/cli.js`) and `packages/pi-webveil` (pi extension, depends on `webveil` via
-`workspace:*`).
-
-**Core (frontend-agnostic), in `packages/webveil/src/core/`:**
-- `search.ts`, `fetch.ts` — the plain `search()`/`fetch()` functions (placeholders exist
-  in `src/index.ts`; move/expand into `core/`).
-- `backends/` — `types.ts` (the `Backend` interface: `search`, optional `fetch`, each
-  given the proxied `http` helper), `registry.ts` (name -> Backend dispatcher, trimmed
-  from pi-search-hub's pattern), `searxng.ts`, `tavily-compat.ts` (generic POST
-  `/search` + `/extract`, selected by `baseUrl`; covers orio-search / searcharvester /
-  agent-search), `custom.ts` (JSON stdin/stdout local command, lifted from
-  pi-web-providers' contract).
-- `egress.ts` — `buildDispatcher(cfg)` returning an undici Dispatcher: `direct`
-  (undefined), `http` (undici `ProxyAgent`, no extra dep), `socks5` (via
-  `socks-proxy-agent`, a PLAIN dependency — NOT optionalDependencies). Fail loud if a
-  socks dispatcher cannot be built. Also exposes an **egress-bound WHATWG `fetch`** built
-  with undici's `fetch` closed over the dispatcher
-  (`(input, init) => undiciFetch(input, { ...init, dispatcher })`), for injection into
-  `distilly/fetch`. Same fail-loud guarantee: if the proxy can't be built the egress
-  fetch THROWS, never falls back to un-proxied. distilly's seam stays a WHATWG `fetch`
-  (no Dispatcher option on distilly — keeps it undici-agnostic; see `docs/adr/0001`).
-- `http.ts` — one `fetchJson`/`fetchText` helper that applies the dispatcher + timeout +
-  abort; this is the `http` handed to backends. (Distinct from the egress-bound `fetch`
-  injected into distilly: the `http` helper serves backends, the `fetch` serves distilly,
-  both bound to the SAME dispatcher.)
-- `config.ts` — resolve `{ backend, baseUrl, apiKey?, egress, fetchSize }` with
-  precedence env > nearest `.pi/webveil.json` (walk up from cwd) > global
-  `~/.pi/agent/webveil.json` > defaults (`searxng`, `http://127.0.0.1:8080`,
-  `egress:direct`), layered over incur's config-file feature.
-- `extract.ts` — Extractor seam: calls `urlToMarkdown(url, { fetch, size })` from
-  `distilly/fetch` by default (signature, pinned to distilly's shipped API:
-  `urlToMarkdown(url, { fetch: typeof globalThis.fetch; rules?; size?: 's'|'m'|'l'|'f' })
-  => Promise<{ markdown, truncated }>`). webveil maps its `s/m/l/f` preset straight to
-  distilly's `size` and surfaces `truncated`. The injected `fetch` is webveil's
-  egress-bound fetch (see `egress.ts`). A backend's `/extract` (tavily-compat) overrides
-  this seam. (Decision recorded in `docs/adr/0001`: style b, networked entrypoint with
-  injected egress — chosen over the pure `htmlToMarkdown(html)` path for distilly's
-  shorter rule-rewritten output and less code in webveil.)
-- SSRF guard (block private IPs), relaxed under proxy egress (adapt leing2021/pi-search's
-  `security.ts` approach). It lives INSIDE the egress-bound `fetch` (below), so it covers
-  BOTH webveil's own direct `web_fetch` GETs AND distilly's rule-rewritten requests.
-
-**Frontend 1 — `cli.ts` (incur):** `Cli.create()` with commands `search` and `fetch`
-that call the core; this yields CLI + MCP (`--mcp`) + skills + `--llms` + TOON. Pin the
-incur version.
-
-**Frontend 2 — `pi-webveil/src/index.ts`:** default export `registerTool({ name:
-'web_search' })` and `{ name: 'web_fetch' }` calling the SAME core in-process (no
-shelling). Resolve per-folder config from `ctx.cwd`. Tool names MUST be exactly
-`web_search` / `web_fetch` for Ollama drop-in.
-
-**Deps:** `incur` (MIT), `distilly` (MIT, published as `distilly@^0.1.0` — a sibling repo,
-NOT a workspace member; webveil imports the `distilly/fetch` subpath export),
-`socks-proxy-agent` (plain dep); undici is in Node 24
-for both the HTTP proxy AND the egress-bound `fetch` injected into distilly. The AGPL
-packages must not pull any GPL/AGPL code INTO distilly (keep it clean MIT).
-
-## Testing Decisions
-
-Test at the seams, not internals:
-- `core.search()` against a fake `http` returns normalized `SearchResult[]`; dedup + clamp.
-- `core.fetch()` returns size-bounded markdown with the `truncated` flag; uses the
-  Extractor (distilly's `urlToMarkdown`) or a backend `/extract`. Assert distilly is
-  invoked WITH webveil's egress-bound `fetch` (never a global/default fetch), and that an
-  egress fetch built on an unbuildable proxy THROWS rather than fetching un-proxied.
-- Egress: `buildDispatcher` returns the right dispatcher per mode; `socks5` with a missing
-  dep FAILS LOUD (assert the error), never returns a direct dispatcher.
-- Config precedence: env > project `.pi/webveil.json` > global > defaults; per-folder walk
-  works from a nested cwd.
-- Backends: `searxng` parses SearXNG JSON; `tavily-compat` parses a Tavily-shaped
-  response; `custom` round-trips the JSON stdin/stdout contract.
-- pi-webveil registers exactly `web_search` and `web_fetch` and routes to the core.
-- SSRF: a private-IP URL is blocked on direct egress, allowed under proxy egress —
-  asserted via the egress-bound `fetch`, so the guard covers distilly's rule-rewritten
-  requests too, not only webveil's direct GETs.
+> Tasked. The implementation + testing detail that used to live here now lives in the
+> task files under `work/tasks/` (the tracer-bullet decomposition), and the load-bearing
+> Extractor/egress decision lives in `docs/adr/0001`. This prd has settled to its durable
+> framing (Problem / Solution / User Stories / Out of Scope) above and below.
 
 ## Out of Scope
 

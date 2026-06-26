@@ -1,0 +1,49 @@
+{
+	"name": "pi-webveil",
+	"version": "0.0.0",
+	"description": "Pi extension: web_search and web_fetch tools backed by webveil. A drop-in, anonymity-capable replacement for Ollama's web_search/web_fetch.",
+	"license": "AGPL-3.0-or-later",
+	"keywords": [
+		"pi-extension",
+		"pi-package",
+		"web-search",
+		"web-fetch",
+		"ollama",
+		"anonymous"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"src"
+	],
+	"pi": {
+		"extensions": [
+			"./src/index.ts"
+		]
+	},
+	"dependencies": {
+		"webveil": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^25.2.0",
+		"as-soon": "^0.1.5",
+		"tsx": "^4.21.0",
+		"typescript": "^5.3.3",
+		"vitest": "^4.0.18"
+	},
+	"scripts": {
+		"build": "tsc",
+		"dev": "as-soon -w src pnpm build",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	}
+}

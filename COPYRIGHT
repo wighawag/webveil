@@ -1,0 +1,15 @@
+webveil and pi-webveil
+Copyright (C) 2026 wighawag
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See LICENSE for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+Note on dependencies: webveil depends on `distilly` and `incur`, both MIT
+licensed. MIT code may be used by AGPL software. The `distilly` library is kept
+free of any GPL/AGPL code so it remains cleanly reusable under MIT.

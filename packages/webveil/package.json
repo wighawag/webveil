@@ -1,0 +1,50 @@
+{
+	"name": "webveil",
+	"version": "0.0.0",
+	"description": "Anonymous-capable, self-hosted, account-free web search and fetch for agents. CLI + MCP (built on incur), pi-agnostic. Swappable backend and egress (direct, http proxy, socks5/Tor).",
+	"license": "AGPL-3.0-or-later",
+	"keywords": [
+		"web-search",
+		"web-fetch",
+		"mcp",
+		"cli",
+		"agents",
+		"searxng",
+		"tor",
+		"anonymous",
+		"self-hosted"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"type": "module",
+	"bin": {
+		"webveil": "./dist/cli.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"src"
+	],
+	"dependencies": {
+		"distilly": "^0.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "^25.2.0",
+		"as-soon": "^0.1.5",
+		"tsx": "^4.21.0",
+		"typescript": "^5.3.3",
+		"vitest": "^4.0.18"
+	},
+	"scripts": {
+		"build": "tsc",
+		"dev": "as-soon -w src pnpm build",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	}
+}

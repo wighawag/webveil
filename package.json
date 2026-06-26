@@ -21,6 +21,8 @@
     "---------------------- DEV ----------------------": "",
     "dev": "ldenv pnpm --filter './packages/*' dev",
     "build": "ldenv pnpm --filter './packages/*' build",
+    "---------------------- TEST ----------------------": "",
+    "test": "pnpm --filter './packages/*' test",
     "---------------------- RUN FULL LOCAL SETUP ----------------------": "",
     "stop": "zellij kill-session $npm_package_name",
     "start:pnpm": "pnpm -r dev",

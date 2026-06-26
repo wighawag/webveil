@@ -1,38 +1,53 @@
 // webveil — anonymous-capable, self-hosted, account-free web search + fetch for agents.
 //
-// Placeholder surface. The real implementation (built by tasks from the PRD) is one
-// framework-agnostic core with two thin frontends:
-//   - core/search.ts, core/fetch.ts  : plain functions (frontend-agnostic)
-//   - core/backends/*                 : backend seam (searxng | tavily-compat | custom)
-//   - core/egress.ts                  : egress seam (direct | http | socks5/Tor)
-//   - core/config.ts                  : per-folder .pi/webveil.json + global + env
-//   - core/extract.ts                 : Extractor seam -> distilly (MIT) by default
-//   - cli.ts                          : incur Cli.create() -> CLI + MCP + skills
+// This is the public surface. The framework-agnostic core lives under src/core:
+//   - core/config.ts            : config seam (per-folder .pi/webveil.json + global + env)
+//   - core/egress.ts            : egress seam (direct | http | socks5/Tor) — dispatcher + egress fetch
+//   - core/http.ts              : the proxied `http` helper handed to backends
+//   - core/backends/types.ts    : backend seam (the Backend interface + result shapes)
+// Still-placeholder (built by later tasks): core/search.ts, core/fetch.ts,
+//   core/backends/*, core/extract.ts, cli.ts.
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
 
-export interface SearchResult {
-	title: string;
-	url: string;
-	snippet?: string;
-}
+// config seam
+export {resolveConfig} from './core/config.js';
+export type {
+	Config,
+	Egress,
+	FetchSize,
+	PartialConfig,
+	ResolveOptions,
+} from './core/config.js';
 
-export interface FetchResult {
-	url: string;
-	title?: string;
-	markdown: string;
-	truncated: boolean;
-}
+// egress seam
+export {
+	buildDispatcher,
+	createEgressFetch,
+	EgressError,
+} from './core/egress.js';
+export type {Dispatcher, EgressFetch} from './core/egress.js';
 
-export interface SearchOptions {
-	maxResults?: number;
-	signal?: AbortSignal;
-}
+// http helper
+export {createHttp} from './core/http.js';
 
-export interface FetchOptions {
-	size?: 's' | 'm' | 'l' | 'f';
-	signal?: AbortSignal;
-}
+// backend seam (the contract + result types; consumed by no backend yet)
+export type {
+	Backend,
+	Http,
+	HttpRequestOptions,
+	SearchResult,
+	FetchResult,
+	SearchOptions,
+	FetchOptions,
+} from './core/backends/types.js';
+
+import type {
+	SearchResult,
+	FetchResult,
+	SearchOptions,
+	FetchOptions,
+} from './core/backends/types.js';
 
 export async function search(
 	_query: string,

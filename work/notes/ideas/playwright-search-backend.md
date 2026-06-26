@@ -65,7 +65,46 @@ Source: Playwright docs + microsoft/playwright#10567, retrieved 2026-06-26.
 - WebRTC/canvas/fingerprint hardening scope \u2014 how far does webveil go vs leaving it to the
   user/instance?
 
+## Engine friendliness + stealth (research from a parallel session, 2026-06-26)
+
+Bot detection is the cost that REPLACES the account/payment cost. Concrete guidance:
+
+- **Engine targets, friendliest to most hostile:** `html.duckduckgo.com/html/` and
+  Startpage are the friendliest scrape targets; Bing and Brave web are more tolerant but
+  not immune; **Google is the most aggressive** (datacenter-IP + headless-fingerprint
+  blocking, fast CAPTCHAs), avoid unless you enjoy pain. Through a VPN/Tor EXIT IP, CAPTCHAs
+  INCREASE (the engine sees a flagged IP), which compounds with webveil's anonymity goal.
+- **Vanilla headless Playwright is detectable** (`navigator.webdriver`, headless UA, missing
+  `chrome` runtime). Passing basic checks needs `playwright-extra` + the stealth plugin, or
+  `rebrowser-playwright`. That is extra dependency + tuning surface on top of Playwright.
+- **Privacy comes from the NETWORK layer (VPN/Tor/proxy exit + fingerprint), not a vendor.**
+  This is the real "Mullvad-like" property: there is literally no provider relationship, no
+  account, no payment. The engine sees an exit IP + a browser fingerprint, nothing tied to
+  an identity. This is exactly why webveil's egress (Mullvad/Tor) is the right network layer
+  for it.
+
+## The fetch-first / escalate-to-browser pattern (preferred architecture)
+
+The pragmatic shape used by prior art (Free-Search = Playwright + SearXNG;
+zero-api-key-web-search's browse layer) is NOT "Playwright against Google". It is a LADDER:
+
+1. Try the cheap path first (a SearXNG JSON call, or a plain `http` fetch of a friendly
+   endpoint like DDG-html).
+2. ESCALATE to a Playwright browser ONLY for the specific pages that are JS-heavy or
+   soft-blocked (the "unlocker" role).
+
+So in webveil terms, a Playwright backend is best framed as a FALLBACK/unlocker behind the
+lighter backends, not the primary. Self-hosted SearXNG (server-side scraping -> clean JSON,
+behind your egress) remains the lighter, more stable, more anonymous bulk path; Playwright
+is the back-pocket tool for what SearXNG / a plain fetch cannot get. This also limits the
+heavy browser cost to the minority of queries that actually need it.
+
 ## Relation to other notes
 
 - One concrete entry under `expand-search-backend-roster` (the heaviest, most powerful one).
+- A LIGHTER cousin of the same no-account goal: `public-searxng-over-egress` (no browser).
+- The anonymous-PAYMENT commercial path (Kagi BTC, x402 wallet-as-credential) is a SEPARATE
+  category: see `anonymous-payment-search-apis`.
+- DDG-specific scrape realities (vqd, 202, proxy-makes-it-worse) in the finding
+  `duckduckgo-access-methods`.
 - Egress interaction bounded by `webveil-anonymity-boundary` + `socks5-egress-behaviour-in-webveil`.

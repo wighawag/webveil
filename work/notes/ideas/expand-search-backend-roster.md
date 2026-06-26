@@ -53,6 +53,15 @@ and seam-test against a fake `http`. Auth is a header built from `config.apiKey`
 (tavily-compat already does the Bearer pattern; Brave would use `X-Subscription-Token`). So
 "which backends" is a PRODUCT decision, not an architecture one.
 
+## A third lane: paid, but ANONYMOUSLY paid
+
+Beyond "account-free" vs "account-bound key" there is a middle lane: commercial APIs payable
+without an identity (Kagi via BTC/Lightning + pseudonymous account + Tor; x402
+wallet-as-credential APIs like Pylon / Brave bx402 / MeshSearch where a stablecoin
+micropayment IS the credential, no account). This is arguably the most webveil-aligned
+commercial option. Captured separately in `anonymous-payment-search-apis` (a `kagi` keyed
+backend is the cheap entry; x402 wallet flows are a heavy, separate-package undertaking).
+
 ## Two distinct user itches (they point at different answers)
 
 - **(a) "I do not want to self-host anything."** Best answer today is

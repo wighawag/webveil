@@ -42,6 +42,7 @@
 		"src"
 	],
 	"dependencies": {
+		"@modelcontextprotocol/server": "2.0.0-alpha.2",
 		"distilly": "^0.1.0",
 		"fetch-socks": "^1.3.3",
 		"incur": "0.4.10",

@@ -12,8 +12,9 @@
 //   - core/search.ts            : the framework-agnostic search() both frontends call
 //   - core/security.ts          : SSRF guard wrapped around the egress fetch
 //   - core/fetch.ts             : the framework-agnostic fetch() both frontends call
+//   - core/backends/custom.ts  : the local-command escape hatch (JSON stdin/stdout)
 // Still-placeholder (built by later tasks):
-//   core/backends/custom.ts, cli.ts.
+//   cli.ts.
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
 
@@ -66,6 +67,8 @@ export {backendNames, getBackend} from './core/backends/registry.js';
 export type {BackendFactory} from './core/backends/registry.js';
 export {createSearxngBackend} from './core/backends/searxng.js';
 export {createTavilyCompatBackend} from './core/backends/tavily-compat.js';
+export {createCustomBackend} from './core/backends/custom.js';
+export type {SpawnFn} from './core/backends/custom.js';
 
 // core search (the framework-agnostic search() both frontends call)
 export {search} from './core/search.js';

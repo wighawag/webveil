@@ -21,9 +21,15 @@ describe('backend registry', () => {
 		expect(typeof backend.fetch).toBe('function');
 	});
 
-	it('lists searxng and tavily-compat among its known names', () => {
+	it("resolves 'custom' to a Backend with a search method", () => {
+		const backend = getBackend('custom', {...config, baseUrl: 'true'});
+		expect(typeof backend.search).toBe('function');
+	});
+
+	it('lists searxng, tavily-compat and custom among its known names', () => {
 		expect(backendNames()).toContain('searxng');
 		expect(backendNames()).toContain('tavily-compat');
+		expect(backendNames()).toContain('custom');
 	});
 
 	it('fails clearly on an unknown name (and names the known ones)', () => {

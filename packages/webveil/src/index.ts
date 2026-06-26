@@ -8,11 +8,12 @@
 //   - core/backends/types.ts    : backend seam (the Backend interface + result shapes)
 //   - core/backends/registry.ts : name -> Backend dispatcher
 //   - core/backends/searxng.ts  : the keyless self-hosted SearXNG backend
+//   - core/backends/tavily-compat.ts : the generic Tavily-shaped backend (/search + /extract)
 //   - core/search.ts            : the framework-agnostic search() both frontends call
 //   - core/security.ts          : SSRF guard wrapped around the egress fetch
 //   - core/fetch.ts             : the framework-agnostic fetch() both frontends call
 // Still-placeholder (built by later tasks):
-//   core/backends/{tavily-compat,custom}.ts, cli.ts.
+//   core/backends/custom.ts, cli.ts.
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
 
@@ -64,6 +65,7 @@ export type {
 export {backendNames, getBackend} from './core/backends/registry.js';
 export type {BackendFactory} from './core/backends/registry.js';
 export {createSearxngBackend} from './core/backends/searxng.js';
+export {createTavilyCompatBackend} from './core/backends/tavily-compat.js';
 
 // core search (the framework-agnostic search() both frontends call)
 export {search} from './core/search.js';

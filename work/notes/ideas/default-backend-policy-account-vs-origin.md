@@ -43,6 +43,24 @@ missed:
   rule (the dangerous combo is what's blocked, not the remote host).
 - **Document a one-line `docker run searxng`** as the blessed zero-setup path.
 
+## The zero-setup + anonymous + real-results corner does NOT exist (do not hunt for it)
+
+Pick any TWO of {zero-setup, real web results, no-account/anonymity}; you cannot have all
+three, and this is structural, not a webveil gap. "Zero setup" means something is already
+running that you do not operate = a third party; removing the third party means you run it
+= setup. The ecosystem corners webveil already covers:
+
+- **anonymity + real results** → `searxng` (costs setup: one `docker run`).
+- **zero-setup + real results** → `tavily-compat` (costs an account/key — the very thing
+  webveil exists to avoid, but available if the user opts in).
+- **zero-setup + anonymity** → only DDG Instant Answer (NOT web search — definitions only),
+  or DDG HTML scraping (fragile, ToS-violating, and blocks HARDER under proxy egress, i.e.
+  anti-synergistic with webveil's anonymity mode). Neither is a real general web-search.
+
+So the honest default story is "one `docker run searxng/searxng` and it works", not
+"literally nothing". No future search should chase a zero-setup anonymous web-search
+backend — it is not out there.
+
 ## Why it's an idea, not a task yet
 
 Choosing the default is a product/anonymity-policy call (humanOnly by nature). It likely

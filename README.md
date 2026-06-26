@@ -20,6 +20,40 @@ framework-agnostic. Two thin frontends wrap that same core:
   `web_fetch` tools that call the core in-process. A drop-in replacement for Ollama's tools
   (same names), which is the original motivation. Depends on `webveil` via `workspace:*`.
 
+## Quick start
+
+webveil needs a **backend** to get results from. The zero-config default is a local
+**SearXNG** at `http://127.0.0.1:8080` on `direct` egress (non-anonymous). There is
+**no** zero-setup + anonymous + real-web-results option in the ecosystem — see
+[`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md);
+SearXNG (you run it) is the closest, `tavily-compat` (needs an account/key) is the other.
+
+### Run SearXNG (matches the default with no config)
+
+```sh
+# Docker: the container binds 8080 internally; map host 8080 -> container 8080
+# so it matches webveil's default baseUrl exactly.
+docker run -d --name searxng -p 8080:8080 searxng/searxng
+```
+
+Then `webveil search "…"` / `web_fetch` work with no config.
+
+> **Port gotcha (you WILL hit this):** SearXNG's default port depends on how you install
+> it. A bare-metal / pip / source install defaults to **8888** (`settings.yml`
+> `server.port: 8888`). The Docker image binds **8080** internally regardless (its
+> entrypoint forces `0.0.0.0:8080`). SearXNG's own docs suggest `docker run … -p 8888:8080`
+> (host 8888 → container 8080). webveil's default expects **8080**. If your instance is on
+> any other port, point webveil at it:
+>
+> ```sh
+> export WEBVEIL_BASE_URL=http://127.0.0.1:8888   # or wherever your instance listens
+> ```
+>
+> or set `baseUrl` in `.pi/webveil.json` (see config seam below).
+
+Full SearXNG install options (Docker, Compose, bare-metal): the official docs at
+<https://docs.searxng.org/admin/installation.html>.
+
 ## How it works (seams)
 
 - **core** — the framework-agnostic `search(query, opts)` and `fetch(url, opts)` functions.
@@ -31,6 +65,12 @@ framework-agnostic. Two thin frontends wrap that same core:
 - **egress seam** — how outbound HTTP leaves the machine: `direct`, `http` (undici
   `ProxyAgent`), or `socks5` (Tor `127.0.0.1:9050`, Mullvad `10.64.0.1:1080`). SOCKS5 is
   the mode that matters for anonymity. Fail-loud if a configured proxy cannot be built.
+  **Egress is per-request and scoped to webveil ONLY** — it is NOT a system-wide proxy. It
+  governs webveil's own search/fetch traffic (and the `fetch` it injects into distilly),
+  and nothing else: your shell, `git push`, the browser, and the OS are untouched. So
+  webveil on `socks5` does NOT route your `git push` through the proxy. See
+  [Anonymous egress](#anonymous-egress-mullvad--tor) and
+  [`work/notes/findings/mullvad-socks5-egress-mechanics.md`](work/notes/findings/mullvad-socks5-egress-mechanics.md).
 - **config seam** — per-folder resolution: env > nearest `.pi/webveil.json` walking up from
   cwd > global `~/.pi/agent/webveil.json` > defaults. Per folder = per account/egress.
 - **extractor seam** — `urlToMarkdown` via `distilly/fetch` by default, injected with
@@ -39,6 +79,92 @@ framework-agnostic. Two thin frontends wrap that same core:
   [`docs/adr/0001`](docs/adr/0001-extractor-uses-distilly-fetch-with-injected-egress.md).
 - **security** — an SSRF guard lives in the egress fetch, so it covers distilly's
   rule-rewritten requests too.
+
+## Anonymous egress (Mullvad / Tor)
+
+By default webveil uses `direct` egress (your real IP — non-anonymous). Anonymity is
+**opt-in**: it is enabled ONLY when you set it in config/env. webveil never auto-enables a
+proxy (silent anonymity would be a footgun in the other direction).
+
+Enable SOCKS5 egress for webveil:
+
+```sh
+export WEBVEIL_EGRESS=socks5
+export WEBVEIL_EGRESS_URL=socks5://10.64.0.1:1080     # Mullvad
+# or socks5://127.0.0.1:9050                          # Tor
+```
+
+or per folder in `.pi/webveil.json`:
+
+```json
+{ "egress": { "mode": "socks5", "url": "socks5://10.64.0.1:1080" } }
+```
+
+### Two layers keep your `git push` (and everything else) off the proxy
+
+A common worry: "if I route through Mullvad, will my `git push` to GitHub leak under the
+VPN exit IP?" With webveil, **no** — for two independent reasons:
+
+1. **webveil's egress is per-request and webveil-only.** It applies the SOCKS5 dispatcher
+   inside its own search/fetch code; it does not install a system proxy. `git`, your shell,
+   and the OS are never touched. webveil on `socks5` proxies webveil's traffic and nothing
+   else.
+2. **You configure split routing** (below) so that even at the OS level, only the proxy IP
+   goes through the tunnel.
+
+### Mullvad: use the SOCKS5 proxy WITHOUT tunnelling all your traffic
+
+Mullvad's SOCKS5 proxy at `10.64.0.1:1080` **only exists while a Mullvad WireGuard tunnel
+is up** (it is reachable only through the tunnel). The trick is to keep the tunnel up but
+tell WireGuard NOT to route your normal traffic through it — only the proxy IP. Add this to
+your Mullvad WireGuard `.conf` (`[Interface]` section):
+
+```ini
+Table = off
+PostUp  = ip -4 route add 10.64.0.1/32 dev %i; ip -4 route add 10.124.0.0/22 dev %i
+PreDown = ip -4 route delete 10.64.0.1/32 dev %i; ip -4 route delete 10.124.0.0/22 dev %i
+```
+
+`Table = off` stops WireGuard from grabbing the default route; the manual routes send ONLY
+Mullvad's SOCKS5 proxy IPs through the tunnel (`10.124.0.0/22` is the multihop range).
+Result: webveil's SOCKS5 requests exit via Mullvad; all other traffic (git, browser, OS)
+uses your normal ISP connection. (Simpler alternative: leave WireGuard's routing alone and
+rely on layer 1 — but split routing is the belt-and-braces version.)
+
+Verify the proxy works: `curl https://ipv4.am.i.mullvad.net --socks5-hostname 10.64.0.1`
+should return a Mullvad exit IP; a plain `curl https://am.i.mullvad.net` should return your
+real IP (proving only the proxy is tunnelled).
+
+### "Different exit identity for webveil than for the rest of the machine"
+
+If you want webveil to exit somewhere different from your system, you have options — but be
+clear on what is and isn't possible (see
+[`work/notes/findings/mullvad-socks5-egress-mechanics.md`](work/notes/findings/mullvad-socks5-egress-mechanics.md)):
+
+- **Different exit LOCATION, same account (easy).** Point webveil at a specific multihop
+  SOCKS5 host so it exits elsewhere than your tunnel's entry:
+  `WEBVEIL_EGRESS_URL=socks5://us-nyc-wg-socks5-001.relays.mullvad.net:1080`. Your tunnel
+  enters where your Mullvad app is connected; webveil's traffic exits in NYC. Same Mullvad
+  account, unlinkable-by-location.
+- **Two DIFFERENT Mullvad ACCOUNTS at once (hard — not a webveil feature).** Mullvad's
+  SOCKS5 proxy is a property of the ONE active WireGuard tunnel, which is tied to ONE
+  account's key. SOCKS5 multihop changes exit location, NOT account. To run account A
+  system-wide AND account B for webveil simultaneously, you must isolate them at the OS
+  level: run webveil inside its own network namespace / VM / container that has its own
+  WireGuard tunnel on account B, while the host runs account A. That is infrastructure work
+  outside webveil. For most people, "don't link my searches to my git" is already solved by
+  split routing above (searches exit via Mullvad, git stays on your real IP — not correlated
+  by exit IP), without needing a second account.
+
+### Tor
+
+`WEBVEIL_EGRESS_URL=socks5://127.0.0.1:9050` with the Tor daemon running. Same per-request,
+webveil-only scoping applies.
+
+> **Caveat:** webveil's `socks5` mode is NOT a whole-machine VPN. Do not assume enabling it
+> anonymizes anything other than webveil. Conversely, a system-wide full-tunnel VPN under
+> your logged-in identity is the thing that CAN deanonymize a `git push`; webveil's scoped
+> egress deliberately avoids that.
 
 ## License
 

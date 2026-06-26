@@ -8,7 +8,8 @@
 //   - core/backends/types.ts    : backend seam (the Backend interface + result shapes)
 //   - core/backends/registry.ts : name -> Backend dispatcher
 //   - core/backends/searxng.ts  : the keyless self-hosted SearXNG backend
-// Still-placeholder (built by later tasks): core/search.ts, core/fetch.ts,
+//   - core/search.ts            : the framework-agnostic search() both frontends call
+// Still-placeholder (built by later tasks): core/fetch.ts,
 //   core/backends/{tavily-compat,custom}.ts, cli.ts.
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
@@ -54,19 +55,11 @@ export {backendNames, getBackend} from './core/backends/registry.js';
 export type {BackendFactory} from './core/backends/registry.js';
 export {createSearxngBackend} from './core/backends/searxng.js';
 
-import type {
-	SearchResult,
-	FetchResult,
-	SearchOptions,
-	FetchOptions,
-} from './core/backends/types.js';
+// core search (the framework-agnostic search() both frontends call)
+export {search} from './core/search.js';
+export type {SearchCoreOptions, SearchDeps} from './core/search.js';
 
-export async function search(
-	_query: string,
-	_options: SearchOptions = {},
-): Promise<SearchResult[]> {
-	throw new Error('webveil: search not implemented yet (see work/prds/ready)');
-}
+import type {FetchResult, FetchOptions} from './core/backends/types.js';
 
 export async function fetch(
 	_url: string,

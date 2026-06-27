@@ -29,6 +29,23 @@ function egressIsProxy(config: Config): boolean {
 }
 
 /**
+ * Is this HOST a loopback address (127.0.0.0/8, `::1`) or the `localhost`
+ * hostname? This is the NARROW loopback classification the BACKEND-hop egress
+ * guard keys on (a local backend behind a proxy is the false-confidence combo).
+ * It is deliberately tighter than {@link isPrivateIp}: a remote-but-RFC1918
+ * backend (e.g. a LAN SearXNG at 192.168.x.x reached over SOCKS) is a legitimate
+ * topology, so the guard must not fire on it, only on a genuinely LOCAL host.
+ */
+export function isLoopbackHost(host: string): boolean {
+	const h = host.replace(/^\[|\]$/g, '').toLowerCase(); // strip IPv6 brackets
+	if (h === 'localhost') return true;
+	const kind = isIP(h);
+	if (kind === 4) return h.split('.')[0] === '127';
+	if (kind === 6) return h === '::1' || h === '::ffff:127.0.0.1';
+	return false;
+}
+
+/**
  * Is this LITERAL IP private / non-public? Covers the ranges that must never be
  * reachable from a direct-egress web fetch:
  *   IPv4: 0.0.0.0/8, 10/8 (RFC1918), 127/8 (loopback), 169.254/16 (link-local,

@@ -18,7 +18,10 @@ import {createEgressFetch as defaultCreateEgressFetch} from './egress.js';
 import type {EgressFetch} from './egress.js';
 import {guardEgressFetch as defaultGuardEgressFetch} from './security.js';
 import {createHttp as defaultCreateHttp} from './http.js';
-import {buildDispatcher as defaultBuildDispatcher} from './egress.js';
+import {
+	buildDispatcher as defaultBuildDispatcher,
+	fetchEgressConfig as defaultFetchEgressConfig,
+} from './egress.js';
 import type {Dispatcher} from './egress.js';
 import {extract as defaultExtract} from './extract.js';
 import type {ExtractDeps} from './extract.js';
@@ -44,6 +47,8 @@ export interface FetchDeps {
 	createHttp?: (dispatcher: Dispatcher | undefined) => Http;
 	createEgressFetch?: (config: Config) => EgressFetch;
 	guardEgressFetch?: (fetch: EgressFetch, config: Config) => EgressFetch;
+	/** Resolve the FETCH-hop egress config (`fetchEgress ?? egress`). */
+	fetchEgressConfig?: (config: Config) => Config;
 	extract?: (
 		url: string,
 		config: Config,
@@ -75,6 +80,7 @@ export async function fetchAll(
 	const createHttp = deps.createHttp ?? defaultCreateHttp;
 	const createEgressFetch = deps.createEgressFetch ?? defaultCreateEgressFetch;
 	const guardEgressFetch = deps.guardEgressFetch ?? defaultGuardEgressFetch;
+	const fetchEgressConfig = deps.fetchEgressConfig ?? defaultFetchEgressConfig;
 	const extract = deps.extract ?? defaultExtract;
 
 	const config = resolveConfig({
@@ -83,12 +89,21 @@ export async function fetchAll(
 		globalPath: options.globalPath,
 	});
 
+	// web_fetch uses the FETCH-hop egress (`fetchEgress ?? egress`), independent of
+	// the backend hop. So a LOCAL backend on a direct backend hop can coexist with
+	// a socks5 web_fetch (docs/adr/0003). Backends with their own /extract are the
+	// exception below (see note).
+	const fetchConfig = fetchEgressConfig(config);
+
 	const backend = getBackend(config.backend, config);
 
 	// A backend that provides its own `/extract` (tavily-compat) OVERRIDES the
 	// distilly Extractor; it is handed only the proxied http helper (built from
 	// the SAME dispatcher as the egress fetch), so it cannot bypass egress.
 	if (backend.fetch) {
+		// A backend's own /extract is the SAME hop as its /search (it reaches the
+		// backend baseUrl, e.g. a remote Tavily-compat host), so it uses the BACKEND
+		// egress, NOT the fetch-hop egress.
 		const http = createHttp(buildDispatcher(config));
 		const backendFetch = backend.fetch.bind(backend);
 		return runAll(urls, (url) =>
@@ -101,7 +116,10 @@ export async function fetchAll(
 	// distilly (never a global fetch). The guard covers distilly's rule-rewritten
 	// requests too. A configured-but-unbuildable proxy throws at build time
 	// (fail-loud), before any I/O.
-	const guardedFetch = guardEgressFetch(createEgressFetch(config), config);
+	const guardedFetch = guardEgressFetch(
+		createEgressFetch(fetchConfig),
+		fetchConfig,
+	);
 	const extractDeps: ExtractDeps = {createEgressFetch: () => guardedFetch};
 	return runAll(urls, (url) =>
 		extract(url, config, {size: options.size}, extractDeps),

@@ -26,7 +26,20 @@ export interface Config {
 	backend: string;
 	baseUrl: string;
 	apiKey?: string;
+	/**
+	 * The BACKEND-hop egress (webveil -> backend `baseUrl`). Also the FETCH-hop
+	 * default when `fetchEgress` is unset, so a single-knob config governs both
+	 * hops exactly as before.
+	 */
 	egress: Egress;
+	/**
+	 * The FETCH-hop egress (webveil -> arbitrary public URL, and the `fetch`
+	 * injected into distilly). OPTIONAL: when unset it INHERITS `egress`, so
+	 * existing single-`egress` configs are unchanged. Setting it lets a LOCAL
+	 * backend stay on a `direct` backend hop while `web_fetch` exits via a
+	 * proxy (e.g. local SearXNG + socks5 web_fetch). See docs/adr/0003.
+	 */
+	fetchEgress?: Egress;
 	fetchSize: FetchSize;
 }
 
@@ -81,6 +94,21 @@ function readProjectChain(cwd: string): PartialConfig | undefined {
 	}
 }
 
+/**
+ * Parse an egress mode/url pair into an `Egress`, or `undefined` when the mode
+ * env var is unset (so the layer leaves the key absent and lower layers fill it).
+ * Shared by the backend (`WEBVEIL_EGRESS*`) and fetch (`WEBVEIL_FETCH_EGRESS*`)
+ * env knobs so the two hops parse identically.
+ */
+function parseEgressEnv(
+	mode: string | undefined,
+	url: string | undefined,
+): Egress | undefined {
+	if (mode === 'direct') return {mode: 'direct'};
+	if (mode === 'http' || mode === 'socks5') return {mode, url: url ?? ''};
+	return undefined;
+}
+
 function readEnv(env: Record<string, string | undefined>): PartialConfig {
 	const layer: PartialConfig = {};
 	if (env.WEBVEIL_BACKEND) layer.backend = env.WEBVEIL_BACKEND;
@@ -88,10 +116,13 @@ function readEnv(env: Record<string, string | undefined>): PartialConfig {
 	if (env.WEBVEIL_API_KEY) layer.apiKey = env.WEBVEIL_API_KEY;
 	if (env.WEBVEIL_FETCH_SIZE)
 		layer.fetchSize = env.WEBVEIL_FETCH_SIZE as FetchSize;
-	const mode = env.WEBVEIL_EGRESS;
-	if (mode === 'direct') layer.egress = {mode: 'direct'};
-	else if (mode === 'http' || mode === 'socks5')
-		layer.egress = {mode, url: env.WEBVEIL_EGRESS_URL ?? ''};
+	const egress = parseEgressEnv(env.WEBVEIL_EGRESS, env.WEBVEIL_EGRESS_URL);
+	if (egress) layer.egress = egress;
+	const fetchEgress = parseEgressEnv(
+		env.WEBVEIL_FETCH_EGRESS,
+		env.WEBVEIL_FETCH_EGRESS_URL,
+	);
+	if (fetchEgress) layer.fetchEgress = fetchEgress;
 	return layer;
 }
 

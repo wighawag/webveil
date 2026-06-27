@@ -10,6 +10,7 @@ import {Agent, type Dispatcher, ProxyAgent, fetch as undiciFetch} from 'undici';
 import {socksDispatcher} from 'fetch-socks';
 import type {Config, Egress} from './config.js';
 import {isUnixBaseUrl} from './baseurl.js';
+import {isLoopbackHost} from './security.js';
 
 /** Thrown when a configured egress proxy cannot be built. Never swallowed. */
 export class EgressError extends Error {
@@ -20,19 +21,24 @@ export class EgressError extends Error {
 }
 
 /**
- * Fail-loud guard for the false-confidence combo: a `unix:` (local-socket)
- * backend `baseUrl` configured with a NON-direct egress (`http`/`socks5`). A
- * Unix socket is inherently local, so proxying that hop is the same fake-
- * anonymity footgun as proxying a loopback TCP baseUrl: webveil would route a
- * pointless local call through the proxy while the backend (SearXNG) crawls the
- * public web from the real IP, OUTSIDE webveil's egress. Refuse it and point at
- * the real fix.
+ * Fail-loud guard for the false-confidence combo on the BACKEND hop: a LOCAL
+ * backend `baseUrl` (a `unix:` socket OR a loopback-TCP host: 127.0.0.0/8, ::1,
+ * localhost) configured with a NON-direct egress (`http`/`socks5`). A local
+ * backend is inherently local, so proxying that hop is fake anonymity: webveil
+ * would route a pointless local call through the proxy while the backend
+ * (SearXNG) crawls the public web from the real IP, OUTSIDE webveil's egress.
+ * Refuse it and point at the real fix.
  *
- * OVERLAP SEAM (recorded): this is the loopback false-confidence family. The
- * sibling task `fail-loud-on-proxied-loopback-backend` adds the broader guard
- * for loopback TCP baseUrls (127.0.0.0/8, ::1, localhost). When it lands, fold
- * THIS `unix:`-is-loopback-equivalent case into that single guard instead of
- * keeping a parallel check here.
+ * SCOPE: this keys on the BACKEND `egress` + `baseUrl` ONLY. It does NOT consult
+ * `fetchEgress`: a socks5 FETCH hop with a local+direct BACKEND hop is the blessed
+ * local-SearXNG + proxied-web_fetch topology (docs/adr/0003) and is allowed (the
+ * fetch target is an arbitrary public URL, not the loopback baseUrl). A REMOTE
+ * backend over a proxy stays valid (the guard fires on LOCAL hosts only; a LAN
+ * RFC1918 backend over SOCKS is intentionally NOT treated as loopback).
+ *
+ * This folds in the sibling task `fail-loud-on-proxied-loopback-backend`: the
+ * loopback-TCP case lives in THIS single guard (reusing security's loopback
+ * classification), not a parallel check.
  */
 export function assertEgressAllowsBaseUrl(cfg: Config): void {
 	if (cfg.egress.mode === 'direct') return;
@@ -42,8 +48,37 @@ export function assertEgressAllowsBaseUrl(cfg: Config): void {
 				`proxied — it is inherently local, so proxying it gives fake ` +
 				`anonymity (SearXNG still crawls the web from your real IP). Set ` +
 				`egress=direct and proxy the backend itself (SearXNG's ` +
-				`outgoing.proxies), or use a remote backend.`,
+				`outgoing.proxies), or use a remote backend. To proxy web_fetch while ` +
+				`keeping the local backend, set fetchEgress (not egress) instead.`,
 		);
+	let host: string;
+	try {
+		host = new URL(cfg.baseUrl).hostname;
+	} catch {
+		return; // a malformed baseUrl is the backend's own problem, not this guard's
+	}
+	if (isLoopbackHost(host))
+		throw new EgressError(
+			`egress ${cfg.egress.mode}: a loopback baseUrl (${host}) cannot be ` +
+				`proxied (it is local, so proxying it gives fake anonymity: a local ` +
+				`SearXNG still crawls the web from your real IP). Set egress=direct ` +
+				`and proxy the backend itself (SearXNG's outgoing.proxies), or use a ` +
+				`remote backend. To proxy web_fetch while keeping the local backend, ` +
+				`set fetchEgress (not egress) instead.`,
+		);
+}
+
+/**
+ * The FETCH-hop egress, resolved from `fetchEgress ?? egress`. Returns a Config
+ * whose `.egress` carries the FETCH-hop egress so the existing dispatcher / fetch
+ * / SSRF builders (which all key off `cfg.egress`) are reused verbatim for the
+ * fetch hop. When `fetchEgress` is unset the FETCH hop inherits the backend
+ * `egress`, so single-knob configs behave exactly as before. The carried
+ * `baseUrl` is irrelevant to the fetch hop (fetch targets are arbitrary URLs).
+ */
+export function fetchEgressConfig(cfg: Config): Config {
+	if (!cfg.fetchEgress || cfg.fetchEgress === cfg.egress) return cfg;
+	return {...cfg, egress: cfg.fetchEgress};
 }
 
 function socksFromUrl(raw: string): Dispatcher {

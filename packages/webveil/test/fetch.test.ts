@@ -205,6 +205,133 @@ describe('distilly is handed webveil egress fetch (never a global), guarded by S
 	});
 });
 
+describe('per-hop egress: web_fetch uses the FETCH hop (fetchEgress ?? egress)', () => {
+	it('builds the egress fetch + guard from the FETCH-hop config (fetchEgress)', async () => {
+		// Local backend on a DIRECT backend hop, web_fetch proxied via socks5.
+		const config = cfg({
+			baseUrl: 'unix:/run/searxng.sock',
+			egress: {mode: 'direct'},
+			fetchEgress: {mode: 'socks5', url: 'socks5h://127.0.0.1:1080'},
+		});
+		const createEgressFetch = vi.fn(() => spyEgressFetch());
+		const guardEgressFetch = vi.fn((f: EgressFetch) => f);
+		const extract = vi.fn(async (url: string) => ({
+			url,
+			markdown: '',
+			truncated: false,
+		}));
+		await fetch(
+			'https://example.com/p',
+			{},
+			{
+				resolveConfig: () => config,
+				getBackend: () => searchOnlyBackend(),
+				createEgressFetch,
+				guardEgressFetch,
+				extract: extract as never,
+			},
+		);
+		// Both the egress fetch AND the SSRF guard see the FETCH-hop egress (socks5),
+		// NOT the backend-hop egress (direct). The carried baseUrl is the backend's
+		// (irrelevant to fetch targets) but the egress is the fetch hop's.
+		const egressArg = createEgressFetch.mock.calls[0]![0] as Config;
+		expect(egressArg.egress).toEqual({
+			mode: 'socks5',
+			url: 'socks5h://127.0.0.1:1080',
+		});
+		const guardCfg = guardEgressFetch.mock.calls[0]![1] as Config;
+		expect(guardCfg.egress).toEqual({
+			mode: 'socks5',
+			url: 'socks5h://127.0.0.1:1080',
+		});
+	});
+
+	it('inherits the backend egress for the fetch hop when fetchEgress is unset', async () => {
+		const config = cfg({
+			baseUrl: 'https://searx.example.com',
+			egress: {mode: 'socks5', url: 'socks5://127.0.0.1:9050'},
+		});
+		const createEgressFetch = vi.fn(() => spyEgressFetch());
+		await fetch(
+			'https://example.com',
+			{},
+			{
+				resolveConfig: () => config,
+				getBackend: () => searchOnlyBackend(),
+				createEgressFetch,
+				guardEgressFetch: (f) => f,
+				extract: (async (url: string) => ({
+					url,
+					markdown: '',
+					truncated: false,
+				})) as never,
+			},
+		);
+		const egressArg = createEgressFetch.mock.calls[0]![0] as Config;
+		expect(egressArg.egress).toEqual(config.egress); // inherited
+	});
+
+	it('FAILS LOUD (no I/O) when the fetch-hop proxy is unbuildable', async () => {
+		// Real createEgressFetch (default) + an unbuildable fetchEgress proxy: the
+		// throw happens at build time, before the extractor is reached.
+		const extract = vi.fn();
+		await expect(
+			fetch(
+				'https://example.com',
+				{},
+				{
+					resolveConfig: () =>
+						cfg({
+							baseUrl: 'http://127.0.0.1:8080',
+							egress: {mode: 'direct'},
+							fetchEgress: {mode: 'socks5', url: 'not a url'},
+						}),
+					getBackend: () => searchOnlyBackend(),
+					extract: extract as never,
+				},
+			),
+		).rejects.toThrow(/could not build proxy/);
+		expect(extract).not.toHaveBeenCalled();
+	});
+
+	it('a backend /extract uses the BACKEND hop, not the fetch hop', async () => {
+		// A backend with its own /extract reaches the backend baseUrl, so it must use
+		// the BACKEND dispatcher (built from config.egress), never fetchEgress.
+		const config = cfg({
+			backend: 'tavily-compat',
+			baseUrl: 'https://tavily.example.com',
+			egress: {mode: 'socks5', url: 'socks5://127.0.0.1:9050'},
+			fetchEgress: {mode: 'direct'},
+		});
+		const dispatcher = {} as never;
+		const buildDispatcher = vi.fn(() => dispatcher);
+		const http = {fetchJson: async () => ({}), fetchText: async () => ''};
+		const backendFetch = vi.fn(async (url: string) => ({
+			url,
+			markdown: 'b',
+			truncated: false,
+		}));
+		const backend: Backend = {
+			async search() {
+				return [];
+			},
+			fetch: backendFetch,
+		};
+		await fetch(
+			'https://example.com',
+			{},
+			{
+				resolveConfig: () => config,
+				getBackend: () => backend,
+				buildDispatcher,
+				createHttp: () => http,
+			},
+		);
+		// The backend-hop dispatcher was built from the FULL config (backend egress).
+		expect(buildDispatcher).toHaveBeenCalledWith(config);
+	});
+});
+
 describe('SSRF via the egress-bound fetch (real guard, end-to-end)', () => {
 	// Use the REAL extract + REAL guard so the guarded egress fetch is actually
 	// exercised against a private-IP request, covering distilly's rule-rewritten

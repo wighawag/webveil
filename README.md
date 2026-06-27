@@ -71,20 +71,31 @@ load-bearing consequence for SearXNG:
   anonymity. (A *remote* SearXNG over SOCKS is legitimate and allowed, the guard keys on
   loopback specifically.)
 
+webveil splits egress into **two independent hops** so you can set them differently (see
+[Per-hop egress](#per-hop-egress-local-searxng--proxied-web_fetch) below):
+
+- **`egress`** governs the BACKEND hop (webveil -> backend `baseUrl`).
+- **`fetchEgress`** governs the `web_fetch` hop (webveil -> arbitrary URL). It DEFAULTS
+  to inheriting `egress` when unset, so a single `egress` still drives both hops exactly
+  as before.
+
 So the correct setups:
 
-| Goal | webveil egress | backend | Who anonymizes the web hop |
-| --- | --- | --- | --- |
-| Local SearXNG, anonymous searches | `direct` | local SearXNG | **SearXNG itself**, set its `outgoing.proxies` (Tor/SOCKS) in `settings.yml` |
-| Remote SearXNG, hide your IP from it | `socks5` | the **remote** SearXNG url | webveil's hop (Mullvad/Tor) |
-| Anonymous `web_fetch` of arbitrary URLs | `socks5` | (any) | webveil's hop |
-| Non-anonymous everyday use | `direct` | local SearXNG | nobody (honest) |
+| Goal | backend hop (`egress`) | `web_fetch` hop (`fetchEgress`) | backend | Who anonymizes the web hop |
+| --- | --- | --- | --- | --- |
+| Local SearXNG, anonymous searches | `direct` | `direct` | local SearXNG | **SearXNG itself**, set its `outgoing.proxies` (Tor/SOCKS) in `settings.yml` |
+| **Local SearXNG + anonymous `web_fetch`** (the common one) | `direct` | `socks5` | local SearXNG | SearXNG's `outgoing.proxies` for SEARCH; webveil's hop for FETCH |
+| Remote SearXNG, hide your IP from it | `socks5` | (inherits) | the **remote** SearXNG url | webveil's hop (Mullvad/Tor) |
+| Anonymous `web_fetch` of arbitrary URLs | `direct`/(any) | `socks5` | (any) | webveil's hop |
+| Non-anonymous everyday use | `direct` | `direct` | local SearXNG | nobody (honest) |
 
-Rule of thumb: **proxy the hop that actually reaches the public internet.** For a
-self-hosted SearXNG that hop is SearXNG's, so the proxy goes on SearXNG
-(`outgoing.proxies`), and webveil stays `direct`. webveil's `socks5` mode is for *remote*
-backends and for `web_fetch`. See
-[`work/notes/findings/webveil-anonymity-boundary.md`](work/notes/findings/webveil-anonymity-boundary.md).
+Rule of thumb: **proxy the hop that actually reaches the public internet.** For SEARCH
+via a self-hosted SearXNG that hop is SearXNG's, so the search proxy goes on SearXNG
+(`outgoing.proxies`) and webveil's backend hop stays `direct`. For `web_fetch` the public
+hop is webveil's own, so `fetchEgress: socks5` is correct even while the backend stays
+local. webveil's backend `socks5` mode is for *remote* backends. See
+[`work/notes/findings/webveil-anonymity-boundary.md`](work/notes/findings/webveil-anonymity-boundary.md)
+and [`docs/adr/0003`](docs/adr/0003-per-hop-egress-backend-vs-fetch.md).
 
 ## How it works (seams)
 
@@ -135,15 +146,66 @@ or per folder in `webveil.json`:
 { "egress": { "mode": "socks5", "url": "socks5://10.64.0.1:1080" } }
 ```
 
-> **`socks5` is for a REMOTE backend or `web_fetch`, NOT a local SearXNG.** If your
-> `baseUrl` is a local SearXNG (`unix:` or `127.0.0.1`), `WEBVEIL_EGRESS=socks5` is
-> **rejected** (fail-loud), because webveil → local-SearXNG is a local hop; proxying it
-> would give fake anonymity while SearXNG still crawls the web from your real IP. The hop
-> that needs proxying is SearXNG's own, so you put the proxy on **SearXNG**
-> (`outgoing.proxies`) and keep webveil `direct`. See
+> **`egress: socks5` is for a REMOTE backend, NOT a local SearXNG.** If your `baseUrl` is
+> a local SearXNG (`unix:` or loopback like `127.0.0.1` / `localhost`),
+> `WEBVEIL_EGRESS=socks5` is **rejected** (fail-loud), because webveil → local-SearXNG is
+> a local hop; proxying it would give fake anonymity while SearXNG still crawls the web
+> from your real IP. The hop that needs proxying is SearXNG's own, so you put the search
+> proxy on **SearXNG** (`outgoing.proxies`) and keep the backend hop `direct`. To proxy
+> `web_fetch` while keeping the local backend, set **`fetchEgress`** (the FETCH hop), NOT
+> `egress` (see [Per-hop egress](#per-hop-egress-local-searxng--proxied-web_fetch)). See
 > [Where does anonymity live?](#where-does-anonymity-live-read-before-turning-on-egress)
 > for the full table; the same SOCKS5 listener (Mullvad/Tor/wireproxy below) plugs into
 > either side.
+
+### Per-hop egress: local SearXNG + proxied `web_fetch`
+
+The most common self-hosted topology is a **local SearXNG** (loopback TCP or a `unix:`
+socket) for search, with `web_fetch` of arbitrary URLs going out through a **SOCKS5
+proxy** (e.g. wireproxy → ProtonVPN at `socks5h://127.0.0.1:1080`). The two hops are
+independent, so set them independently:
+
+- **backend hop** (`egress`): `direct`. The local SearXNG anonymizes its OWN engine
+  crawl via `outgoing.proxies` in `settings.yml`.
+- **`web_fetch` hop** (`fetchEgress`): `socks5`. The fetch target is a real public URL,
+  so proxying it genuinely anonymizes that hop.
+
+Concrete `~/.config/webveil/config.json`:
+
+```json
+{
+  "baseUrl": "http://127.0.0.1:8080",
+  "egress": { "mode": "direct" },
+  "fetchEgress": { "mode": "socks5", "url": "socks5h://127.0.0.1:1080" }
+}
+```
+
+Or a `unix:`-socket SearXNG with the same proxied fetch:
+
+```json
+{
+  "baseUrl": "unix:/usr/local/searxng/run/socket",
+  "fetchEgress": { "mode": "socks5", "url": "socks5h://127.0.0.1:1080" }
+}
+```
+
+(`egress` omitted defaults to `direct`; `fetchEgress` does NOT inherit it here, it is set
+explicitly to `socks5`.) Or via env:
+
+```sh
+export WEBVEIL_BASE_URL=http://127.0.0.1:8080   # local SearXNG, backend hop stays direct
+export WEBVEIL_FETCH_EGRESS=socks5
+export WEBVEIL_FETCH_EGRESS_URL=socks5h://127.0.0.1:1080
+```
+
+**Prefer `socks5h://` for the fetch hop** (the `h` means the proxy does DNS resolution):
+webveil does not resolve hostnames locally under proxy egress, and `socks5h` makes the
+remote-DNS intent explicit so a target hostname is never leaked to your local resolver.
+(`fetchEgress` defaults to inheriting `egress` when unset, so existing single-`egress`
+configs are completely unchanged. The backend-hop guard still rejects `egress: socks5`
+with a local `baseUrl`; it does NOT block this `fetchEgress` setup, because the fetch hop
+is a different, genuinely-public hop. See
+[`docs/adr/0003`](docs/adr/0003-per-hop-egress-backend-vs-fetch.md).)
 
 ### Two layers keep your `git push` (and everything else) off the proxy
 
@@ -255,13 +317,21 @@ UDP path.)
    ```
 3. Point the SOCKS5 endpoint (`socks5://127.0.0.1:1080`) at the **hop that reaches the
    public web** (see the warning above):
-   - **Remote backend, or `web_fetch`** → webveil's egress:
+   - **Remote backend** (search via a remote SearXNG) → webveil's BACKEND egress:
      ```sh
      export WEBVEIL_EGRESS=socks5
-     export WEBVEIL_EGRESS_URL=socks5://127.0.0.1:1080
+     export WEBVEIL_EGRESS_URL=socks5h://127.0.0.1:1080
      ```
-   - **Local SearXNG** → SearXNG's own outbound, in its `settings.yml` (keep webveil
-     `direct`):
+   - **`web_fetch`** (arbitrary URLs, with ANY backend incl. a LOCAL SearXNG) → webveil's
+     FETCH egress:
+     ```sh
+     export WEBVEIL_FETCH_EGRESS=socks5
+     export WEBVEIL_FETCH_EGRESS_URL=socks5h://127.0.0.1:1080
+     ```
+     This proxies `web_fetch` while the local-SearXNG backend hop stays `direct` (see
+     [Per-hop egress](#per-hop-egress-local-searxng--proxied-web_fetch)).
+   - **Local SearXNG SEARCH** → SearXNG's own outbound, in its `settings.yml` (keep the
+     backend hop `direct`):
      ```yaml
      outgoing:
        proxies:
@@ -270,7 +340,7 @@ UDP path.)
      ```
      This routes SearXNG's engine requests (→ Google/Bing/…) through Proton; webveil's
      local hop to SearXNG stays direct. (`WEBVEIL_EGRESS=socks5` with a local `baseUrl` is
-     rejected, so this is the only correct shape for local SearXNG.)
+     rejected; proxy SEARCH on SearXNG, and proxy `web_fetch` via `WEBVEIL_FETCH_EGRESS`.)
 
 Because wireproxy is userspace, only the traffic you point at it exits via Proton; your
 `git push`, shell, and OS stay on your real IP, with no system tunnel. A ready-made Docker
@@ -303,21 +373,22 @@ a promise); `LOC` is the actual line count of the built file.
 
 | module                             |  LOC | target |
 | ---------------------------------- | ---: | -----: |
-| src/index.ts (barrel)              |   82 |      - |
-| src/cli.ts (incur frontend)        |  106 |    ~80 |
-| src/core/search.ts                 |  104 |    ~90 |
-| src/core/fetch.ts                  |  132 |    ~90 |
-| src/core/config.ts                 |  128 |    ~80 |
-| src/core/egress.ts                 |  106 |    ~70 |
+| src/index.ts (barrel)              |   85 |      - |
+| src/cli.ts (incur frontend)        |  115 |    ~80 |
+| src/core/search.ts                 |  140 |    ~90 |
+| src/core/fetch.ts                  |  150 |    ~90 |
+| src/core/config.ts                 |  159 |    ~80 |
+| src/core/egress.ts                 |  169 |    ~70 |
 | src/core/http.ts                   |   62 |    ~60 |
 | src/core/extract.ts                |   82 |    ~60 |
-| src/core/security.ts (SSRF guard)  |  141 |      - |
+| src/core/security.ts (SSRF guard)  |  158 |      - |
+| src/core/baseurl.ts (transport)    |  104 |      - |
 | src/core/backends/types.ts         |   61 |    ~40 |
 | src/core/backends/registry.ts      |   41 |    ~60 |
 | src/core/backends/searxng.ts       |   70 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
 | src/core/backends/custom.ts        |  159 |    ~70 |
-| **subtotal**                       | 1430 |        |
+| **subtotal**                       | 1711 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
@@ -325,7 +396,7 @@ a promise); `LOC` is the actual line count of the built file.
 | ------------ | --: | -----: |
 | src/index.ts | 168 |    ~90 |
 
-**Total own source: 1598 LOC** (excluding deps).
+**Total own source: 1879 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably
 > `tavily-compat.ts`, `custom.ts`, `pi-webveil/src/index.ts`), and two built modules

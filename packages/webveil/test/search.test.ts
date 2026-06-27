@@ -150,7 +150,13 @@ describe('core.search()', () => {
 	});
 
 	it('builds the http helper from the dispatcher built from the resolved config', async () => {
-		const config = cfg({egress: {mode: 'http', url: 'http://127.0.0.1:8118'}});
+		// A REMOTE baseUrl: a non-direct egress on a LOCAL baseUrl is the
+		// false-confidence combo the backend-hop guard now rejects (see the
+		// per-hop egress tests), so this wiring assertion keys on a remote backend.
+		const config = cfg({
+			baseUrl: 'https://searx.example.com',
+			egress: {mode: 'http', url: 'http://127.0.0.1:8118'},
+		});
 		const dispatcher = {} as never;
 		const buildDispatcher = vi.fn(() => dispatcher);
 		const createHttp = vi.fn(() => fakeHttp());
@@ -185,6 +191,45 @@ describe('core.search()', () => {
 			},
 		);
 		expect(getBackend).toHaveBeenCalledWith('searxng', config);
+	});
+
+	it('allows a LOCAL+direct backend even when fetchEgress is socks5 (backend hop only)', async () => {
+		// The blessed local-SearXNG + proxied-web_fetch topology: the backend-hop
+		// guard inspects egress (direct) + baseUrl, NOT fetchEgress, so search runs.
+		const {deps: d, calls} = deps(
+			[{title: 'A', url: 'https://example.com/a'}],
+			{
+				resolveConfig: () =>
+					cfg({
+						baseUrl: 'http://127.0.0.1:8080',
+						egress: {mode: 'direct'},
+						fetchEgress: {mode: 'socks5', url: 'socks5h://127.0.0.1:1080'},
+					}),
+				// real assertEgressAllowsBaseUrl (default) must NOT throw here
+			},
+		);
+		await expect(search('q', {}, d)).resolves.toHaveLength(1);
+		expect(calls).toHaveLength(1);
+	});
+
+	it('FAILS LOUD when a non-direct BACKEND egress targets a loopback baseUrl', async () => {
+		const getBackend = vi.fn();
+		await expect(
+			search(
+				'q',
+				{},
+				{
+					resolveConfig: () =>
+						cfg({
+							baseUrl: 'http://127.0.0.1:8080',
+							egress: {mode: 'socks5', url: 'socks5://127.0.0.1:9050'},
+						}),
+					createHttp: () => fakeHttp(),
+					getBackend: getBackend as never,
+				},
+			),
+		).rejects.toThrow();
+		expect(getBackend).not.toHaveBeenCalled();
 	});
 
 	it('FAILS LOUD when the dispatcher is unbuildable (never un-proxied)', async () => {

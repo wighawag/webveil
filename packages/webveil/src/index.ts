@@ -29,9 +29,11 @@ export type {
 
 // egress seam
 export {
+	assertEgressAllowsBaseUrl,
 	buildDispatcher,
 	createEgressFetch,
 	EgressError,
+	fetchEgressConfig,
 } from './core/egress.js';
 export type {Dispatcher, EgressFetch} from './core/egress.js';
 
@@ -46,6 +48,7 @@ export type {ExtractOptions, ExtractDeps} from './core/extract.js';
 export {
 	assertPublicUrl,
 	guardEgressFetch,
+	isLoopbackHost,
 	isPrivateIp,
 	SsrfError,
 } from './core/security.js';

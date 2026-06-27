@@ -118,6 +118,77 @@ describe('resolveConfig', () => {
 		expect(existsSync(realGlobal)).toBe(existedBefore);
 	});
 
+	it('leaves fetchEgress UNSET for an old single-egress config (backward compat)', () => {
+		const cfg = resolveConfig({
+			cwd: root,
+			env: {
+				WEBVEIL_EGRESS: 'socks5',
+				WEBVEIL_EGRESS_URL: 'socks5://127.0.0.1:9050',
+			},
+			globalPath: join(root, 'no-global.json'),
+		});
+		expect(cfg.egress).toEqual({
+			mode: 'socks5',
+			url: 'socks5://127.0.0.1:9050',
+		});
+		// Unset: the fetch hop inherits egress (resolved at fetch time), so an
+		// existing single-knob config behaves exactly as before.
+		expect(cfg.fetchEgress).toBeUndefined();
+	});
+
+	it('resolves an independent fetchEgress from env (local backend + proxied fetch)', () => {
+		const cfg = resolveConfig({
+			cwd: root,
+			env: {
+				WEBVEIL_BASE_URL: 'http://127.0.0.1:8080',
+				// backend hop stays direct (no WEBVEIL_EGRESS); only the fetch hop is proxied
+				WEBVEIL_FETCH_EGRESS: 'socks5',
+				WEBVEIL_FETCH_EGRESS_URL: 'socks5h://127.0.0.1:1080',
+			},
+			globalPath: join(root, 'no-global.json'),
+		});
+		expect(cfg.egress).toEqual({mode: 'direct'}); // backend hop default
+		expect(cfg.fetchEgress).toEqual({
+			mode: 'socks5',
+			url: 'socks5h://127.0.0.1:1080',
+		});
+	});
+
+	it('reads fetchEgress from a project webveil.json', () => {
+		writeJson(join(root, 'webveil.json'), {
+			baseUrl: 'unix:/run/searxng.sock',
+			fetchEgress: {mode: 'socks5', url: 'socks5h://127.0.0.1:1080'},
+		});
+		const cfg = resolveConfig({
+			cwd: root,
+			env: {},
+			globalPath: join(root, 'no-global.json'),
+		});
+		expect(cfg.egress).toEqual({mode: 'direct'});
+		expect(cfg.fetchEgress).toEqual({
+			mode: 'socks5',
+			url: 'socks5h://127.0.0.1:1080',
+		});
+	});
+
+	it('env fetchEgress overrides a project fetchEgress (precedence)', () => {
+		writeJson(join(root, 'webveil.json'), {
+			fetchEgress: {mode: 'http', url: 'http://project:9'},
+		});
+		const cfg = resolveConfig({
+			cwd: root,
+			env: {
+				WEBVEIL_FETCH_EGRESS: 'socks5',
+				WEBVEIL_FETCH_EGRESS_URL: 'socks5://127.0.0.1:9050',
+			},
+			globalPath: join(root, 'no-global.json'),
+		});
+		expect(cfg.fetchEgress).toEqual({
+			mode: 'socks5',
+			url: 'socks5://127.0.0.1:9050',
+		});
+	});
+
 	it('resolves the global file under $XDG_CONFIG_HOME when set', () => {
 		const xdg = join(root, 'xdg');
 		writeJson(join(xdg, 'webveil', 'config.json'), {backend: 'from-xdg'});

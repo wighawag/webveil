@@ -55,3 +55,24 @@ specifically, so remote-SearXNG-over-SOCKS stays valid. See the task
 
 (`web_fetch` is unaffected: its target is an arbitrary URL, not the loopback `baseUrl`; the
 guard is about the BACKEND baseUrl hop, not fetch targets \u2014 SSRF already governs those.)
+
+## Per-hop egress: the boundary made configurable (docs/adr/0003)
+
+The two hops the egress governs (backend `baseUrl`; `web_fetch` target) are GENUINELY
+INDEPENDENT, and the single most common self-hosted topology wants them set differently:
+a LOCAL SearXNG on a `direct` backend hop (its own `outgoing.proxies` anonymizes the
+engine crawl) WHILE `web_fetch` exits through a SOCKS5 proxy (wireproxy -> ProtonVPN at
+`socks5h://127.0.0.1:1080`). This is NOT the false-confidence combo: the fetch target is
+a real public URL, so proxying it genuinely anonymizes that hop.
+
+Decision (docs/adr/0003): an OPTIONAL `Config.fetchEgress` (env `WEBVEIL_FETCH_EGRESS` /
+`WEBVEIL_FETCH_EGRESS_URL`) governs the FETCH hop, defaulting to inheriting `egress` when
+unset (so single-knob configs are unchanged). `egress` governs the BACKEND hop. The
+fail-loud guard stays scoped to the BACKEND hop: a non-`direct` `egress` on a LOCAL
+backend `baseUrl` (now loopback-TCP AND `unix:`) still throws `EgressError`, but it does
+NOT consult `fetchEgress`, so a socks5 fetch hop with a local+direct backend is allowed
+and blessed. The SSRF guard's proxy-relaxation keys on the FETCH hop's egress (relax
+under a proxied fetch hop), not the backend hop's. The loopback-TCP arm folds in the
+sibling task `fail-loud-on-proxied-loopback-backend` and reuses `core/security.ts`
+loopback classification (deliberately tighter than `isPrivateIp`: a LAN/RFC1918 backend
+over SOCKS is a legitimate remote topology, not loopback).

@@ -1,6 +1,6 @@
 {
 	"name": "webveil",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Anonymous-capable, self-hosted, account-free web search and fetch for agents. CLI + MCP (built on incur), pi-agnostic. Swappable backend and egress (direct, http proxy, socks5/Tor).",
 	"license": "AGPL-3.0-or-later",
 	"keywords": [

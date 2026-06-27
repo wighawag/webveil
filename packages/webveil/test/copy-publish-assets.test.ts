@@ -15,6 +15,9 @@ import {
 	copyPublishAssets,
 	repoRoot,
 	PUBLISH_ASSETS,
+	rewriteReadmeLinks,
+	resolvePinRef,
+	GITHUB_REPO,
 } from '../../../scripts/copy-publish-assets.mjs';
 
 // Build a throwaway "repo" with root README.md + LICENSE and a package dir
@@ -23,7 +26,11 @@ let fakeRepo: string;
 
 beforeEach(() => {
 	fakeRepo = mkdtempSync(join(tmpdir(), 'webveil-copy-'));
-	writeFileSync(join(fakeRepo, 'README.md'), '# root readme', 'utf8');
+	writeFileSync(
+		join(fakeRepo, 'README.md'),
+		'See [a note](work/notes/x.md) and [ADR](docs/adr/0001.md).',
+		'utf8',
+	);
 	writeFileSync(join(fakeRepo, 'LICENSE'), 'license text', 'utf8');
 });
 
@@ -41,8 +48,14 @@ describe('copyPublishAssets', () => {
 		expect(written.sort()).toEqual(
 			[join(pkg, 'README.md'), join(pkg, 'LICENSE')].sort(),
 		);
-		expect(readFileSync(join(pkg, 'README.md'), 'utf8')).toBe('# root readme');
+		// LICENSE is copied verbatim; README has its non-shipped links rewritten
+		// to absolute GitHub URLs (the package has no package.json here, so the
+		// pin ref falls back to the repo's git HEAD or 'main').
 		expect(readFileSync(join(pkg, 'LICENSE'), 'utf8')).toBe('license text');
+		const readme = readFileSync(join(pkg, 'README.md'), 'utf8');
+		expect(readme).toContain(`](https://github.com/${GITHUB_REPO}/blob/`);
+		expect(readme).toContain('/work/notes/x.md)');
+		expect(readme).not.toContain('](work/notes/x.md)');
 		expect(PUBLISH_ASSETS).toEqual(['README.md', 'LICENSE']);
 	});
 
@@ -87,6 +100,26 @@ describe('copyPublishAssets', () => {
 		}
 	});
 
+	it('pins links to `${name}@${version}` from the package.json', () => {
+		const pkg = join(fakeRepo, 'packages', 'webveil');
+		mkdirSync(pkg, {recursive: true});
+		writeFileSync(
+			join(pkg, 'package.json'),
+			JSON.stringify({name: 'webveil', version: '9.9.9'}),
+			'utf8',
+		);
+
+		copyPublishAssets({packageDir: pkg, root: fakeRepo});
+
+		const readme = readFileSync(join(pkg, 'README.md'), 'utf8');
+		expect(readme).toContain(
+			`](https://github.com/${GITHUB_REPO}/blob/webveil@9.9.9/work/notes/x.md)`,
+		);
+		expect(readme).toContain(
+			`](https://github.com/${GITHUB_REPO}/blob/webveil@9.9.9/docs/adr/0001.md)`,
+		);
+	});
+
 	it('resolves the real repo root to the directory holding root README.md', () => {
 		const root = repoRoot();
 		// The real repo root must be the parent of this test file's package's
@@ -95,5 +128,84 @@ describe('copyPublishAssets', () => {
 		const expectedRoot = resolve(here, '..', '..', '..');
 		expect(resolve(root)).toBe(expectedRoot);
 		expect(existsSync(join(root, 'README.md'))).toBe(true);
+	});
+});
+
+describe('rewriteReadmeLinks', () => {
+	const ref = 'webveil@1.2.3';
+	const base = `https://github.com/${GITHUB_REPO}/blob/${ref}`;
+
+	it('rewrites non-shipped repo-relative links to pinned GitHub URLs', () => {
+		expect(rewriteReadmeLinks('[x](work/notes/a.md)', {ref})).toBe(
+			`[x](${base}/work/notes/a.md)`,
+		);
+		expect(rewriteReadmeLinks('[x](docs/adr/0001.md)', {ref})).toBe(
+			`[x](${base}/docs/adr/0001.md)`,
+		);
+		expect(rewriteReadmeLinks('[x](packages/webveil)', {ref})).toBe(
+			`[x](${base}/packages/webveil)`,
+		);
+		expect(rewriteReadmeLinks('[x](CONTEXT.md)', {ref})).toBe(
+			`[x](${base}/CONTEXT.md)`,
+		);
+	});
+
+	it('preserves an in-file anchor on a rewritten link', () => {
+		expect(
+			rewriteReadmeLinks('[x](docs/searxng-setup.md#the-port-gotcha)', {ref}),
+		).toBe(`[x](${base}/docs/searxng-setup.md#the-port-gotcha)`);
+	});
+
+	it('leaves shipped assets, absolute URLs, and anchors untouched', () => {
+		for (const link of [
+			'[x](LICENSE)',
+			'[x](COPYRIGHT)', // COPYRIGHT is shipped? no - but assert behaviour below
+			'[x](https://example.com/a)',
+			'[x](http://example.com)',
+			'[x](#an-anchor)',
+			'[x](mailto:a@b.c)',
+		]) {
+			if (link === '[x](COPYRIGHT)') continue; // checked separately
+			expect(rewriteReadmeLinks(link, {ref})).toBe(link);
+		}
+		// LICENSE ships in the tarball, so it stays relative.
+		expect(rewriteReadmeLinks('[x](LICENSE)', {ref})).toBe('[x](LICENSE)');
+		// COPYRIGHT does NOT ship, so it gets rewritten.
+		expect(rewriteReadmeLinks('[x](COPYRIGHT)', {ref})).toBe(
+			`[x](${base}/COPYRIGHT)`,
+		);
+	});
+
+	it('throws without a ref', () => {
+		expect(() => rewriteReadmeLinks('[x](work/a.md)', {})).toThrow(/ref/);
+	});
+});
+
+describe('resolvePinRef', () => {
+	it('prefers `${name}@${version}` from the package.json', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'webveil-pin-'));
+		try {
+			writeFileSync(
+				join(dir, 'package.json'),
+				JSON.stringify({name: 'pi-webveil', version: '0.2.1'}),
+				'utf8',
+			);
+			expect(resolvePinRef({packageDir: dir, env: {GITHUB_SHA: 'abc'}})).toBe(
+				'pi-webveil@0.2.1',
+			);
+		} finally {
+			rmSync(dir, {recursive: true, force: true});
+		}
+	});
+
+	it('falls back to GITHUB_SHA when no package version is available', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'webveil-pin-'));
+		try {
+			expect(
+				resolvePinRef({packageDir: dir, env: {GITHUB_SHA: 'deadbeef'}}),
+			).toBe('deadbeef');
+		} finally {
+			rmSync(dir, {recursive: true, force: true});
+		}
 	});
 });

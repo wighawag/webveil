@@ -22,104 +22,37 @@ framework-agnostic. Two thin frontends wrap that same core:
 
 ## Quick start
 
-webveil needs a **backend** to get results from. The zero-config default is a local
-**SearXNG** at `http://127.0.0.1:8080` on `direct` egress (non-anonymous). There is
-**no** zero-setup + anonymous + real-web-results option in the ecosystem, see
-[`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md);
-SearXNG (you run it) is the closest, `tavily-compat` (needs an account/key) is the other.
-
-### Run SearXNG (matches the default with no config)
+webveil needs a **backend** for results. The zero-config default is a local **SearXNG** at
+`http://127.0.0.1:8080` on `direct` egress (non-anonymous). Run one with Docker:
 
 ```sh
-# Docker: the container binds 8080 internally; map host 8080 -> container 8080
-# so it matches webveil's default baseUrl exactly.
+# The container binds 8080 internally; map host 8080 -> 8080 to match the default.
 docker run -d --name searxng -p 8080:8080 searxng/searxng
 ```
 
-Then `webveil search "…"` / `web_fetch` work with no config.
+Then searches and fetches work with no config:
 
-> **Port gotcha (you WILL hit this):** SearXNG's default port depends on how you install
-> it. A bare-metal / pip / source install defaults to **8888** (`settings.yml`
-> `server.port: 8888`). The Docker image binds **8080** internally regardless (its
-> entrypoint forces `0.0.0.0:8080`). SearXNG's own docs suggest `docker run … -p 8888:8080`
-> (host 8888 → container 8080). webveil's default expects **8080**. If your instance is on
-> any other port, point webveil at it:
->
-> ```sh
-> export WEBVEIL_BASE_URL=http://127.0.0.1:8888   # or wherever your instance listens
-> ```
->
-> or set `baseUrl` in `webveil.json` (see config seam below).
+```sh
+webveil search "hello world"
+```
 
-### Other SearXNG install options
+That's the whole happy path. Two things to know:
 
-webveil needs something to point `baseUrl` at: an **HTTP `host:port`**, or (script install)
-the **Unix socket** itself. How you get one:
+- **Enable SearXNG's JSON API.** A fresh install may serve only HTML and ship with the rate
+  limiter on, giving webveil `429` or an HTML page. The stock Docker image above works out
+  of the box; other installs need `json` in `search.formats` and `server.limiter: false`
+  for local use. See [SearXNG setup](docs/searxng-setup.md).
+- **Different port?** Point webveil at it (a non-Docker install often defaults to 8888):
+  ```sh
+  export WEBVEIL_BASE_URL=http://127.0.0.1:8888   # or wherever your instance listens
+  ```
+  or set `baseUrl` in `webveil.json`.
 
-- **Docker (above)**, binds a real TCP port directly; simplest if you only need webveil.
-- **Install script as a background service** (`sudo -H ./utils/searxng.sh install all`,
-  see <https://docs.searxng.org/admin/installation-scripts.html>), sets SearXNG up as a
-  systemd/uWSGI service. **Gotcha:** by default this listens on a **Unix socket**
-  (`socket = /usr/local/searxng/run/socket`), NOT a TCP port. And, crucially, that default
-  socket speaks the **native uwsgi protocol, NOT HTTP** (`socket = …`, not `http-socket =
-  …`), so even a `curl --unix-socket … http://localhost/` returns HTTP 000. webveil's
-  `unix:` baseUrl speaks **HTTP over a unix socket** via undici, so it CANNOT reach that
-  default uwsgi socket directly. Three ways to reach the install-script instance:
-  - **Point webveil straight at an HTTP unix socket** (no proxy, no extra process), once the
-    socket actually speaks HTTP. The install-script default does NOT, so first make uWSGI
-    serve HTTP on the socket: in the generated `.ini`, replace
-    `socket = /usr/local/searxng/run/socket` with
-    `http-socket = /usr/local/searxng/run/socket` (HTTP over the socket instead of the
-    uwsgi protocol). THEN point webveil at it with a `unix:` URL naming the socket file:
-    ```sh
-    export WEBVEIL_BASE_URL=unix:/usr/local/searxng/run/socket
-    ```
-    webveil dials the socket directly over undici (`Agent({connect:{socketPath}})`, no
-    extra dependency) and issues its normal `/search?...&format=json` request. The grammar
-    is `unix:<socketPath>[:<httpPath>]`: the socket file path, then an OPTIONAL `:` +
-    base path (mount point) the SearXNG app lives under (defaults to `/`, so the example
-    above requests `/search`; a non-root mount is `unix:/usr/local/searxng/run/socket:/searxng`).
-    (`unix:` works against ANY HTTP-on-a-unix-socket server, e.g. a Caddy/nginx upstream
-    bound to a socket; the uwsgi-vs-`http-socket` distinction above is the SearXNG-specific
-    catch.)
-    **Egress must be `direct`** for this: a Unix socket is inherently local, so combining a
-    `unix:` baseUrl with `egress=http`/`socks5` fails loud (proxying a local hop is fake
-    anonymity, see "Where does anonymity live?" below; proxy SearXNG's `outgoing.proxies`
-    instead and keep webveil `direct`).
-  - **Front it with a reverse proxy** (this is what the SearXNG docs' nginx/apache step is
-    for, it bridges HTTP-on-a-port to the uWSGI socket, serving BOTH the browser UI and
-    webveil). **Any HTTP server works**, the docs say so explicitly; **Caddy is fine** and
-    a good pick if you already run it. Plain Caddy `reverse_proxy` speaks **HTTP** to its
-    upstream, so point it at an `http-socket` (see below) or a TCP `http-socket`:
-    ```caddy
-    searxng.example.com {
-        reverse_proxy unix//usr/local/searxng/run/socket   # plain reverse_proxy = HTTP, so the socket must be http-socket = (not the uwsgi socket =)
-    }
-    ```
-    Then point webveil at the Caddy address. (Set SearXNG's `server.base_url` in
-    `settings.yml` to match, and keep the limiter in mind, see below.) If you want a Caddy
-    frontend AND webveil-direct, the simplest path is ONE `http-socket` that both consume
-    (Caddy's HTTP `reverse_proxy` and webveil's `unix:` both speak HTTP to it); you only
-    need the uwsgi `socket = ` form if Caddy uses an explicit uwsgi transport.
-  - **Or make uWSGI listen on a TCP port** instead of the socket: in the generated
-    `.ini`, replace `socket = …/run/socket` with `http-socket = 127.0.0.1:8888`, then point
-    webveil at `http://127.0.0.1:8888`. Good when you want ONLY webveil (no public web UI /
-    TLS).
-
-> **You will also need to enable the JSON API and (for a local instance) disable the
-> limiter.** A fresh script install ships with `server.limiter: true` and often no `json`
-> output format, so webveil gets `429 TOO MANY REQUESTS` or an HTML page. In SearXNG's
-> `settings.yml` set `server.limiter: false` + `server.public_instance: false` (safe for a
-> LOCAL, socket-only instance, NOT internet-exposed) and add `json` under `search.formats:`
-> (`[html, json]`), then restart uWSGI. This applies to EVERY option above, it is a
-> SearXNG-side requirement, not a webveil one.
-
-Full SearXNG install options (Docker, Compose, script, bare-metal): the official docs at
-<https://docs.searxng.org/admin/installation.html>. Install topology + the
-uwsgi-vs-`http-socket`, limiter, and reverse-proxy details captured in
-[`work/notes/findings/searxng-install-topology.md`](work/notes/findings/searxng-install-topology.md)
-and
-[`work/notes/findings/searxng-script-socket-is-uwsgi-not-http.md`](work/notes/findings/searxng-script-socket-is-uwsgi-not-http.md).
+For any non-Docker topology (install script, Unix sockets, reverse proxy, the
+uwsgi-vs-`http-socket` catch), see **[SearXNG setup (detailed)](docs/searxng-setup.md)**.
+There is **no** zero-setup + anonymous + real-web-results option in the ecosystem (see
+[`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md));
+SearXNG (you run it) is the closest, `tavily-compat` (needs an account/key) is the other.
 
 ### Where does anonymity live? (read before turning on egress)
 
@@ -202,6 +135,16 @@ or per folder in `webveil.json`:
 { "egress": { "mode": "socks5", "url": "socks5://10.64.0.1:1080" } }
 ```
 
+> **`socks5` is for a REMOTE backend or `web_fetch`, NOT a local SearXNG.** If your
+> `baseUrl` is a local SearXNG (`unix:` or `127.0.0.1`), `WEBVEIL_EGRESS=socks5` is
+> **rejected** (fail-loud), because webveil → local-SearXNG is a local hop; proxying it
+> would give fake anonymity while SearXNG still crawls the web from your real IP. The hop
+> that needs proxying is SearXNG's own, so you put the proxy on **SearXNG**
+> (`outgoing.proxies`) and keep webveil `direct`. See
+> [Where does anonymity live?](#where-does-anonymity-live-read-before-turning-on-egress)
+> for the full table; the same SOCKS5 listener (Mullvad/Tor/wireproxy below) plugs into
+> either side.
+
 ### Two layers keep your `git push` (and everything else) off the proxy
 
 A common worry: "if I route through Mullvad, will my `git push` to GitHub leak under the
@@ -262,6 +205,80 @@ clear on what is and isn't possible (see
 
 `WEBVEIL_EGRESS_URL=socks5://127.0.0.1:9050` with the Tor daemon running. Same per-request,
 webveil-only scoping applies.
+
+### Other SOCKS5 providers
+
+webveil's `socks5` egress is generic: it builds a SOCKS5 dispatcher from any
+`socks5://host:port` URL. Mullvad and Tor are just the documented examples. Anything that
+exposes a SOCKS5 endpoint works, e.g. an SSH dynamic forward (`ssh -D 1080 user@host`, then
+`socks5://127.0.0.1:1080`), or a local shadowsocks/sing-box listener. Use the `socks5://`
+scheme (remote DNS, no leak; webveil does not resolve hostnames locally under proxy
+egress). Verify any provider with
+`curl https://ipv4.am.i.mullvad.net --socks5-hostname <host>:<port>`.
+
+### ProtonVPN (via wireproxy)
+
+ProtonVPN **does not offer a native SOCKS5 proxy** ([and says it never
+will](https://protonvpn.com/support/socks5)), unlike Mullvad's built-in `10.64.0.1:1080`.
+There is no `socks5://` endpoint Proton hands you. But you can wrap a Proton **WireGuard**
+tunnel in a local SOCKS5 listener and point webveil at that, exactly like the Tor case.
+
+[wireproxy](https://github.com/pufferffish/wireproxy) is a userspace WireGuard client that
+exposes a SOCKS5 port, which suits webveil's design (a local `127.0.0.1` listener,
+webveil-only scope, no system-wide tunnel). **You do not need the Proton app or CLI
+running:** wireproxy speaks the WireGuard protocol itself in userspace, so the `.conf`'s
+keys + endpoint are all it needs to establish the tunnel (no `wg`/`wg-quick`, no network
+interface, no root). Proton's dashboard is just where you generate the config once. (One
+limit: wireproxy proxies TCP via SOCKS5 CONNECT, which is all webveil needs; it is not a
+UDP path.)
+
+1. Download a **WireGuard config** from Proton's account dashboard (Downloads → WireGuard
+   configuration).
+2. Add a `[Socks5]` block and run wireproxy:
+   ```ini
+   # proton.conf (from Proton's WireGuard download, plus the [Socks5] block)
+   [Interface]
+   PrivateKey = <from Proton>
+   Address = 10.2.0.2/32
+   DNS = 10.2.0.1
+
+   [Peer]
+   PublicKey = <from Proton>
+   Endpoint = <proton-server>:51820
+   AllowedIPs = 0.0.0.0/0
+
+   [Socks5]
+   BindAddress = 127.0.0.1:1080
+   ```
+   ```sh
+   wireproxy -c proton.conf
+   ```
+3. Point the SOCKS5 endpoint (`socks5://127.0.0.1:1080`) at the **hop that reaches the
+   public web** (see the warning above):
+   - **Remote backend, or `web_fetch`** → webveil's egress:
+     ```sh
+     export WEBVEIL_EGRESS=socks5
+     export WEBVEIL_EGRESS_URL=socks5://127.0.0.1:1080
+     ```
+   - **Local SearXNG** → SearXNG's own outbound, in its `settings.yml` (keep webveil
+     `direct`):
+     ```yaml
+     outgoing:
+       proxies:
+         all://:
+           - socks5://127.0.0.1:1080
+     ```
+     This routes SearXNG's engine requests (→ Google/Bing/…) through Proton; webveil's
+     local hop to SearXNG stays direct. (`WEBVEIL_EGRESS=socks5` with a local `baseUrl` is
+     rejected, so this is the only correct shape for local SearXNG.)
+
+Because wireproxy is userspace, only the traffic you point at it exits via Proton; your
+`git push`, shell, and OS stay on your real IP, with no system tunnel. A ready-made Docker
+wrapper that does the same (Proton WireGuard creds in, SOCKS5 on `1080` out) is
+[`SamuelMoraesF/protonvpn-proxy`](https://github.com/SamuelMoraesF/protonvpn-proxy). Verify
+the proxy with `curl https://ipv4.am.i.mullvad.net --socks5-hostname 127.0.0.1:1080` (a
+Proton exit IP means traffic through it exits via Proton); webveil **fails loud** if a
+configured proxy is unbuildable, so it never silently falls back to your real IP.
 
 > **Caveat:** webveil's `socks5` mode is NOT a whole-machine VPN. Do not assume enabling it
 > anonymizes anything other than webveil. Conversely, a system-wide full-tunnel VPN under

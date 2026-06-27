@@ -53,14 +53,28 @@ Then `webveil search "…"` / `web_fetch` work with no config.
 
 ### Other SearXNG install options
 
-webveil only needs an **HTTP `host:port`** to point `baseUrl` at. How you get one:
+webveil needs something to point `baseUrl` at: an **HTTP `host:port`**, or (script install)
+the **Unix socket** itself. How you get one:
 
 - **Docker (above)**, binds a real TCP port directly; simplest if you only need webveil.
 - **Install script as a background service** (`sudo -H ./utils/searxng.sh install all`,
   see <https://docs.searxng.org/admin/installation-scripts.html>), sets SearXNG up as a
   systemd/uWSGI service. **Gotcha:** by default this listens on a **Unix socket**
-  (`socket = /usr/local/searxng/run/socket`), NOT a TCP port, so webveil cannot reach it
-  directly (undici/`fetch` speak TCP, not socket files). Two ways to give it a port:
+  (`socket = /usr/local/searxng/run/socket`), NOT a TCP port. Three ways to reach it:
+  - **Point webveil straight at the socket** (no proxy, no uWSGI edit, no extra process):
+    set `baseUrl` to a `unix:` URL that names the socket file:
+    ```sh
+    export WEBVEIL_BASE_URL=unix:/usr/local/searxng/run/socket
+    ```
+    webveil dials the socket directly over undici (`Agent({connect:{socketPath}})`, no
+    extra dependency) and issues its normal `/search?...&format=json` request. The grammar
+    is `unix:<socketPath>[:<httpPath>]`: the socket file path, then an OPTIONAL `:` +
+    base path (mount point) the SearXNG app lives under (defaults to `/`, so the example
+    above requests `/search`; a non-root mount is `unix:/usr/local/searxng/run/socket:/searxng`).
+    **Egress must be `direct`** for this: a Unix socket is inherently local, so combining a
+    `unix:` baseUrl with `egress=http`/`socks5` fails loud (proxying a local hop is fake
+    anonymity, see "Where does anonymity live?" below; proxy SearXNG's `outgoing.proxies`
+    instead and keep webveil `direct`).
   - **Front it with a reverse proxy** (this is what the SearXNG docs' nginx/apache step is
     for, it bridges HTTP-on-a-port to the uWSGI socket, serving BOTH the browser UI and
     webveil). **Any HTTP server works**, the docs say so explicitly; **Caddy is fine** and

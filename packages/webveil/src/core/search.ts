@@ -13,8 +13,13 @@
 
 import {resolveConfig as defaultResolveConfig} from './config.js';
 import type {Config, ResolveOptions} from './config.js';
-import {buildDispatcher as defaultBuildDispatcher} from './egress.js';
+import {
+	buildDispatcher as defaultBuildDispatcher,
+	assertEgressAllowsBaseUrl as defaultAssertEgressAllowsBaseUrl,
+} from './egress.js';
 import type {Dispatcher} from './egress.js';
+import {resolveBackendTransport as defaultResolveBackendTransport} from './baseurl.js';
+import type {BackendTransport} from './baseurl.js';
 import {createHttp as defaultCreateHttp} from './http.js';
 import {getBackend as defaultGetBackend} from './backends/registry.js';
 import type {Http, SearchOptions, SearchResult} from './backends/types.js';
@@ -37,6 +42,8 @@ const DEFAULT_MAX_RESULTS = 10;
 export interface SearchDeps {
 	resolveConfig?: (options?: ResolveOptions) => Config;
 	buildDispatcher?: (config: Config) => Dispatcher | undefined;
+	assertEgressAllowsBaseUrl?: (config: Config) => void;
+	resolveBackendTransport?: (baseUrl: string) => BackendTransport;
 	createHttp?: (dispatcher: Dispatcher | undefined) => Http;
 	getBackend?: (
 		name: string,
@@ -80,6 +87,10 @@ export async function search(
 ): Promise<SearchResult[]> {
 	const resolveConfig = deps.resolveConfig ?? defaultResolveConfig;
 	const buildDispatcher = deps.buildDispatcher ?? defaultBuildDispatcher;
+	const assertEgressAllowsBaseUrl =
+		deps.assertEgressAllowsBaseUrl ?? defaultAssertEgressAllowsBaseUrl;
+	const resolveBackendTransport =
+		deps.resolveBackendTransport ?? defaultResolveBackendTransport;
 	const createHttp = deps.createHttp ?? defaultCreateHttp;
 	const getBackend = deps.getBackend ?? defaultGetBackend;
 
@@ -89,15 +100,40 @@ export async function search(
 		globalPath: options.globalPath,
 	});
 
-	// Build the dispatcher FIRST: a configured-but-unbuildable proxy throws here,
-	// before any network access (never an un-proxied request).
-	const dispatcher = buildDispatcher(config);
+	// Fail loud on the false-confidence combo (a local `unix:` socket baseUrl
+	// behind a proxy egress) BEFORE any transport is built.
+	assertEgressAllowsBaseUrl(config);
+
+	// Resolve the BACKEND-hop transport. For a normal TCP baseUrl this is a no-op
+	// (no per-hop dispatcher); for a `unix:` baseUrl it yields a socket-bound
+	// `Agent` and a synthetic `http://localhost…` base the backend builds on. The
+	// socket transport is scoped to THIS hop only and is NEVER bound into the
+	// shared config-wide egress dispatcher, so `web_fetch` egress is unaffected.
+	const transport = resolveBackendTransport(config.baseUrl);
+
+	// Build the egress dispatcher FIRST: a configured-but-unbuildable proxy throws
+	// here, before any network access (never an un-proxied request). For a socket
+	// baseUrl the per-hop socket dispatcher overrides the (direct/undefined) one.
+	const dispatcher = transport.dispatcher ?? buildDispatcher(config);
 	const http = createHttp(dispatcher);
 
-	const backend = getBackend(config.backend, config);
+	// The backend stays transport-unaware: it receives a config whose baseUrl is
+	// always a real `http(s):` base (the `unix:` form is rewritten away here).
+	const backendConfig: Config =
+		transport.baseUrl === config.baseUrl
+			? config
+			: {...config, baseUrl: transport.baseUrl};
+	const backend = getBackend(backendConfig.backend, backendConfig);
 	// Hand the backend ONLY the proxied helper (no maxResults: dedup happens
 	// here, over the full set, so the clamp below is over UNIQUE results).
-	const raw = await backend.search(query, http, {signal: options.signal});
+	let raw: SearchResult[];
+	try {
+		raw = await backend.search(query, http, {signal: options.signal});
+	} finally {
+		// Best-effort close of the per-hop socket Agent (the shared egress
+		// dispatcher, owned by config, is NOT touched here).
+		if (transport.dispatcher) void transport.dispatcher.close();
+	}
 
 	const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
 	return dedup(raw).slice(0, maxResults);

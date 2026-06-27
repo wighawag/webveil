@@ -5,9 +5,11 @@
 // the fake core was called with the parsed query/url/options and that its
 // result reaches the output. `--mcp` is exercised over an in-memory stdio pair.
 
-import {describe, expect, it, vi} from 'vitest';
-import {spawn} from 'node:child_process';
-import {existsSync} from 'node:fs';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import {spawn, spawnSync} from 'node:child_process';
+import {existsSync, mkdtempSync, rmSync, symlinkSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createCli} from '../src/cli.js';
 import type {SearchResult, FetchResult} from '../src/core/backends/types.js';
@@ -193,4 +195,31 @@ describe('webveil CLI — MCP frontend (--mcp)', () => {
 			expect(names).toContain('fetch');
 		},
 	);
+});
+
+// `isMain()` regression: npm installs the bin as a `node_modules/.bin/webveil`
+// SYMLINK, so `argv[1]` is the symlink while `import.meta.url` is the real
+// `dist/cli.js`. A raw equality guard is false for every installed invocation
+// and the CLI silently never serves (exit 0, no output). The fix resolves
+// symlinks on both sides; this asserts the bin serves when launched via a
+// symlink. We use `--help` so it needs no network/backend, only that the CLI
+// actually runs (non-empty stdout).
+describe('webveil CLI — bin entry through a symlink (isMain)', () => {
+	let dir: string;
+	afterEach(() => {
+		if (dir) rmSync(dir, {recursive: true, force: true});
+	});
+
+	it.skipIf(!existsSync(BIN))('serves when launched via a bin symlink', () => {
+		dir = mkdtempSync(join(tmpdir(), 'webveil-bin-'));
+		const link = join(dir, 'webveil');
+		symlinkSync(BIN, link);
+		const res = spawnSync(process.execPath, [link, '--help'], {
+			encoding: 'utf8',
+			timeout: 10_000,
+		});
+		expect(res.status).toBe(0);
+		expect(res.stdout.length).toBeGreaterThan(0);
+		expect(res.stdout).toContain('webveil');
+	});
 });

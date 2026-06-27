@@ -15,6 +15,7 @@
 // with custom argv/stdout) WITHOUT touching the network. The bottom of the file
 // builds the real CLI and serves it when run as the bin.
 
+import {realpathSync} from 'node:fs';
 import {argv} from 'node:process';
 import {fileURLToPath} from 'node:url';
 import {Cli, z} from 'incur';
@@ -90,12 +91,20 @@ export function createCli(deps: CliDeps = {}) {
 // a test never consumes `process.argv` or exits the process.
 const cli = createCli();
 
-/** True when this module is the process entry (the `webveil` bin), not imported. */
+/**
+ * True when this module is the process entry (the `webveil` bin), not imported.
+ * `argv[1]` is the launched path, which for an npm-installed bin is the
+ * `node_modules/.bin/webveil` SYMLINK, while `import.meta.url` resolves to the
+ * real `dist/cli.js`. Comparing them raw makes the guard false for every
+ * installed invocation (the CLI silently never serves). So resolve symlinks on
+ * BOTH sides (`realpathSync`) before comparing.
+ */
 function isMain(): boolean {
 	const entry = argv[1];
 	if (!entry) return false;
 	try {
-		return fileURLToPath(import.meta.url) === entry;
+		const self = fileURLToPath(import.meta.url);
+		return realpathSync(self) === realpathSync(entry);
 	} catch {
 		return false;
 	}

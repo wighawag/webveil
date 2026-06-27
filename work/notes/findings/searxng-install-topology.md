@@ -22,12 +22,30 @@ HTTP-on-a-port <-> the uWSGI socket. The proxy is not just "for the web interfac
 what creates the single HTTP endpoint that BOTH a browser and webveil use (webveil just
 appends `&format=json`).
 
-## webveil needs HTTP host:port, not a socket
+## webveil needs HTTP host:port (or, now, the socket itself)
 
-webveil's backends call `baseUrl` over HTTP via undici/`fetch`, which connect to TCP ports,
-not socket files. So with the bare script install, webveil has nothing to point at until an
-HTTP front exists. Two fixes:
+webveil's backends call `baseUrl` over HTTP via undici/`fetch`. undici connects to TCP
+ports AND (via `Agent({connect:{socketPath}})`) to Unix domain sockets, so the bare script
+install now has THREE fixes:
 
+0. **Point webveil straight at the socket** (the third option, added by the
+   `searxng-unix-socket-baseurl` task). No proxy, no uWSGI edit, no extra process: set
+   `baseUrl` to a `unix:` URL naming the socket file:
+   ```sh
+   export WEBVEIL_BASE_URL=unix:/usr/local/searxng/run/socket
+   ```
+   webveil parses `unix:<socketPath>[:<httpPath>]` into `{socketPath, httpPath}`, builds a
+   per-backend-hop socket `Agent`, and issues its normal request against a synthetic
+   `http://localhost<httpPath>/search?...&format=json` over it (the URL host is irrelevant
+   to routing; the socket decides, the host is just the `Host` header). `httpPath` is the
+   app's base/mount path and defaults to `/` (the backend appends `search`), so the example
+   above requests `/search`. **Egress must be `direct`:** a `unix:` baseUrl combined with
+   `egress=http`/`socks5` fails loud (`EgressError`), because proxying a local socket is the
+   same fake-anonymity footgun as proxying a loopback TCP baseUrl: SearXNG still crawls the
+   web from your real IP, outside webveil's egress. Fix that by proxying SearXNG
+   (`outgoing.proxies`) and keeping webveil `direct`. The socket transport is scoped to the
+   BACKEND `baseUrl` hop ONLY (it is NOT bound into the shared `config.egress` dispatcher),
+   so `web_fetch` of public URLs still goes out over the normal direct path.
 1. **Reverse proxy in front of the socket.** Any HTTP server works \u2014 the docs say
    explicitly "we do not have any preferences regarding the HTTP server, you can use
    whatever you prefer." They ship pre-written configs for nginx and apache only, but
@@ -53,7 +71,8 @@ webveil's default `baseUrl`. (Port nuance: bare-metal/pip default is 8888 via
 
 ## Decision tree for webveil
 
-- Only webveil, no public UI -> Docker (port) OR script-install with uWSGI on a TCP port.
+- Only webveil, no public UI -> Docker (port) OR script-install + `unix:` baseUrl straight
+  at the socket (no proxy, no uWSGI edit) OR script-install with uWSGI on a TCP port.
   No proxy.
 - webveil + browser UI on a domain with TLS, and you use Caddy -> script install (socket)
   + Caddy `reverse_proxy unix/...`. Point webveil at a LOCAL port/socket bypass so its

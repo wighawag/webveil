@@ -9,6 +9,7 @@
 import {Agent, type Dispatcher, ProxyAgent, fetch as undiciFetch} from 'undici';
 import {socksDispatcher} from 'fetch-socks';
 import type {Config, Egress} from './config.js';
+import {isUnixBaseUrl} from './baseurl.js';
 
 /** Thrown when a configured egress proxy cannot be built. Never swallowed. */
 export class EgressError extends Error {
@@ -16,6 +17,33 @@ export class EgressError extends Error {
 		super(message, options);
 		this.name = 'EgressError';
 	}
+}
+
+/**
+ * Fail-loud guard for the false-confidence combo: a `unix:` (local-socket)
+ * backend `baseUrl` configured with a NON-direct egress (`http`/`socks5`). A
+ * Unix socket is inherently local, so proxying that hop is the same fake-
+ * anonymity footgun as proxying a loopback TCP baseUrl: webveil would route a
+ * pointless local call through the proxy while the backend (SearXNG) crawls the
+ * public web from the real IP, OUTSIDE webveil's egress. Refuse it and point at
+ * the real fix.
+ *
+ * OVERLAP SEAM (recorded): this is the loopback false-confidence family. The
+ * sibling task `fail-loud-on-proxied-loopback-backend` adds the broader guard
+ * for loopback TCP baseUrls (127.0.0.0/8, ::1, localhost). When it lands, fold
+ * THIS `unix:`-is-loopback-equivalent case into that single guard instead of
+ * keeping a parallel check here.
+ */
+export function assertEgressAllowsBaseUrl(cfg: Config): void {
+	if (cfg.egress.mode === 'direct') return;
+	if (isUnixBaseUrl(cfg.baseUrl))
+		throw new EgressError(
+			`egress ${cfg.egress.mode}: a unix: (local socket) baseUrl cannot be ` +
+				`proxied — it is inherently local, so proxying it gives fake ` +
+				`anonymity (SearXNG still crawls the web from your real IP). Set ` +
+				`egress=direct and proxy the backend itself (SearXNG's ` +
+				`outgoing.proxies), or use a remote backend.`,
+		);
 }
 
 function socksFromUrl(raw: string): Dispatcher {

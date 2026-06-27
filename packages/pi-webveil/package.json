@@ -1,6 +1,6 @@
 {
 	"name": "pi-webveil",
-	"version": "0.2.2",
+	"version": "0.3.0",
 	"description": "Pi extension: web_search and web_fetch tools backed by webveil. A drop-in, anonymity-capable replacement for Ollama's web_search/web_fetch.",
 	"license": "AGPL-3.0-or-later",
 	"keywords": [

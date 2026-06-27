@@ -156,11 +156,15 @@ describe('unix: socket baseUrl (end to end)', () => {
 			{},
 			{resolveConfig: () => cfg(`unix:${socketPath}`, {mode: 'direct'})},
 		);
-		// The socket file lives inside the temp dir only.
+		// The socket file lives inside the temp dir ONLY: it is present there, and
+		// the temp dir contains nothing BUT it (no stray file leaked elsewhere into
+		// the fixture). We deliberately do NOT assert a real install path like
+		// /usr/local/searxng/run/socket is absent: that path may legitimately exist
+		// on a machine where SearXNG is actually installed (webveil's target user!),
+		// and `existsSync` of a pre-existing path proves nothing about what THIS
+		// test created. The temp-dir-only assertions below are the real isolation.
 		expect(existsSync(socketPath)).toBe(true);
-		expect(readdirSync(dir)).toContain('iso.sock');
-		// A real install path was never touched.
-		expect(existsSync('/usr/local/searxng/run/socket')).toBe(false);
+		expect(readdirSync(dir)).toEqual(['iso.sock']);
 	});
 });
 

@@ -60,9 +60,17 @@ the **Unix socket** itself. How you get one:
 - **Install script as a background service** (`sudo -H ./utils/searxng.sh install all`,
   see <https://docs.searxng.org/admin/installation-scripts.html>), sets SearXNG up as a
   systemd/uWSGI service. **Gotcha:** by default this listens on a **Unix socket**
-  (`socket = /usr/local/searxng/run/socket`), NOT a TCP port. Three ways to reach it:
-  - **Point webveil straight at the socket** (no proxy, no uWSGI edit, no extra process):
-    set `baseUrl` to a `unix:` URL that names the socket file:
+  (`socket = /usr/local/searxng/run/socket`), NOT a TCP port. And, crucially, that default
+  socket speaks the **native uwsgi protocol, NOT HTTP** (`socket = …`, not `http-socket =
+  …`), so even a `curl --unix-socket … http://localhost/` returns HTTP 000. webveil's
+  `unix:` baseUrl speaks **HTTP over a unix socket** via undici, so it CANNOT reach that
+  default uwsgi socket directly. Three ways to reach the install-script instance:
+  - **Point webveil straight at an HTTP unix socket** (no proxy, no extra process), once the
+    socket actually speaks HTTP. The install-script default does NOT, so first make uWSGI
+    serve HTTP on the socket: in the generated `.ini`, replace
+    `socket = /usr/local/searxng/run/socket` with
+    `http-socket = /usr/local/searxng/run/socket` (HTTP over the socket instead of the
+    uwsgi protocol). THEN point webveil at it with a `unix:` URL naming the socket file:
     ```sh
     export WEBVEIL_BASE_URL=unix:/usr/local/searxng/run/socket
     ```
@@ -71,6 +79,9 @@ the **Unix socket** itself. How you get one:
     is `unix:<socketPath>[:<httpPath>]`: the socket file path, then an OPTIONAL `:` +
     base path (mount point) the SearXNG app lives under (defaults to `/`, so the example
     above requests `/search`; a non-root mount is `unix:/usr/local/searxng/run/socket:/searxng`).
+    (`unix:` works against ANY HTTP-on-a-unix-socket server, e.g. a Caddy/nginx upstream
+    bound to a socket; the uwsgi-vs-`http-socket` distinction above is the SearXNG-specific
+    catch.)
     **Egress must be `direct`** for this: a Unix socket is inherently local, so combining a
     `unix:` baseUrl with `egress=http`/`socks5` fails loud (proxying a local hop is fake
     anonymity, see "Where does anonymity live?" below; proxy SearXNG's `outgoing.proxies`
@@ -78,22 +89,37 @@ the **Unix socket** itself. How you get one:
   - **Front it with a reverse proxy** (this is what the SearXNG docs' nginx/apache step is
     for, it bridges HTTP-on-a-port to the uWSGI socket, serving BOTH the browser UI and
     webveil). **Any HTTP server works**, the docs say so explicitly; **Caddy is fine** and
-    a good pick if you already run it:
+    a good pick if you already run it. Plain Caddy `reverse_proxy` speaks **HTTP** to its
+    upstream, so point it at an `http-socket` (see below) or a TCP `http-socket`:
     ```caddy
     searxng.example.com {
-        reverse_proxy unix//usr/local/searxng/run/socket
+        reverse_proxy unix//usr/local/searxng/run/socket   # plain reverse_proxy = HTTP, so the socket must be http-socket = (not the uwsgi socket =)
     }
     ```
     Then point webveil at the Caddy address. (Set SearXNG's `server.base_url` in
-    `settings.yml` to match, and mind the limiter/bot-protection behind a proxy.)
-  - **Or skip the proxy** by making uWSGI listen on a TCP port instead of the socket: in
-    the generated `.ini`, replace `socket = …/run/socket` with
-    `http-socket = 127.0.0.1:8888`, then point webveil at `http://127.0.0.1:8888`. Good
-    when you want ONLY webveil (no public web UI / TLS).
+    `settings.yml` to match, and keep the limiter in mind, see below.) If you want a Caddy
+    frontend AND webveil-direct, the simplest path is ONE `http-socket` that both consume
+    (Caddy's HTTP `reverse_proxy` and webveil's `unix:` both speak HTTP to it); you only
+    need the uwsgi `socket = ` form if Caddy uses an explicit uwsgi transport.
+  - **Or make uWSGI listen on a TCP port** instead of the socket: in the generated
+    `.ini`, replace `socket = …/run/socket` with `http-socket = 127.0.0.1:8888`, then point
+    webveil at `http://127.0.0.1:8888`. Good when you want ONLY webveil (no public web UI /
+    TLS).
+
+> **You will also need to enable the JSON API and (for a local instance) disable the
+> limiter.** A fresh script install ships with `server.limiter: true` and often no `json`
+> output format, so webveil gets `429 TOO MANY REQUESTS` or an HTML page. In SearXNG's
+> `settings.yml` set `server.limiter: false` + `server.public_instance: false` (safe for a
+> LOCAL, socket-only instance, NOT internet-exposed) and add `json` under `search.formats:`
+> (`[html, json]`), then restart uWSGI. This applies to EVERY option above, it is a
+> SearXNG-side requirement, not a webveil one.
 
 Full SearXNG install options (Docker, Compose, script, bare-metal): the official docs at
-<https://docs.searxng.org/admin/installation.html>. Install topology details captured in
-[`work/notes/findings/searxng-install-topology.md`](work/notes/findings/searxng-install-topology.md).
+<https://docs.searxng.org/admin/installation.html>. Install topology + the
+uwsgi-vs-`http-socket`, limiter, and reverse-proxy details captured in
+[`work/notes/findings/searxng-install-topology.md`](work/notes/findings/searxng-install-topology.md)
+and
+[`work/notes/findings/searxng-script-socket-is-uwsgi-not-http.md`](work/notes/findings/searxng-script-socket-is-uwsgi-not-http.md).
 
 ### Where does anonymity live? (read before turning on egress)
 

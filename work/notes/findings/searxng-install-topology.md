@@ -25,12 +25,18 @@ appends `&format=json`).
 ## webveil needs HTTP host:port (or, now, the socket itself)
 
 webveil's backends call `baseUrl` over HTTP via undici/`fetch`. undici connects to TCP
-ports AND (via `Agent({connect:{socketPath}})`) to Unix domain sockets, so the bare script
-install now has THREE fixes:
+ports AND (via `Agent({connect:{socketPath}})`) to Unix domain sockets BUT ONLY OVER HTTP.
+The install-script default socket speaks the **uwsgi protocol, not HTTP** (`socket = …`, not
+`http-socket = …`; `curl --unix-socket … http://localhost/` returns HTTP 000), so webveil's
+`unix:` baseUrl CANNOT reach the default socket directly — see
+`searxng-script-socket-is-uwsgi-not-http.md`. The bare script install has THREE fixes:
 
-0. **Point webveil straight at the socket** (the third option, added by the
-   `searxng-unix-socket-baseurl` task). No proxy, no uWSGI edit, no extra process: set
-   `baseUrl` to a `unix:` URL naming the socket file:
+0. **Point webveil straight at an HTTP unix socket** (the third option, added by the
+   `searxng-unix-socket-baseurl` task). This needs an HTTP-speaking socket, which the
+   install-script default is NOT, so first make uWSGI serve HTTP on it: replace
+   `socket = /usr/local/searxng/run/socket` with
+   `http-socket = /usr/local/searxng/run/socket` in the generated ini. THEN set `baseUrl`
+   to a `unix:` URL naming the socket file:
    ```sh
    export WEBVEIL_BASE_URL=unix:/usr/local/searxng/run/socket
    ```
@@ -39,13 +45,15 @@ install now has THREE fixes:
    `http://localhost<httpPath>/search?...&format=json` over it (the URL host is irrelevant
    to routing; the socket decides, the host is just the `Host` header). `httpPath` is the
    app's base/mount path and defaults to `/` (the backend appends `search`), so the example
-   above requests `/search`. **Egress must be `direct`:** a `unix:` baseUrl combined with
-   `egress=http`/`socks5` fails loud (`EgressError`), because proxying a local socket is the
-   same fake-anonymity footgun as proxying a loopback TCP baseUrl: SearXNG still crawls the
-   web from your real IP, outside webveil's egress. Fix that by proxying SearXNG
-   (`outgoing.proxies`) and keeping webveil `direct`. The socket transport is scoped to the
-   BACKEND `baseUrl` hop ONLY (it is NOT bound into the shared `config.egress` dispatcher),
-   so `web_fetch` of public URLs still goes out over the normal direct path.
+   above requests `/search`. (`unix:` also works against any other HTTP-on-a-unix-socket
+   server, e.g. a Caddy/nginx upstream bound to a socket.) **Egress must be `direct`:** a
+   `unix:` baseUrl combined with `egress=http`/`socks5` fails loud (`EgressError`), because
+   proxying a local socket is the same fake-anonymity footgun as proxying a loopback TCP
+   baseUrl: SearXNG still crawls the web from your real IP, outside webveil's egress. Fix
+   that by proxying SearXNG (`outgoing.proxies`) and keeping webveil `direct`. The socket
+   transport is scoped to the BACKEND `baseUrl` hop ONLY (it is NOT bound into the shared
+   `config.egress` dispatcher), so `web_fetch` of public URLs still goes out over the normal
+   direct path.
 1. **Reverse proxy in front of the socket.** Any HTTP server works \u2014 the docs say
    explicitly "we do not have any preferences regarding the HTTP server, you can use
    whatever you prefer." They ship pre-written configs for nginx and apache only, but

@@ -22,7 +22,6 @@ interface CapturedTool {
 		onUpdate: unknown,
 		ctx: {cwd: string; signal?: AbortSignal},
 	): Promise<{content: {type: string; text: string}[]; details: unknown}>;
-	renderResult?(result: {content: {type: string; text: string}[]}): string[];
 }
 
 /** A fake `pi` whose `registerTool` records every definition by name. */

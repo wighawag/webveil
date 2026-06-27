@@ -6,9 +6,9 @@
 //
 // Both tools call webveil's exported `search()` / `fetch()` IN-PROCESS (no
 // shelling). Per-folder config (.pi/webveil.json walking up from the folder) is
-// resolved from `ctx.cwd`, so each folder is its own account/egress. An optional
-// compact `renderResult` is the only TUI we add (no commands/widgets/statusline;
-// see the PRD "Out of Scope").
+// resolved from `ctx.cwd`, so each folder is its own account/egress. We add NO
+// custom TUI: pi's default text renderer displays the tool result's text content
+// (no commands/widgets/statusline; see the PRD "Out of Scope").
 
 import {
 	search as coreSearch,
@@ -57,7 +57,6 @@ interface ToolDef {
 		onUpdate: unknown,
 		ctx: ToolCtx,
 	): Promise<ToolResult>;
-	renderResult?(result: ToolResult): string[];
 }
 
 /** The slice of pi's `ExtensionAPI` the extension uses: just `registerTool`. */
@@ -138,11 +137,6 @@ export default function piWebveil(pi: PiLike, deps: PiWebveilDeps = {}): void {
 			});
 			return textResult(renderSearch(results), {results});
 		},
-		renderResult(result) {
-			return result.content
-				.filter((c) => c.type === 'text')
-				.flatMap((c) => c.text.split('\n'));
-		},
 	});
 
 	pi.registerTool({
@@ -158,11 +152,6 @@ export default function piWebveil(pi: PiLike, deps: PiWebveilDeps = {}): void {
 				signal: signal ?? ctx.signal,
 			});
 			return textResult(renderFetch(page), {page});
-		},
-		renderResult(result) {
-			return result.content
-				.filter((c) => c.type === 'text')
-				.flatMap((c) => c.text.split('\n'));
 		},
 	});
 }

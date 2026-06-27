@@ -1,8 +1,12 @@
 // config seam — per-folder resolution. Precedence (highest wins):
-//   env > nearest .pi/webveil.json (walking up from cwd) > global
-//   ~/.pi/agent/webveil.json > defaults.
+//   env > nearest webveil.json (walking up from cwd) > global
+//   $XDG_CONFIG_HOME/webveil/config.json (~/.config/webveil/config.json) >
+//   defaults.
 // "Per folder = per account/egress." Each layer is a partial; later (lower)
-// layers fill gaps the higher layers leave.
+// layers fill gaps the higher layers leave. The project file is a
+// frontend-neutral `webveil.json` (no `.pi/`): both the pi-agnostic CLI and the
+// pi extension resolve the same name, so a project is configured the same way
+// regardless of which frontend reads it. See docs/adr/0002.
 
 import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
@@ -34,9 +38,14 @@ export interface ResolveOptions {
 	cwd?: string;
 	/** Environment to read overrides from. Defaults to process.env. */
 	env?: Record<string, string | undefined>;
+	/** Home directory for the XDG fallback. Defaults to os.homedir(). */
+	homeDir?: string;
 	/**
-	 * Path to the global config file. Defaults to ~/.pi/agent/webveil.json.
-	 * Tests point this at a temp dir to isolate the real home directory.
+	 * Path to the global config file. When given it WINS outright and the XDG
+	 * resolution is skipped. Tests point this at a temp dir to isolate the real
+	 * home directory. When absent, the global file resolves to
+	 * $XDG_CONFIG_HOME/webveil/config.json, falling back to
+	 * <homeDir>/.config/webveil/config.json.
 	 */
 	globalPath?: string;
 }
@@ -48,7 +57,7 @@ const DEFAULTS: Config = {
 	fetchSize: 'm',
 };
 
-const PROJECT_FILE = join('.pi', 'webveil.json');
+const PROJECT_FILE = 'webveil.json';
 
 function readJson(path: string): PartialConfig | undefined {
 	let text: string;
@@ -60,7 +69,7 @@ function readJson(path: string): PartialConfig | undefined {
 	return JSON.parse(text) as PartialConfig;
 }
 
-/** The nearest `.pi/webveil.json` walking up from `cwd` (first found wins). */
+/** The nearest `webveil.json` walking up from `cwd` (first found wins). */
 function readProjectChain(cwd: string): PartialConfig | undefined {
 	let dir = cwd;
 	const {root} = parse(dir);
@@ -87,6 +96,19 @@ function readEnv(env: Record<string, string | undefined>): PartialConfig {
 }
 
 /**
+ * The global config path, XDG-style: `$XDG_CONFIG_HOME/webveil/config.json`,
+ * falling back to `<homeDir>/.config/webveil/config.json` when XDG_CONFIG_HOME
+ * is unset. (`options.globalPath`, when given, bypasses this entirely.)
+ */
+function resolveGlobalPath(
+	env: Record<string, string | undefined>,
+	homeDir = homedir(),
+): string {
+	const base = env.XDG_CONFIG_HOME || join(homeDir, '.config');
+	return join(base, 'webveil', 'config.json');
+}
+
+/**
  * Resolve the effective config. Higher-precedence layers override lower ones,
  * key by key: env > project chain > global file > defaults.
  */
@@ -94,7 +116,7 @@ export function resolveConfig(options: ResolveOptions = {}): Config {
 	const cwd = options.cwd ?? process.cwd();
 	const env = options.env ?? process.env;
 	const globalPath =
-		options.globalPath ?? join(homedir(), '.pi', 'agent', 'webveil.json');
+		options.globalPath ?? resolveGlobalPath(env, options.homeDir);
 
 	const layers: PartialConfig[] = [
 		DEFAULTS,

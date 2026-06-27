@@ -39,9 +39,12 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   Yields BOTH a proxied `http` helper (for backends) AND an egress-bound WHATWG `fetch`
   (undici `fetch` over the same dispatcher) injected into `distilly/fetch`. The SSRF
   guard lives in that egress fetch, so it covers distilly's rule-rewritten requests too.
-- **config seam** — per-folder resolution: env > nearest `.pi/webveil.json` walking up
-  from cwd > global `~/.pi/agent/webveil.json` > defaults, layered over incur's config
-  feature. Per folder = per account/egress.
+- **config seam** — per-folder resolution: env > nearest `webveil.json` walking up
+  from cwd > global `$XDG_CONFIG_HOME/webveil/config.json` (default
+  `~/.config/webveil/config.json`) > defaults, layered over incur's config feature. The
+  project file is a frontend-neutral `webveil.json` (no `.pi/`), read identically by the
+  pi-agnostic CLI and the pi extension. Per folder = per account/egress. See
+  `docs/adr/0002`.
 - **Extractor seam** — `urlToMarkdown` via `distilly/fetch` by default, INJECTED with
   webveil's egress-bound `fetch` (so distilly's network Rules rewrite to raw `.md`/API
   source over webveil's egress, never a global fetch); a backend's own `/extract`

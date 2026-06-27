@@ -49,7 +49,7 @@ describe('resolveConfig', () => {
 		});
 
 		// project file overrides global baseUrl + backend, but not fetchSize
-		writeJson(join(root, '.pi', 'webveil.json'), {
+		writeJson(join(root, 'webveil.json'), {
 			backend: 'searxng',
 			baseUrl: 'http://project:2',
 		});
@@ -75,7 +75,7 @@ describe('resolveConfig', () => {
 	});
 
 	it('walks up from a nested cwd to find the nearest project file', () => {
-		writeJson(join(root, '.pi', 'webveil.json'), {baseUrl: 'http://near:1'});
+		writeJson(join(root, 'webveil.json'), {baseUrl: 'http://near:1'});
 		const nested = join(root, 'a', 'b', 'c');
 		mkdirSync(nested, {recursive: true});
 
@@ -88,9 +88,9 @@ describe('resolveConfig', () => {
 	});
 
 	it('prefers the nearest project file over an ancestor one', () => {
-		writeJson(join(root, '.pi', 'webveil.json'), {baseUrl: 'http://far:1'});
+		writeJson(join(root, 'webveil.json'), {baseUrl: 'http://far:1'});
 		const nested = join(root, 'a', 'b');
-		writeJson(join(nested, '.pi', 'webveil.json'), {baseUrl: 'http://near:2'});
+		writeJson(join(nested, 'webveil.json'), {baseUrl: 'http://near:2'});
 
 		const cfg = resolveConfig({
 			cwd: nested,
@@ -101,7 +101,7 @@ describe('resolveConfig', () => {
 	});
 
 	it('isolates the global path and never touches the real home dir', () => {
-		const realGlobal = join(homedir(), '.pi', 'agent', 'webveil.json');
+		const realGlobal = join(homedir(), '.config', 'webveil', 'config.json');
 		const existedBefore = existsSync(realGlobal);
 
 		const globalPath = join(root, 'global', 'webveil.json');
@@ -114,7 +114,33 @@ describe('resolveConfig', () => {
 		});
 		expect(cfg.backend).toBe('from-temp-global');
 
-		// the real ~/.pi/agent/webveil.json must be unchanged by the run
+		// the real global file must be unchanged by the run
 		expect(existsSync(realGlobal)).toBe(existedBefore);
+	});
+
+	it('resolves the global file under $XDG_CONFIG_HOME when set', () => {
+		const xdg = join(root, 'xdg');
+		writeJson(join(xdg, 'webveil', 'config.json'), {backend: 'from-xdg'});
+
+		const cfg = resolveConfig({
+			cwd: root,
+			env: {XDG_CONFIG_HOME: xdg},
+			homeDir: join(root, 'unused-home'),
+		});
+		expect(cfg.backend).toBe('from-xdg');
+	});
+
+	it('falls back to <homeDir>/.config/webveil/config.json without XDG', () => {
+		const home = join(root, 'home');
+		writeJson(join(home, '.config', 'webveil', 'config.json'), {
+			backend: 'from-home-config',
+		});
+
+		const cfg = resolveConfig({
+			cwd: root,
+			env: {},
+			homeDir: home,
+		});
+		expect(cfg.backend).toBe('from-home-config');
 	});
 });

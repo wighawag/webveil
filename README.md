@@ -49,7 +49,7 @@ Then `webveil search "…"` / `web_fetch` work with no config.
 > export WEBVEIL_BASE_URL=http://127.0.0.1:8888   # or wherever your instance listens
 > ```
 >
-> or set `baseUrl` in `.pi/webveil.json` (see config seam below).
+> or set `baseUrl` in `webveil.json` (see config seam below).
 
 ### Other SearXNG install options
 
@@ -170,8 +170,11 @@ backends and for `web_fetch`. See
   webveil on `socks5` does NOT route your `git push` through the proxy. See
   [Anonymous egress](#anonymous-egress-mullvad--tor) and
   [`work/notes/findings/mullvad-socks5-egress-mechanics.md`](work/notes/findings/mullvad-socks5-egress-mechanics.md).
-- **config seam**, per-folder resolution: env > nearest `.pi/webveil.json` walking up from
-  cwd > global `~/.pi/agent/webveil.json` > defaults. Per folder = per account/egress.
+- **config seam**, per-folder resolution: env > nearest `webveil.json` walking up from
+  cwd > global `$XDG_CONFIG_HOME/webveil/config.json` (default
+  `~/.config/webveil/config.json`) > defaults. Per folder = per account/egress. The
+  project file is a frontend-neutral `webveil.json` read identically by the CLI and the
+  pi extension. See [`docs/adr/0002`](docs/adr/0002-config-file-location-neutral-webveil-json.md).
 - **extractor seam**, `urlToMarkdown` via `distilly/fetch` by default, injected with
   webveil's egress-bound `fetch`; a backend's own `/extract` (Tavily-compat) may override
   it. Owns the context-friendly markdown + size presets (`s`/`m`/`l`/`f`). See
@@ -193,7 +196,7 @@ export WEBVEIL_EGRESS_URL=socks5://10.64.0.1:1080     # Mullvad
 # or socks5://127.0.0.1:9050                          # Tor
 ```
 
-or per folder in `.pi/webveil.json`:
+or per folder in `webveil.json`:
 
 ```json
 { "egress": { "mode": "socks5", "url": "socks5://10.64.0.1:1080" } }
@@ -287,7 +290,7 @@ a promise); `LOC` is the actual line count of the built file.
 | src/cli.ts (incur frontend)        |  106 |    ~80 |
 | src/core/search.ts                 |  104 |    ~90 |
 | src/core/fetch.ts                  |  132 |    ~90 |
-| src/core/config.ts                 |  106 |    ~80 |
+| src/core/config.ts                 |  128 |    ~80 |
 | src/core/egress.ts                 |  106 |    ~70 |
 | src/core/http.ts                   |   62 |    ~60 |
 | src/core/extract.ts                |   82 |    ~60 |
@@ -297,7 +300,7 @@ a promise); `LOC` is the actual line count of the built file.
 | src/core/backends/searxng.ts       |   70 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
 | src/core/backends/custom.ts        |  159 |    ~70 |
-| **subtotal**                       | 1408 |        |
+| **subtotal**                       | 1430 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
@@ -305,7 +308,7 @@ a promise); `LOC` is the actual line count of the built file.
 | ------------ | --: | -----: |
 | src/index.ts | 168 |    ~90 |
 
-**Total own source: 1576 LOC** (excluding deps).
+**Total own source: 1598 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably
 > `tavily-compat.ts`, `custom.ts`, `pi-webveil/src/index.ts`), and two built modules

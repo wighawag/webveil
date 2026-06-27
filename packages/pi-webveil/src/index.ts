@@ -5,8 +5,9 @@
 // `@ollama/pi-web-search` with nothing else to change (CONTEXT.md "drop-in").
 //
 // Both tools call webveil's exported `search()` / `fetch()` IN-PROCESS (no
-// shelling). Per-folder config (.pi/webveil.json walking up from the folder) is
-// resolved from `ctx.cwd`, so each folder is its own account/egress. We add NO
+// shelling). Per-folder config (the frontend-neutral `webveil.json` walking up
+// from the folder) is resolved from `ctx.cwd`, so each folder is its own
+// account/egress. We add NO
 // custom TUI: pi's default text renderer displays the tool result's text content
 // (no commands/widgets/statusline; see the PRD "Out of Scope").
 

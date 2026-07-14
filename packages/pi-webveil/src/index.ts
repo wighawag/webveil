@@ -9,7 +9,7 @@
 // from the folder) is resolved from `ctx.cwd`, so each folder is its own
 // account/egress. We add NO
 // custom TUI: pi's default text renderer displays the tool result's text content
-// (no commands/widgets/statusline; see the PRD "Out of Scope").
+// (no commands/widgets/statusline; see the spec "Out of Scope").
 
 import {
 	search as coreSearch,

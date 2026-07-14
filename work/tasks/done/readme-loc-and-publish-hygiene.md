@@ -7,7 +7,7 @@ covers: []
 
 ## What to build
 
-A self-contained chore (no prd story): the project README + publish hygiene across the
+A self-contained chore (no spec story): the project README + publish hygiene across the
 monorepo.
 
 - **README + LOC table** — a root `README.md` documenting webveil, with the per-module

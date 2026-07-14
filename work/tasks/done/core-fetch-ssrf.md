@@ -1,7 +1,7 @@
 ---
 title: core.fetch() (list-ready internals) + SSRF guard in egress fetch + backend /extract override
 slug: core-fetch-ssrf
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-search, extractor-distilly-fetch]
 covers: [1, 11, 12, 13]
 ---
@@ -50,7 +50,7 @@ Move/expand the placeholder `fetch()` from `src/index.ts` into the core module.
 
 > Build webveil's `core.fetch()` + the SSRF guard. Read `CONTEXT.md` (core, Extractor,
 > egress seams), `docs/adr/0001` (the SSRF guard lives INSIDE the egress-bound fetch so it
-> covers distilly's rule-rewritten requests), and the PRD (stories 11/12/13). The
+> covers distilly's rule-rewritten requests), and the spec (stories 11/12/13). The
 > Extractor seam and `core.search()` already exist.
 >
 > Flow: resolve config + egress → SSRF guard → extract via distilly's `urlToMarkdown`

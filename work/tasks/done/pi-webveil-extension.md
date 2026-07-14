@@ -1,7 +1,7 @@
 ---
 title: pi-webveil extension — web_search + web_fetch (Ollama drop-in) over the core
 slug: pi-webveil-extension
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-search, core-fetch-ssrf]
 covers: [6, 7]
 ---
@@ -34,7 +34,7 @@ config resolved from `ctx.cwd`. Replace the placeholder in `packages/pi-webveil/
 ## Prompt
 
 > Build the `pi-webveil` pi extension: a drop-in replacement for Ollama's web tools. Read
-> `CONTEXT.md` (the `pi-webveil` frontend, drop-in note) and the PRD (stories 6/7).
+> `CONTEXT.md` (the `pi-webveil` frontend, drop-in note) and the spec (stories 6/7).
 > `core.search()`/`core.fetch()` exist in the `webveil` package (depend on it via
 > `workspace:*`).
 >

@@ -1,7 +1,7 @@
 ---
 title: Tavily-compat backend (/search + /extract, selected by baseUrl)
 slug: backend-tavily-compat
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-foundation-config-egress-http, backend-searxng]
 covers: [8]
 ---
@@ -36,7 +36,7 @@ override the distilly Extractor for fetch.
 
 > Build webveil's Tavily-compat backend: a generic Tavily-shaped `/search` (+ optional
 > `/extract`) client selected by `baseUrl`, covering orio-search / searcharvester /
-> agent-search. Read `CONTEXT.md` (backend seam) and the PRD. The `Backend` interface +
+> agent-search. Read `CONTEXT.md` (backend seam) and the spec. The `Backend` interface +
 > `http` helper come from `core-foundation-config-egress-http`; the registry exists from
 > `backend-searxng` (add your registration to it).
 >

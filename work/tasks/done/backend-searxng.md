@@ -1,7 +1,7 @@
 ---
 title: SearXNG backend + backend registry
 slug: backend-searxng
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-foundation-config-egress-http]
 covers: [8]
 ---
@@ -37,7 +37,7 @@ THROUGH the injected `http` helper (so it cannot bypass egress) and returns norm
 ## Prompt
 
 > Build webveil's SearXNG backend and the backend registry. SearXNG is the keyless
-> self-hosted metasearch default. Read `CONTEXT.md` (backend seam) and the PRD's
+> self-hosted metasearch default. Read `CONTEXT.md` (backend seam) and the spec's
 > Implementation Decisions. The `Backend` interface and the proxied `http` helper come
 > from the `core-foundation-config-egress-http` task.
 >

@@ -1,7 +1,7 @@
 ---
 title: Extractor seam — urlToMarkdown via distilly/fetch with injected egress fetch
 slug: extractor-distilly-fetch
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-foundation-config-egress-http]
 covers: [11, 14]
 ---
@@ -43,7 +43,7 @@ distilly's shipped signature (pinned, do not adapt):
 
 > Build webveil's Extractor seam over distilly's networked entrypoint. Read `docs/adr/0001`
 > (THE decision: style b, `distilly/fetch` with injected egress fetch), `CONTEXT.md`
-> (Extractor + egress seams), and the PRD. distilly is published as `distilly@^0.1.0`; you
+> (Extractor + egress seams), and the spec. distilly is published as `distilly@^0.1.0`; you
 > import the `distilly/fetch` subpath (`urlToMarkdown`).
 >
 > CRITICAL: webveil ALWAYS injects its egress-bound `fetch` (from

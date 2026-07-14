@@ -1,7 +1,7 @@
 ---
 title: Core foundation — config resolution, egress dispatcher + egress-bound fetch, http helper, backend types
 slug: core-foundation-config-egress-http
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: []
 covers: [2, 3, 4, 9, 10]
 ---
@@ -61,7 +61,7 @@ you can resolve a config, build a dispatcher for its egress mode, and obtain bot
 > the http helper, and the backend type contract. webveil is an anonymous-capable,
 > self-hosted web search/fetch tool; this task lays the substrate every other module
 > imports. Read `CONTEXT.md` (the seam definitions) and
-> `work/prds/ready/webveil-tool-and-pi-extension.md` (Implementation Decisions).
+> `work/specs/ready/webveil-tool-and-pi-extension.md` (Implementation Decisions).
 >
 > Domain vocabulary: **egress seam** (`direct` | `http` | `socks5/Tor`), **config seam**
 > (per-folder `.pi/webveil.json` > global > env > defaults), **backend seam** (the

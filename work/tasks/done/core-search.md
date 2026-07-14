@@ -1,7 +1,7 @@
 ---
 title: core.search() over the backend seam (normalize, dedup, clamp)
 slug: core-search
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [backend-searxng]
 covers: [1, 7]
 ---
@@ -34,7 +34,7 @@ Move/expand the placeholder `search()` from `src/index.ts` into the core module.
 ## Prompt
 
 > Build webveil's `core.search()` — the plain framework-agnostic search function both
-> frontends call. Read `CONTEXT.md` (core, backend/egress/config seams) and the PRD's
+> frontends call. Read `CONTEXT.md` (core, backend/egress/config seams) and the spec's
 > Testing Decisions. The foundation (config/egress/http/types) and the searxng backend +
 > registry already exist.
 >

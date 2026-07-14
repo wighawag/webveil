@@ -7,7 +7,7 @@ slug: socks-dep-is-fetch-socks-not-socks-proxy-agent
 
 The `core-foundation-config-egress-http` build (PR #1) implemented the socks5 egress
 dispatcher with **`fetch-socks`** (`^1.3.3`), NOT the **`socks-proxy-agent`** dependency
-pinned by the spec (the task body, `CONTEXT.md` Stack/egress seam, the PRD Implementation
+pinned by the spec (the task body, `CONTEXT.md` Stack/egress seam, the spec Implementation
 Decisions, and `docs/adr/0001` all name `socks-proxy-agent` as a PLAIN dependency).
 
 The deviation was NOT recorded by the build (no ADR, no `## Decisions` note in the done
@@ -34,7 +34,7 @@ The code is fine; the SPEC DOCS now lie. Reconcile so the next reader/task is no
 - `CONTEXT.md` (Stack + egress seam): `socks-proxy-agent` → `fetch-socks`.
 - `docs/adr/0001`: the "egress-bound fetch via undici { dispatcher }" consequence should
   name `fetch-socks` as the socks layer (and note WHY: it yields an undici Dispatcher).
-- The tasked PRD is a launch snapshot (not maintained), so leave it; but the
+- The tasked spec is a launch snapshot (not maintained), so leave it; but the
   `readme-loc-and-publish-hygiene` task will document deps, it should list `fetch-socks`.
 
 This is a doc-vs-code drift fix, not a code change. Consider a one-line ADR amendment

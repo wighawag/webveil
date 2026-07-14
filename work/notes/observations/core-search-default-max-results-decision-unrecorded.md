@@ -6,7 +6,7 @@ slug: core-search-default-max-results-decision-unrecorded
 ## What was observed
 
 `core-search` (PR #4) sets a default result cap `DEFAULT_MAX_RESULTS = 10` when the caller
-omits `maxResults`. The PRD/spec never pinned a default cap, so this is a non-obvious
+omits `maxResults`. The spec/spec never pinned a default cap, so this is a non-obvious
 in-scope decision. The code comment says "(Recorded decision: ... see the task's Decisions
 block.)", but the done record `work/tasks/done/core-search.md` has NO `## Decisions`
 block. So the code references a decision record that does not exist.

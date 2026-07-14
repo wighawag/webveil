@@ -80,12 +80,12 @@ and distilly never has egress of its own (see `docs/adr/0001`).
   `distilly/fetch` entrypoint (`urlToMarkdown`), into which webveil injects its
   egress-controlled `fetch`; distilly's network Rules (github/mdn/react.dev/vuejs.org)
   do source-rewriting to raw markdown on top of webveil's egress. Task distilly first so
-  webveil's tasks can reference it. (NOTE: cross-repo prd; the dependency is on the
-  distilly REPO's prd of the same slug.)
+  webveil's tasks can reference it. (NOTE: cross-repo spec; the dependency is on the
+  distilly REPO's spec of the same slug.)
 
 > Tasked. The implementation + testing detail that used to live here now lives in the
 > task files under `work/tasks/` (the tracer-bullet decomposition), and the load-bearing
-> Extractor/egress decision lives in `docs/adr/0001`. This prd has settled to its durable
+> Extractor/egress decision lives in `docs/adr/0001`. This spec has settled to its durable
 > framing (Problem / Solution / User Stories / Out of Scope) above and below.
 
 ## Out of Scope

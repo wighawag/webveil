@@ -1,7 +1,7 @@
 ---
 title: Custom local-command backend (JSON stdin/stdout contract)
 slug: backend-custom
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-foundation-config-egress-http, backend-searxng, backend-tavily-compat]
 covers: [8]
 ---
@@ -35,7 +35,7 @@ which round-trips the JSON stdin/stdout contract with a configured command and r
 
 > Build webveil's `custom` backend: a local-command escape hatch using a JSON stdin/stdout
 > contract (lifted from pi-web-providers' custom-wrapper). Read `CONTEXT.md` (backend seam)
-> and the PRD. The `Backend` interface comes from `core-foundation-config-egress-http`; the
+> and the spec. The `Backend` interface comes from `core-foundation-config-egress-http`; the
 > registry exists from `backend-searxng` (add your registration).
 >
 > The backend spawns the configured command, writes the request as JSON to stdin, and

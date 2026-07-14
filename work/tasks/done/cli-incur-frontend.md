@@ -1,7 +1,7 @@
 ---
 title: incur CLI/MCP frontend — search + fetch commands
 slug: cli-incur-frontend
-prd: webveil-tool-and-pi-extension
+spec: webveil-tool-and-pi-extension
 blockedBy: [core-search, core-fetch-ssrf]
 covers: [5]
 ---
@@ -34,7 +34,7 @@ consume it. The `webveil` bin points at the built `cli.js`.
 ## Prompt
 
 > Build webveil's incur-based CLI + MCP frontend. Read `CONTEXT.md` (the `webveil`
-> frontend, core) and the PRD. `core.search()` and `core.fetch()` already exist.
+> frontend, core) and the spec. `core.search()` and `core.fetch()` already exist.
 >
 > Use incur's `Cli.create()` to define `search` and `fetch` commands that call the core;
 > this yields CLI + MCP (`--mcp`) + skills + `--llms` + TOON + pagination for free. Pin the

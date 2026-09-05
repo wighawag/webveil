@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="webveil" style="color: #eef1f6">
+  <title>webveil</title>
+  <defs>
+  <g id="mark-icon" fill="none">
+    <g stroke="#7C4DFF" stroke-width="32" stroke-linecap="butt">
+      <path d="M137.4 215.5 A88 88 0 0 1 64.6 67.0"/>
+      <path d="M118.6 40.5 A88 88 0 0 1 191.4 189.0"/>
+    </g>
+    <path d="M92 18 L92 94 L164 166 L164 238" stroke="currentColor"
+          stroke-width="26" stroke-linecap="butt" stroke-linejoin="miter"/>
+  </g>
+  </defs>
+  <rect width="256" height="256" rx="46" fill="#12141a"/>
+  <use href="#mark-icon" transform="translate(13.9635,13.9636) scale(0.8909091)"/>
+</svg>

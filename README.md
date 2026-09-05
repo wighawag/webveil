@@ -1,4 +1,6 @@
-# webveil
+<div align="center">
+<a href="https://github.com/wighawag/webveil"><img alt="webveil - account-free web search + fetch" src="https://raw.githubusercontent.com/wighawag/webveil/main/media/preview.png" width="640" /></a>
+</div>
 
 **Anonymous-capable, self-hosted, account-free** web **search + fetch** for AI agents.
 

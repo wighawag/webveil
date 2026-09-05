@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" style="color: #0f172a">
+  <defs>
+    <mask id="g2-pane-icon-c">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M66.1 116.6 L193.9 139.4" stroke="#000" stroke-width="30" stroke-linecap="butt" fill="none"/>
+    </mask>
+    <clipPath id="g2-pane-icon-o" clip-rule="evenodd">
+      <path d="M0 0 H256 V256 H0 Z M74 22 H186 V234 H74 Z" clip-rule="evenodd"/>
+    </clipPath>
+  </defs>
+  <rect x="74" y="22" width="112" height="212" fill="#7C4DFF" mask="url(#g2-pane-icon-c)"/>
+  <g clip-path="url(#g2-pane-icon-o)" stroke="currentColor" stroke-width="26" stroke-linecap="round" fill="none">
+    <path d="M6.0 46.0 L74.0 118.0"/>
+    <path d="M186.0 138.0 L250.0 204.0"/>
+  </g>
+</svg>

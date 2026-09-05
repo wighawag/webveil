@@ -4,3 +4,7 @@
 # node modules
 node_modules/
 
+
+# Brand exploration contact sheets: regenerate with media/concepts/sheet.sh
+# from the variant SVGs, which ARE committed. The PNGs are ~2.4MB of scratch.
+media/concepts/*.png

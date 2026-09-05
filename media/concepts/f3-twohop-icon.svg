@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" style="color: #0f172a">
+  <defs>
+    <mask id="f3-twohop-icon-c">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M50.3 103.7 L119.7 124.3" stroke="#000" stroke-width="26" stroke-linecap="butt" fill="none"/>
+      <path d="M136.3 143.7 L205.7 164.3" stroke="#000" stroke-width="26" stroke-linecap="butt" fill="none"/>
+    </mask>
+    <clipPath id="f3-twohop-icon-o" clip-rule="evenodd">
+      <path d="M0 0 H256 V256 H0 Z M58 0 H112 V256 H58 Z M144 0 H198 V256 H144 Z" clip-rule="evenodd"/>
+    </clipPath>
+  </defs>
+  <rect x="58" y="0" width="54" height="256" fill="#7C4DFF" mask="url(#f3-twohop-icon-c)"/>
+  <rect x="144" y="0" width="54" height="256" fill="#7C4DFF" mask="url(#f3-twohop-icon-c)"/>
+  <g clip-path="url(#f3-twohop-icon-o)" stroke="currentColor" stroke-width="22" stroke-linecap="round" fill="none">
+    <path d="M4.0 50.0 L58.0 106.0"/>
+    <path d="M112.0 122.0 L144.0 146.0"/>
+    <path d="M198.0 162.0 L252.0 218.0"/>
+  </g>
+</svg>

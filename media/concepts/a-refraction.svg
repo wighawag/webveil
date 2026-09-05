@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" style="color: #0f172a">
+  <defs>
+    <mask id="a-channel">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M72 87 L184 128" stroke="#000" stroke-width="19" stroke-linecap="butt" fill="none"/>
+    </mask>
+  </defs>
+  <path d="M6 38 L80 90" stroke="currentColor" stroke-width="16" stroke-linecap="butt" fill="none"/>
+  <path d="M176 125 L250 177" stroke="currentColor" stroke-width="16" stroke-linecap="butt" fill="none"/>
+  <rect x="80" y="20" width="96" height="216" rx="12" fill="#7C4DFF" mask="url(#a-channel)"/>
+</svg>

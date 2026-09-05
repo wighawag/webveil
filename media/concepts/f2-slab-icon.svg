@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" style="color: #0f172a">
+  <defs>
+    <mask id="f2-slab-icon-c">
+      <rect width="256" height="256" fill="#fff"/>
+      <path d="M70.2 116.4 L185.8 139.6" stroke="#000" stroke-width="30" stroke-linecap="butt" fill="none"/>
+    </mask>
+    <clipPath id="f2-slab-icon-o" clip-rule="evenodd">
+      <path d="M0 0 H256 V256 H0 Z M78 8 H178 V248 H78 Z" clip-rule="evenodd"/>
+    </clipPath>
+  </defs>
+  <rect x="78" y="8" width="100" height="240" fill="#7C4DFF" mask="url(#f2-slab-icon-c)"/>
+  <g clip-path="url(#f2-slab-icon-o)" stroke="currentColor" stroke-width="26" stroke-linecap="round" fill="none">
+    <path d="M10.0 44.0 L78.0 118.0"/>
+    <path d="M178.0 138.0 L246.0 206.0"/>
+  </g>
+</svg>

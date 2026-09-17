@@ -111,6 +111,33 @@ describe('core.search()', () => {
 		]);
 	});
 
+	it('preserves engine-degradation metadata (unresponsiveEngines) through dedup + clamp', async () => {
+		// The searxng backend annotates every hit when some engines were down;
+		// the core must not strip it while normalizing.
+		const {deps: d} = deps([
+			{
+				title: 'A',
+				url: 'https://example.com/a',
+				unresponsiveEngines: ['brave', 'duckduckgo'],
+			},
+			{
+				title: 'A dup',
+				url: 'https://example.com/a',
+				unresponsiveEngines: ['brave', 'duckduckgo'],
+			},
+			{title: 'B', url: 'https://example.com/b'},
+		]);
+		const out = await search('q', {maxResults: 2}, d);
+		expect(out).toEqual([
+			{
+				title: 'A',
+				url: 'https://example.com/a',
+				unresponsiveEngines: ['brave', 'duckduckgo'],
+			},
+			{title: 'B', url: 'https://example.com/b'},
+		]);
+	});
+
 	it('applies a default clamp when maxResults is omitted', async () => {
 		const many: SearchResult[] = Array.from({length: 25}, (_v, i) => ({
 			title: `R${i}`,

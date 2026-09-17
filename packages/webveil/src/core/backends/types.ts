@@ -7,6 +7,15 @@ export interface SearchResult {
 	title: string;
 	url: string;
 	snippet?: string;
+	/**
+	 * Engines the backend reported as unresponsive for this query (SearXNG's
+	 * `unresponsive_engines`). Present ONLY when some engines failed while
+	 * others still answered: a partial, degraded result set. Its absence means
+	 * the backend reported no engine failures — a clean answer. webveil cannot
+	 * detect JUNK results (a decoy SERP parses like a real one), so this flag
+	 * means "fewer engines than usual answered", not "these results are good".
+	 */
+	unresponsiveEngines?: string[];
 }
 
 /** A fetched, extracted page as budget-bounded markdown. */

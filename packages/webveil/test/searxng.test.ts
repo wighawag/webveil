@@ -132,6 +132,92 @@ describe('searxng backend', () => {
 		expect(calls[0]!.options?.signal).toBe(controller.signal);
 	});
 
+	// Engine-degradation surfacing (live incident 2026-09-16: every curated
+	// engine refused or poisoned the box's egress IP; the response carried no
+	// usable degradation signal for clients). These tests use fixture payloads —
+	// never a live engine.
+	describe('unresponsive_engines', () => {
+		// Upstream shape (`searx/webutils.get_translated_errors`): a JSON pair
+		// [engineName, errorMessage] per failed engine (a serialized Python tuple).
+		const DEGRADED_PAYLOAD = {
+			...SEARXNG_PAYLOAD,
+			unresponsive_engines: [
+				['brave', 'Suspended: too many requests'],
+				['duckduckgo', 'CAPTCHA'],
+			],
+		};
+
+		it('ANNOTATES every result when SOME engines are down (partial is still useful)', async () => {
+			const {http} = fakeHttp(DEGRADED_PAYLOAD);
+			const backend = createSearxngBackend(config);
+			const results = await backend.search('webveil', http);
+			expect(results).toHaveLength(2);
+			for (const r of results)
+				expect(r.unresponsiveEngines).toEqual(['brave', 'duckduckgo']);
+		});
+
+		it('keeps the annotation on clamped results', async () => {
+			const {http} = fakeHttp(DEGRADED_PAYLOAD);
+			const backend = createSearxngBackend(config);
+			const results = await backend.search('webveil', http, {maxResults: 1});
+			expect(results).toHaveLength(1);
+			expect(results[0]!.unresponsiveEngines).toEqual(['brave', 'duckduckgo']);
+		});
+
+		it('FAILS LOUD when no results came back and engines are unresponsive (full outage)', async () => {
+			const {http} = fakeHttp({
+				query: 'gfx1151 rocm',
+				results: [],
+				unresponsive_engines: [
+					['bing', 'HTTP 403'],
+					['brave', 'Suspended: too many requests'],
+					['duckduckgo', 'CAPTCHA'],
+					['mojeek', 'HTTP 403'],
+					['startpage', 'Suspended: CAPTCHA'],
+				],
+			});
+			const backend = createSearxngBackend(config);
+			// The existing unavailable/fail-loud path: a thrown Error (like http
+			// failures), never a confident empty answer.
+			await expect(backend.search('gfx1151 rocm', http)).rejects.toThrow(
+				/searxng: no results and engines unresponsive \(bing, brave, duckduckgo, mojeek, startpage\).*docs\/searxng-setup\.md/,
+			);
+		});
+
+		it('still returns [] for a genuine no-hit query on a healthy instance', async () => {
+			const {http} = fakeHttp({query: 'zzz-no-hits', results: []});
+			const backend = createSearxngBackend(config);
+			expect(await backend.search('zzz-no-hits', http)).toEqual([]);
+		});
+
+		it('adds NO annotation when no engine failed (a clean answer)', async () => {
+			const {http} = fakeHttp(SEARXNG_PAYLOAD);
+			const backend = createSearxngBackend(config);
+			const results = await backend.search('webveil', http);
+			for (const r of results) expect(r.unresponsiveEngines).toBeUndefined();
+		});
+
+		it('tolerates upstream shape drift (strings, {name} objects, garbage)', async () => {
+			const {http} = fakeHttp({
+				results: [{url: 'https://example.com/a', title: 'Result A'}],
+				unresponsive_engines: [
+					'mojeek',
+					{name: 'brave', error: 'too many requests'},
+					{engine: 'shape-we-do-not-know'},
+					['duckduckgo', 'CAPTCHA'],
+					42,
+				],
+			});
+			const backend = createSearxngBackend(config);
+			const results = await backend.search('q', http);
+			expect(results[0]!.unresponsiveEngines).toEqual([
+				'mojeek',
+				'brave',
+				'duckduckgo',
+			]);
+		});
+	});
+
 	it('never reaches a global fetch (egress cannot be bypassed)', async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, 'fetch')

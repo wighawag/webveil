@@ -99,6 +99,37 @@ local. webveil's backend `socks5` mode is for *remote* backends. See
 [`work/notes/findings/webveil-anonymity-boundary.md`](work/notes/findings/webveil-anonymity-boundary.md)
 and [`docs/adr/0003`](docs/adr/0003-per-hop-egress-backend-vs-fetch.md).
 
+### Chained egress: Mullvad base → rotating-residential exit → site
+
+For the strongest anonymity stack, a single commercial proxy is a single point of legal
+exposure: a rotating-residential provider is an adversary that knows **who paid** (and
+sees the traffic), while Mullvad sees the traffic but is deliberately decoupled from your
+identity. Chain them so neither adversary sees both ends:
+
+**app → Mullvad (WireGuard base) → rotating-residential exit → site**
+
+The whole chain can live inside ONE local SOCKS5 listener (e.g. a sing-box unit whose
+SOCKS inbound detours through its WireGuard outbound: SOCKS → Mullvad → residential
+exit), so the chain looks like any other SOCKS endpoint. **webveil's own hops are
+unchanged by this** — a chain is just another SOCKS5 listener to webveil, it needs no
+special mode:
+
+- **`fetchEgress` points at the chain's port like any `socks5h://` URL**
+  (`socks5h://127.0.0.1:1080`), exactly like the single-proxy examples above.
+- **A local SearXNG backend hop stays `direct`** exactly as in the table above (the
+  backend-hop guard still rejects proxying it); SearXNG carries its own engine crawl
+  through the same chain via its `outgoing.proxies`.
+
+**Tor cannot be a chain base.** Tor's exit path is fixed to Tor relays — there is no
+"Tor exits into a paid SOCKS" direction — so Tor can carry the whole path or nothing. A
+chain that needs a controlled exit identity starts from a WireGuard base (Mullvad), not
+Tor.
+
+A chain (or any egress rotation) is also the repair when engines flag your direct IP and
+serve irrelevant-but-confident results — that fix lives in SearXNG's `outgoing.proxies`,
+never in webveil: see
+[Troubleshooting: irrelevant-but-confident results](docs/searxng-setup.md#troubleshooting-irrelevant-but-confident-results-flagged-egress-ip).
+
 ## How it works (seams)
 
 - **core**, the framework-agnostic `search(query, opts)` and `fetch(url, opts)` functions.
@@ -106,7 +137,12 @@ and [`docs/adr/0003`](docs/adr/0003-per-hop-egress-backend-vs-fetch.md).
 - **backend seam**, where results/content come from: `searxng` (keyless self-hosted
   metasearch), `tavily-compat` (a generic Tavily-shaped `/search` + `/extract`), and
   `custom` (a local command via a JSON stdin/stdout contract). The backend is handed a
-  proxied `http` helper so it cannot bypass egress.
+  proxied `http` helper so it cannot bypass egress. The searxng backend also surfaces
+  engine degradation from the response's `unresponsive_engines` — partial failures
+  **annotate** the results (`unresponsiveEngines`, so a degraded answer never masquerades
+  as a clean one), a probable full outage **fails loud**. Honest limit: it cannot detect
+  junk results — a 200 "decoy SERP" parses like a real one at this layer — see
+  [SearXNG troubleshooting](docs/searxng-setup.md#troubleshooting-irrelevant-but-confident-results-flagged-egress-ip).
 - **egress seam**, how outbound HTTP leaves the machine: `direct`, `http` (undici
   `ProxyAgent`), or `socks5` (Tor `127.0.0.1:9050`, Mullvad `10.64.0.1:1080`). SOCKS5 is
   the mode that matters for anonymity. Fail-loud if a configured proxy cannot be built.
@@ -376,7 +412,7 @@ a promise); `LOC` is the actual line count of the built file.
 | module                             |  LOC | target |
 | ---------------------------------- | ---: | -----: |
 | src/index.ts (barrel)              |   85 |      - |
-| src/cli.ts (incur frontend)        |  115 |    ~80 |
+| src/cli.ts (incur frontend)        |  122 |    ~80 |
 | src/core/search.ts                 |  140 |    ~90 |
 | src/core/fetch.ts                  |  150 |    ~90 |
 | src/core/config.ts                 |  159 |    ~80 |
@@ -385,20 +421,20 @@ a promise); `LOC` is the actual line count of the built file.
 | src/core/extract.ts                |   82 |    ~60 |
 | src/core/security.ts (SSRF guard)  |  158 |      - |
 | src/core/baseurl.ts (transport)    |  104 |      - |
-| src/core/backends/types.ts         |   61 |    ~40 |
+| src/core/backends/types.ts         |   70 |    ~40 |
 | src/core/backends/registry.ts      |   41 |    ~60 |
-| src/core/backends/searxng.ts       |   70 |    ~90 |
+| src/core/backends/searxng.ts       |  116 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
 | src/core/backends/custom.ts        |  159 |    ~70 |
-| **subtotal**                       | 1711 |        |
+| **subtotal**                       | 1773 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
 | module       | LOC | target |
 | ------------ | --: | -----: |
-| src/index.ts | 168 |    ~90 |
+| src/index.ts | 169 |    ~90 |
 
-**Total own source: 1879 LOC** (excluding deps).
+**Total own source: 1942 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably
 > `tavily-compat.ts`, `custom.ts`, `pi-webveil/src/index.ts`), and two built modules

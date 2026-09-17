@@ -64,7 +64,14 @@ export function createCli(deps: CliDeps = {}) {
 				const results = await search(c.args.query, {
 					maxResults: c.options.maxResults,
 				});
-				return {results};
+				// Engine-degradation surfacing: results carrying `unresponsiveEngines`
+				// (some engines down, others answered) get the flag hoisted to the
+				// top level too, so MCP/terminal consumers see it without scanning
+				// every hit.
+				const unresponsiveEngines = results.find(
+					(r) => r.unresponsiveEngines !== undefined,
+				)?.unresponsiveEngines;
+				return unresponsiveEngines ? {results, unresponsiveEngines} : {results};
 			},
 		})
 		.command('fetch', {

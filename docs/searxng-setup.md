@@ -120,3 +120,89 @@ webveil-direct, the simplest path is ONE `http-socket` that both consume (Caddy'
 In the generated `.ini`, replace `socket = …/run/socket` with
 `http-socket = 127.0.0.1:8888`, then point webveil at `http://127.0.0.1:8888`. Good when
 you want ONLY webveil (no public web UI / TLS).
+
+## Troubleshooting: irrelevant-but-confident results (flagged egress IP)
+
+**Symptom signature:** searches come back **confident and irrelevant** — a technical query
+returns pizza restaurants, dictionary definitions, or unrelated `.co.uk` pages, ranked as
+if they were real hits, with no error anywhere. This is **not a SearXNG bug and not a
+webveil bug**: it is the signature of the **engines flagging your instance's egress IP**.
+Search engines refuse or poison clients they distrust (shared/dynamic residential IPs get
+this treatment), and they do it in two presentations:
+
+1. **Hard-fail** — a 4xx, a CAPTCHA page, or a suspension. SearXNG records these in the
+   JSON response's `unresponsive_engines`, so the degradation is visible.
+2. **Decoy SERP** — the nastier one: an HTTP **200** page of *unrelated but
+   SERP-shaped* results (bing does this, keyed on the client's IP/ISP). SearXNG parses and
+   ranks it faithfully, the engine reports no error, and **the response carries no
+   degradation signal at all**. The results differ per request and per parameter variant,
+   and popular exact phrases ("hello world") still answer correctly — which is why it
+   looks like flakiness rather than an outage.
+
+### Isolate it: one engine at a time, then the aggregate
+
+Query a single engine directly and look at what it actually returned (SearXNG's
+`engines=<name>` parameter; over a unix socket or TCP, whichever you run):
+
+```sh
+curl -s --unix-socket /run/searxng/searxng.sock \
+  "http://localhost/search?q=gfx1151+rocm&engines=bing&format=json" \
+  | jq '{n: (.results | length), unresponsive: .unresponsive_engines}'
+```
+
+Repeat for each engine in your set, then check the full response's `unresponsive_engines`
+and eyeball relevance (for a technical query, do the top-10 titles/urls even contain the
+query's tokens?):
+
+```sh
+curl -s --unix-socket /run/searxng/searxng.sock \
+  "http://localhost/search?q=gfx1151+rocm&format=json" \
+  | jq '{results: (.results | length), broken: .unresponsive_engines,
+         relevant: [.results[:10][] | select((.url + " " + .title) | test("rocm"; "i"))] | length}'
+```
+
+Four engines hard-failing and one "succeeding" with unrelated hits = a flagged egress IP.
+A control datapoint helps: if another instance on a *different* egress gets good results
+for the same query, the query and the parsers are fine — only the egress is broken.
+
+### The fix lives in SearXNG's `outgoing.proxies`, never in webveil
+
+webveil only talks to your SearXNG instance (usually over a local socket); the engines
+never see webveil or its hop. The hop the engines see is **SearXNG's own engine crawl**,
+so that is the only hop a fix can live in. Rotate the crawl's exit IP in SearXNG's
+`settings.yml` — a WireGuard-to-SOCKS5 tunnel (Mullvad, wireproxy/ProtonVPN) or a
+rotating-residential gateway; SearXNG round-robins a *list* of proxies per request and
+suspends CAPTCHA'd engines with backoff, so a list gives request-level rotation for free:
+
+```yaml
+outgoing:
+  proxies:
+    all://:
+      - socks5h://127.0.0.1:1080   # the tunnel's local SOCKS5 port
+```
+
+There is **nothing to fix in webveil** — no webveil setting can change the IP the engines
+see (that is the whole point of [Where does anonymity
+live?](../README.md#where-does-anonymity-live-read-before-turning-on-egress): proxy the
+hop that reaches the public internet).
+
+### What webveil does about this — and what it honestly cannot
+
+webveil threads SearXNG's `unresponsive_engines` through to callers:
+
+- **Some engines down, others answered** — the results are annotated
+  (`unresponsiveEngines` on every hit; the CLI/MCP output hoists it to a top-level field,
+  the pi extension renders a `[warning] search degraded …` line). Partial results are
+  still useful, so this does not fail — it just stops pretending a degraded answer is a
+  clean one.
+- **Zero results + engines unresponsive** — treated as a full outage: the search fails
+  loud (an error naming the engines) instead of returning a confident empty list. The
+  JSON response does not report the instance's full engine set, so "no results and
+  failures" is the closest observable signature of every engine being down.
+
+**Honest limit:** webveil **cannot detect junk results.** A 200 decoy SERP is
+indistinguishable from a real one at webveil's layer — the engine reported success, the
+results parse as hits, and nothing in the payload says "these are garbage". When the
+surviving engine serves decoys, the response will look *clean* (no annotation) while
+being garbage end to end; the only fix is at the egress level, above. Degradation
+surfacing is a smoke detector, not a junk filter.

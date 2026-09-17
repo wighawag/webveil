@@ -126,6 +126,33 @@ describe('pi-webveil — web_search routes to core.search', () => {
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
+	it('renders a degradation warning in the text when engines were down', async () => {
+		// Some engines unresponsive, others answered: partial results are still
+		// useful, but the model must not read them as a clean answer.
+		const search = vi.fn(async () => [
+			{...hit, unresponsiveEngines: ['brave', 'duckduckgo']},
+		]);
+		const {pi, tools} = fakePi();
+		piWebveil(pi, {search});
+		const result = await tools
+			.get('web_search')!
+			.execute('id', {query: 'q'}, undefined, undefined, {cwd: '/w'});
+		const text = result.content.map((c) => c.text).join('\n');
+		expect(text).toContain('[warning] search degraded');
+		expect(text).toContain('brave, duckduckgo');
+	});
+
+	it('renders NO degradation warning for a clean answer', async () => {
+		const search = vi.fn(async () => [hit]);
+		const {pi, tools} = fakePi();
+		piWebveil(pi, {search});
+		const result = await tools
+			.get('web_search')!
+			.execute('id', {query: 'q'}, undefined, undefined, {cwd: '/w'});
+		const text = result.content.map((c) => c.text).join('\n');
+		expect(text).not.toContain('search degraded');
+	});
+
 	it('forwards the abort signal to the core', async () => {
 		const search = vi.fn(async () => [hit]);
 		const {pi, tools} = fakePi();

@@ -92,12 +92,23 @@ const FETCH_PARAMS = {
 /** Render a SearchResult[] as a compact numbered list for the model. */
 function renderSearch(results: SearchResult[]): string {
 	if (results.length === 0) return 'No results.';
-	return results
+	const body = results
 		.map((r, i) => {
 			const head = `${i + 1}. ${r.title}\n   ${r.url}`;
 			return r.snippet ? `${head}\n   ${r.snippet}` : head;
 		})
 		.join('\n');
+	// Engine-degradation surfacing: some engines were down while others
+	// answered. Say so in the text the model reads — partial results are still
+	// useful, but they must not read as a clean answer. Honest limit: webveil
+	// cannot detect junk results (a decoy SERP parses like a real one), so this
+	// warns "fewer engines answered", not "these results are good".
+	const unresponsiveEngines = results.find(
+		(r) => r.unresponsiveEngines !== undefined,
+	)?.unresponsiveEngines;
+	return unresponsiveEngines
+		? `${body}\n\n[warning] search degraded — unresponsive engines: ${unresponsiveEngines.join(', ')}. Results come from the remaining engines only and may be skewed or junk.`
+		: body;
 }
 
 /** Render a FetchResult as its markdown, flagging truncation. */

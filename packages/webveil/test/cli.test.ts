@@ -73,6 +73,17 @@ describe('webveil CLI — search command', () => {
 		await run(createCli({search, fetch}), ['search', 'q']);
 		expect(fetch).not.toHaveBeenCalled();
 	});
+
+	it('surfaces engine degradation (unresponsiveEngines) in the output', async () => {
+		// Partial engine failure: results come back annotated, and the CLI
+		// hoists the flag to the top level so MCP/terminal consumers see it.
+		const search = vi.fn(async () => [
+			{...hit, unresponsiveEngines: ['brave', 'duckduckgo']},
+		]);
+		const out = await run(createCli({search}), ['search', 'q']);
+		expect(out).toContain('brave');
+		expect(out).toContain('duckduckgo');
+	});
 });
 
 describe('webveil CLI — fetch command', () => {

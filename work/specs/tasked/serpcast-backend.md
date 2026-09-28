@@ -21,7 +21,7 @@ webveil adds the policy serpcast leaves to its caller:
 
 - **Egress**: pass the backend-hop egress to serpcast as its proxy, and to searchcast when webveil runs it in-process. Under anonctl (the common anonymous setup) the account's traffic is already forced, so the user runs `egress: direct`, and nothing extra happens.
 - **State**: a file-backed store under `$XDG_STATE_HOME/webveil/`, partitioned per identity, so the one-shot CLI keeps sessions and cooldowns between calls and no state ever crosses identities.
-- **Trust**: executable configuration (code recipe paths, the `custom` backend command) is accepted only from trusted layers (env and the global config), never from a project `webveil.json`.
+- **Trust**: executable configuration (code recipe paths, the `custom` backend command, native library and browser paths and args) is accepted only from trusted layers (env and the global config), never from a project `webveil.json`. Config sections merge key by key, so a project config cannot silently drop global settings.
 - **Strict impersonation**: webveil always runs serpcast in strict mode; no fingerprint, no search.
 
 ## User Stories
@@ -38,7 +38,7 @@ webveil adds the policy serpcast leaves to its caller:
 10. As a privacy-conscious user, I want persisted sessions to keep their idle expiry (dropped after the configured idle time, checked on load), so that saving state to disk does not let cookies link searches across days.
 11. As a CLI user, I want concurrent `webveil search` calls to share the state file safely (locking, atomic writes), so that parallel agents do not corrupt it.
 12. As a user, I want a command to clear the state (all identities or the current one), so that I can drop sessions on demand.
-13. As a user, I want code recipe paths and the `custom` backend command to be accepted only from env or the global config, with a clear error naming the offending project `webveil.json` otherwise, so that cloning a repository can never make webveil run code.
+13. As a user, I want every setting that makes webveil run code (the `custom` backend command, serpcast code recipe paths, the libcurl-impersonate library path, searchcast's chrome and xvfb paths and extra chrome args) to be accepted only from env or the global config, with a clear error naming the offending project `webveil.json` and key otherwise, so that cloning a repository can never make webveil run code.
 14. As a user, I want this trust rule documented in the README next to the per-folder config explanation, so that I know what a project config can and cannot do.
 15. As a user, I want webveil to fail loud when serpcast reports impersonation is not active (missing or wrong libcurl-impersonate), with the fix in the message (the serpcast install command or the library path setting), so that I never search with a non-browser fingerprint.
 16. As a user, I want per-engine failures surfaced in the result, like SearXNG's `unresponsiveEngines` today, so that the agent knows when the answer came from a fallback or when all engines failed.
@@ -49,26 +49,7 @@ webveil adds the policy serpcast leaves to its caller:
 ### Autonomy notes
 
 - `humanOnly`: not set.
-- `needsAnswers`: not set. The spec is fully decided, but it depends on serpcast's first release (a cross-repo dependency `taskedAfter` cannot express). Keep it in `specs/proposed/` until serpcast 0.1.0 is published, then promote.
-
-## Implementation Decisions
-
-- **Backend**: `createSerpcastBackend(config)` registered as `serpcast` in the backend registry. It maps serpcast results to `SearchResult` (`snippet` from the recipe's content field), and the failures of engines tried before the answering one to `unresponsiveEngines`. `fetch` is not provided by this backend; `web_fetch` stays on the undici path with the SSRF guard (a separate decision later, if fetch should also use the impersonated transport).
-- **Config** (names decided at tasking, shape decided here): a `serpcast` section with the ordered engine list, recipe directories, code recipe paths (trusted layers only), the searchcast mode (`library` with optional chrome/profile settings, or `socket` with a path/URL), the libcurl-impersonate path, session idle time and cooldown. Env equivalents for the scalar settings.
-- **Egress mapping**: the backend-hop `egress` becomes serpcast's proxy URL (`direct` means none). The loopback-`baseUrl` guard does not apply to this backend (there is no `baseUrl`); a new guard rejects non-direct egress with searchcast in `socket` mode. When searchcast runs in-process, its proxy is the same URL (note: Chromium does not support SOCKS with authentication; fail loud if the egress URL carries credentials in that mode).
-- **Trust policy**: the config layer records which layer each key came from. Keys that make webveil execute code (serpcast code recipe paths, `custom`'s command) are rejected when they come from a project `webveil.json`. Declarative recipes are allowed from a project config (they can only send the query to a URL, which a project config can already do today through `baseUrl`).
-- **State store**: implements serpcast's store interface on files under `$XDG_STATE_HOME/webveil/` (default `~/.local/state/webveil/`). One partition per identity key, derived from the resolved egress (mode + URL) and the resolved backend config, hashed so no URL or credential appears in the path. Advisory file locking plus atomic replace. Expiry is enforced on read. File permissions 0600, directories 0700.
-- **Strict mode** always on when webveil builds serpcast.
-- **ADR**: record "the engine layer lives in serpcast, webveil injects egress, state and trust" alongside ADR 0001 (distilly), since it is the same mechanism/policy split.
-- **Docs**: README (backend list, quick start without SearXNG, anonymity table, trust rule, state location) and CONTEXT.md (backend list, LOC table, the state and trust terms).
-
-## Testing Decisions
-
-- Backend tests inject a fake serpcast (or a serpcast with fake engines) and assert: egress passed as proxy, strict mode on, result and failure mapping, total failure is an error.
-- Trust tests: code recipe path or custom command from a project `webveil.json` is rejected with the file named; the same from global config or env is accepted.
-- State store tests: partitions differ for different egress; expiry enforced on read; concurrent writers from two processes do not corrupt the file; the clear command removes the right partition.
-- Guard test: non-direct egress with searchcast `socket` mode is rejected.
-- No live engine traffic in `verify`.
+- `needsAnswers`: not set. The dependency on serpcast releases is cross-repo (not expressible as `taskedAfter`); it is recorded on the affected tasks instead.
 
 ## Out of Scope
 
@@ -79,5 +60,4 @@ webveil adds the policy serpcast leaves to its caller:
 
 ## Further Notes
 
-- Depends on the serpcast spec (`wighawag/serpcast`, `work/specs/proposed/serpcast.md`) and serpcast's first release.
-- Supersedes the former idea note `playwright-search-backend` (deleted; searchcast is the browser part). `work/notes/ideas/expand-search-backend-roster.md` is partly answered by this spec.
+Tasked 2026-09-28. Implementation and testing detail moved to `work/tasks/`; durable rationale moved to `docs/adr/0004`. Depends on serpcast (`wighawag/serpcast`, spec `serpcast`); the tasks that need a serpcast release say so in their "Blocked by" section, so promote them from backlog only after that release. Supersedes the former idea note `playwright-search-backend`.

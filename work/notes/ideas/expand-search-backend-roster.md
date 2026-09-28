@@ -41,7 +41,7 @@ honest tradeoffs, so "account-free search" is not synonymous with "run SearXNG".
   (operator sees your query CONTENTS) and many block `format=json`. Coherent ONLY behind
   webveil's egress proxy: see the dedicated note `public-searxng-over-egress`.
 - **Engines queried directly (HTTP with a browser fingerprint, real-browser fallback)**:
-  now specced as `work/specs/proposed/serpcast-backend.md` (serpcast + searchcast).
+  now specced as `work/specs/tasked/serpcast-backend.md` (serpcast + searchcast).
 
 ## The seam is cheap; the cost is the dep/tradeoff, not the code
 

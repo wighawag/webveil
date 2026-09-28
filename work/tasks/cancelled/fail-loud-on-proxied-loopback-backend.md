@@ -5,6 +5,9 @@ blockedBy: []
 covers: []
 ---
 
+reason: already implemented. The loopback-TCP arm of the backend-hop guard was folded into the per-hop egress work (ADR 0003, commit 9471004, `core/egress.ts` using `isLoopbackHost` from `core/security.ts`).
+
+
 ## What to build
 
 A guard that REFUSES the false-confidence egress combo: a non-`direct` egress
@@ -16,7 +19,7 @@ anonymity-boundary model (`work/notes/findings/webveil-anonymity-boundary.md`), 
 belongs on the hop that reaches the internet; for a local backend that is the backend's job
 (`outgoing.proxies`), not webveil's.
 
-Decision (recorded): **option (a) hard fail** \u2014 throw an `EgressError` (the existing
+Decision (recorded): **option (a) hard fail**: throw an `EgressError` (the existing
 fail-loud type) at config/egress resolution with a message that explains the fix: either
 set `egress=direct` and proxy the backend itself, or point `baseUrl` at a remote backend.
 Chosen over warn-and-proceed or auto-bypass to avoid false confidence (webveil's standing
@@ -26,7 +29,7 @@ Scope/precision:
 - The guard keys on **loopback `baseUrl` specifically**, NOT "backend is searxng". A
   REMOTE SearXNG (or any remote backend) over `socks5` is LEGITIMATE and must keep working.
 - It governs the **backend `baseUrl` hop only**. `web_fetch` targets are arbitrary URLs
-  governed by the SSRF guard, not this check \u2014 do not block `web_fetch` of a loopback URL
+  governed by the SSRF guard, not this check: do not block `web_fetch` of a loopback URL
   here (that is SSRF's concern and has its own proxy-relaxation rules).
 - Loopback detection should cover IPv4 `127.0.0.0/8`, IPv6 `::1`, and the hostname
   `localhost` (reuse the SSRF guard's private/loopback classification in `core/security.ts`

@@ -16,6 +16,8 @@ The backend is currently constructed per search call, so the serpcast instance i
 
 Results map to `SearchResult`; the failures of engines tried before the answering one map to `unresponsiveEngines`; a serpcast `exhausted` error becomes an error listing each engine's failure; an `impersonation` error becomes an error whose message includes serpcast's fix (install command or library path setting). State uses serpcast's default in-memory store for now (the file store is a later task). `web_fetch` is unchanged. Existing backends and the default (`searxng`) are untouched.
 
+> FORWARD-NOTE (conductor, 2026-09-28, from Gate-3 of `config-trust-layers`, PR #12): the trust helper (`core/trust.ts`) reads provenance from a non-enumerable symbol on the resolved `Config`, and a config with NO provenance is treated as trusted (code-built). A spread copy (`{...config}`) DROPS provenance, so the check then silently passes (fails OPEN). Every config you derive before an executable-setting consumer must go through `carryProvenance(from, to)` (`core/layers.ts`), and a test must prove a project-set executable key is still refused on the derived path. Register this backend's executable keys with `assertTrusted` at USE time (not construction), and resolve paths only through `resolveExecutablePath` (never the cwd).
+
 ## Acceptance criteria
 
 - [ ] `backend: "serpcast"` with a recipe directory and engine list returns results through the core `search()` in both the CLI/MCP frontend and pi-webveil.

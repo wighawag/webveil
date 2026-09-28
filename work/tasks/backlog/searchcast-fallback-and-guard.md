@@ -17,6 +17,8 @@ The `serpcast` config section gains a `searchcast` subsection: `library` mode (s
 
 The `searchcast` package stays optional for webveil users who do not use this mode.
 
+> FORWARD-NOTE (conductor, 2026-09-28, from Gate-3 of `config-trust-layers`, PR #12): the trust helper (`core/trust.ts`) reads provenance from a non-enumerable symbol on the resolved `Config`, and a config with NO provenance is treated as trusted (code-built). A spread copy (`{...config}`) DROPS provenance, so the check then silently passes (fails OPEN). Every config you derive before an executable-setting consumer must go through `carryProvenance(from, to)` (`core/layers.ts`), and a test must prove a project-set executable key is still refused on the derived path. Register this backend's executable keys with `assertTrusted` at USE time (not construction), and resolve paths only through `resolveExecutablePath` (never the cwd).
+
 ## Acceptance criteria
 
 - [ ] `library` mode passes the egress to searchcast as its proxy (tested with a fake serpcast that records the options it was built with).

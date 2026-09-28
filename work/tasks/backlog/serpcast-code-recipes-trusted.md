@@ -10,6 +10,8 @@ covers: [3, 13]
 
 The `serpcast` config section gains `codeRecipes`: paths to JS modules or directories of them, loaded with serpcast's `loadCodeRecipe` and usable in the engine list like declarative recipes. `serpcast.codeRecipes` is added to the trust check's executable keys, so code recipe paths coming from a project `webveil.json` are refused with the file named, while paths from the global config or env work. Because sections merge key by key, a project config that sets other `serpcast` keys (for example the engine order) keeps the global `codeRecipes`. Private recipes live wherever the user keeps them (for example under `~/.config/webveil/`), never in a repo.
 
+> FORWARD-NOTE (conductor, 2026-09-28, from Gate-3 of `config-trust-layers`, PR #12): the trust helper (`core/trust.ts`) reads provenance from a non-enumerable symbol on the resolved `Config`, and a config with NO provenance is treated as trusted (code-built). A spread copy (`{...config}`) DROPS provenance, so the check then silently passes (fails OPEN). Every config you derive before an executable-setting consumer must go through `carryProvenance(from, to)` (`core/layers.ts`), and a test must prove a project-set executable key is still refused on the derived path. Register this backend's executable keys with `assertTrusted` at USE time (not construction), and resolve paths only through `resolveExecutablePath` (never the cwd).
+
 ## Acceptance criteria
 
 - [ ] Code recipe paths from global config or env load and run in the chain.

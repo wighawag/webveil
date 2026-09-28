@@ -3,7 +3,10 @@
 //   $XDG_CONFIG_HOME/webveil/config.json (~/.config/webveil/config.json) >
 //   defaults.
 // "Per folder = per account/egress." Each layer is a partial; later (lower)
-// layers fill gaps the higher layers leave. The project file is a
+// layers fill gaps the higher layers leave. Plain-object sections merge key by
+// key (`egress`/`fetchEgress` are replaced whole) and every resolved leaf keeps
+// its provenance, so executable settings can be refused from a project file
+// (layers.ts, trust.ts, docs/adr/0004). The project file is a
 // frontend-neutral `webveil.json` (no `.pi/`): both the pi-agnostic CLI and the
 // pi extension resolve the same name, so a project is configured the same way
 // regardless of which frontend reads it. See docs/adr/0002.
@@ -11,6 +14,8 @@
 import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname, join, parse} from 'node:path';
+import {attachProvenance, mergeLayers} from './layers.js';
+import type {Layer} from './layers.js';
 
 /** How outbound HTTP leaves the machine. See egress.ts. */
 export type Egress =
@@ -72,26 +77,32 @@ const DEFAULTS: Config = {
 
 const PROJECT_FILE = 'webveil.json';
 
-function readJson(path: string): PartialConfig | undefined {
+function readJson(path: string): Record<string, unknown> | undefined {
 	let text: string;
 	try {
 		text = readFileSync(path, 'utf8');
 	} catch {
 		return undefined; // absent file is fine; missing layers are expected
 	}
-	return JSON.parse(text) as PartialConfig;
+	return JSON.parse(text) as Record<string, unknown>;
 }
 
 /** The nearest `webveil.json` walking up from `cwd` (first found wins). */
-function readProjectChain(cwd: string): PartialConfig | undefined {
+function readProjectChain(cwd: string): Layer | undefined {
 	let dir = cwd;
 	const {root} = parse(dir);
 	for (;;) {
-		const found = readJson(join(dir, PROJECT_FILE));
-		if (found) return found;
+		const path = join(dir, PROJECT_FILE);
+		const found = readJson(path);
+		if (found) return {value: found, source: {layer: 'project', path}};
 		if (dir === root) return undefined;
 		dir = dirname(dir);
 	}
+}
+
+/** The global config file as a layer (empty when the file is absent). */
+function readGlobal(path: string): Layer {
+	return {value: readJson(path) ?? {}, source: {layer: 'global', path}};
 }
 
 /**
@@ -141,7 +152,8 @@ function resolveGlobalPath(
 
 /**
  * Resolve the effective config. Higher-precedence layers override lower ones,
- * key by key: env > project chain > global file > defaults.
+ * key by key: env > project chain > global file > defaults. The result carries
+ * its per-key provenance (read it with `configProvenance`).
  */
 export function resolveConfig(options: ResolveOptions = {}): Config {
 	const cwd = options.cwd ?? process.cwd();
@@ -149,11 +161,13 @@ export function resolveConfig(options: ResolveOptions = {}): Config {
 	const globalPath =
 		options.globalPath ?? resolveGlobalPath(env, options.homeDir);
 
-	const layers: PartialConfig[] = [
-		DEFAULTS,
-		readJson(globalPath) ?? {},
-		readProjectChain(cwd) ?? {},
-		readEnv(env),
+	const project = readProjectChain(cwd);
+	const layers: Layer[] = [
+		{value: {...DEFAULTS}, source: {layer: 'defaults'}},
+		readGlobal(globalPath),
+		...(project ? [project] : []),
+		{value: {...readEnv(env)}, source: {layer: 'env'}},
 	];
-	return Object.assign({}, ...layers) as Config;
+	const {value, provenance} = mergeLayers(layers);
+	return attachProvenance(value as unknown as Config, provenance);
 }

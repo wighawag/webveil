@@ -157,6 +157,8 @@ never in webveil: see
   `~/.config/webveil/config.json`) > defaults. Per folder = per account/egress. The
   project file is a frontend-neutral `webveil.json` read identically by the CLI and the
   pi extension. See [`docs/adr/0002`](docs/adr/0002-config-file-location-neutral-webveil-json.md).
+  - **Merge rule.** Layers merge key by key, and so do config sections (plain objects): a project `webveil.json` that sets one key of a section keeps the global config's other keys in that section. Scalars and arrays are replaced whole by the highest layer that sets them. `egress` and `fetchEgress` are also replaced whole (a project `{"mode": "direct"}` over a global SOCKS5 egress is exactly `direct`, never `direct` plus a stray url).
+  - **What a project config can and cannot do.** A `webveil.json` is read automatically from any checkout you run webveil in, so a cloned repository must never be able to make webveil run code. A project config may choose the backend, its URL, egress, fetch size and other plain settings, but a setting that makes webveil run code (today: the `custom` backend's command, i.e. its `baseUrl` when `backend` is `custom`) is refused when it comes from a project `webveil.json`, with an error naming the file and the key: put it in the global config or env instead. A project may still say `"backend": "custom"` when the command itself comes from the global config or env. The check runs only where the setting is used, so `web_fetch` keeps working in such a folder. Paths in executable settings never resolve against the cwd: `~/` is your home directory, a relative path is relative to the config file that set it, a value from env must be absolute or `~/`-prefixed, and a bare command name (no slash) is looked up on `PATH`. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
 - **extractor seam**, `urlToMarkdown` via `distilly/fetch` by default, injected with
   webveil's egress-bound `fetch`; a backend's own `/extract` (Tavily-compat) may override
   it. Owns the context-friendly markdown + size presets (`s`/`m`/`l`/`f`). See
@@ -411,11 +413,13 @@ a promise); `LOC` is the actual line count of the built file.
 
 | module                             |  LOC | target |
 | ---------------------------------- | ---: | -----: |
-| src/index.ts (barrel)              |   85 |      - |
+| src/index.ts (barrel)              |   97 |      - |
 | src/cli.ts (incur frontend)        |  122 |    ~80 |
-| src/core/search.ts                 |  140 |    ~90 |
+| src/core/search.ts                 |  141 |    ~90 |
 | src/core/fetch.ts                  |  150 |    ~90 |
-| src/core/config.ts                 |  159 |    ~80 |
+| src/core/config.ts                 |  173 |    ~80 |
+| src/core/layers.ts (merge + prov.) |  121 |      - |
+| src/core/trust.ts (exec. settings) |   93 |      - |
 | src/core/egress.ts                 |  169 |    ~70 |
 | src/core/http.ts                   |   62 |    ~60 |
 | src/core/extract.ts                |   82 |    ~60 |
@@ -425,8 +429,8 @@ a promise); `LOC` is the actual line count of the built file.
 | src/core/backends/registry.ts      |   41 |    ~60 |
 | src/core/backends/searxng.ts       |  116 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
-| src/core/backends/custom.ts        |  159 |    ~70 |
-| **subtotal**                       | 1773 |        |
+| src/core/backends/custom.ts        |  180 |    ~70 |
+| **subtotal**                       | 2035 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
@@ -434,7 +438,7 @@ a promise); `LOC` is the actual line count of the built file.
 | ------------ | --: | -----: |
 | src/index.ts | 169 |    ~90 |
 
-**Total own source: 1942 LOC** (excluding deps).
+**Total own source: 2204 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably
 > `tavily-compat.ts`, `custom.ts`, `pi-webveil/src/index.ts`), and two built modules

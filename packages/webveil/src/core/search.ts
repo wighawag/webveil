@@ -21,6 +21,7 @@ import type {Dispatcher} from './egress.js';
 import {resolveBackendTransport as defaultResolveBackendTransport} from './baseurl.js';
 import type {BackendTransport} from './baseurl.js';
 import {createHttp as defaultCreateHttp} from './http.js';
+import {carryProvenance} from './layers.js';
 import {getBackend as defaultGetBackend} from './backends/registry.js';
 import type {Http, SearchOptions, SearchResult} from './backends/types.js';
 
@@ -122,7 +123,7 @@ export async function search(
 	const backendConfig: Config =
 		transport.baseUrl === config.baseUrl
 			? config
-			: {...config, baseUrl: transport.baseUrl};
+			: carryProvenance(config, {...config, baseUrl: transport.baseUrl});
 	const backend = getBackend(backendConfig.backend, backendConfig);
 	// Hand the backend ONLY the proxied helper (no maxResults: dedup happens
 	// here, over the full set, so the clamp below is over UNIQUE results).

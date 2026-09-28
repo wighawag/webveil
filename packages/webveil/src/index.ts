@@ -1,7 +1,9 @@
 // webveil — anonymous-capable, self-hosted, account-free web search + fetch for agents.
 //
 // This is the public surface. The framework-agnostic core lives under src/core:
-//   - core/config.ts            : config seam (per-folder .pi/webveil.json + global + env)
+//   - core/config.ts            : config seam (per-folder webveil.json + global + env)
+//   - core/layers.ts            : key-by-key layer merge + per-key provenance
+//   - core/trust.ts             : executable settings refused from a project webveil.json
 //   - core/egress.ts            : egress seam (direct | http | socks5/Tor) — dispatcher + egress fetch
 //   - core/http.ts              : the proxied `http` helper handed to backends
 //   - core/extract.ts           : Extractor seam (distilly/fetch + injected egress fetch)
@@ -19,6 +21,16 @@
 
 // config seam
 export {resolveConfig} from './core/config.js';
+export {configProvenance} from './core/layers.js';
+export type {ConfigSource, Provenance} from './core/layers.js';
+
+// trust (executable settings only from env or the global config; ADR 0004)
+export {
+	assertTrusted,
+	resolveExecutablePath,
+	sourceOf,
+	TrustError,
+} from './core/trust.js';
 export type {
 	Config,
 	Egress,

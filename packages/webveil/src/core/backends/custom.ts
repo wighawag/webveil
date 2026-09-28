@@ -12,6 +12,15 @@
 // the other backends read `baseUrl` as "where results come from". (Recorded
 // decision; see the task's Decisions block.)
 //
+// Trust (docs/adr/0004): the command is EXECUTABLE config, so `baseUrl` is
+// refused when it came from a project `webveil.json`, and a command path with a
+// slash resolves via trust.ts (`~` = home, relative = the setting's config-file
+// directory, never the cwd; a relative path from env is refused). A bare name
+// (no slash) keeps today's PATH lookup. Both run in `search()`, where the
+// command is used, NOT in the factory: fetch.ts constructs the configured
+// backend just to probe for `/extract`, and `web_fetch` must keep working in a
+// folder whose project config names a command (recorded decision).
+//
 // Contract:
 //   stdin  <- JSON: {"query": string, "maxResults"?: number}
 //   stdout -> JSON: SearchResult[]  (each {title, url, snippet?})
@@ -20,6 +29,7 @@
 
 import {spawn as defaultSpawn} from 'node:child_process';
 import type {Config} from '../config.js';
+import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
 import type {Backend, Http, SearchOptions, SearchResult} from './types.js';
 
 /** The JSON request written to the command's stdin. */
@@ -53,6 +63,16 @@ function parseCommand(baseUrl: string): [string, string[]] {
 			'custom: no command configured (set baseUrl to the command to run)',
 		);
 	return [parts[0]!, parts.slice(1)];
+}
+
+/** The executable config keys of this backend (checked at use time). */
+const EXECUTABLE_KEYS = ['baseUrl'];
+
+/** Trust-check the command's source and resolve its executable (see header). */
+function resolveExecutable(config: Config, command: string): string {
+	assertTrusted(config, EXECUTABLE_KEYS);
+	if (!command.includes('/')) return command; // bare name: PATH lookup
+	return resolveExecutablePath(command, sourceOf(config, 'baseUrl'));
 }
 
 /**
@@ -134,13 +154,14 @@ export function createCustomBackend(
 	config: Config,
 	spawn: SpawnFn = defaultSpawn,
 ): Backend {
-	const [exe, args] = parseCommand(config.baseUrl);
+	const [command, args] = parseCommand(config.baseUrl);
 	return {
 		async search(
 			query: string,
 			_http: Http,
 			options: SearchOptions = {},
 		): Promise<SearchResult[]> {
+			const exe = resolveExecutable(config, command);
 			const request: CustomRequest = {query};
 			if (options.maxResults !== undefined)
 				request.maxResults = options.maxResults;

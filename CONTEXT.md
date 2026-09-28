@@ -45,6 +45,8 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   project file is a frontend-neutral `webveil.json` (no `.pi/`), read identically by the
   pi-agnostic CLI and the pi extension. Per folder = per account/egress. See
   `docs/adr/0002`.
+- **provenance** — for every resolved leaf key path (e.g. `baseUrl`, `serpcast.engines`), the layer it came from: env, project (with the file path), global (with the file path) or defaults. Plain-object config sections merge key by key; scalars, arrays, `egress` and `fetchEgress` are leaves replaced whole. See `core/layers.ts`.
+- **executable setting** — a config key whose value makes webveil run code (today the `custom` backend's command, its `baseUrl`). Accepted only from a **trusted layer** (env or the global config), never from a project `webveil.json`; checked where the backend uses it, and its paths never resolve against the cwd. See `core/trust.ts` and `docs/adr/0004`.
 - **Extractor seam** — `urlToMarkdown` via `distilly/fetch` by default, INJECTED with
   webveil's egress-bound `fetch` (so distilly's network Rules rewrite to raw `.md`/API
   source over webveil's egress, never a global fetch); a backend's own `/extract`

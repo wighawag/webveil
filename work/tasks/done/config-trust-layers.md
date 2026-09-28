@@ -4,7 +4,7 @@ slug: config-trust-layers
 spec: serpcast-backend
 blockedBy: []
 covers: [13, 14]
-needsAnswers: true
+needsAnswers: false
 ---
 
 ## What to build

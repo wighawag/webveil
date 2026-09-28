@@ -57,4 +57,5 @@ split into two incompatible things.
    ToS-violating, and gets WORSE under webveil's proxy egress \u2014 a bad first-class fit for an
    anonymity tool.
 4. A browser-driven approach (Playwright) sidesteps vqd/JS but inherits the
-   proxy-IP-reputation CAPTCHA problem \u2014 see `playwright-search-backend`.
+   proxy-IP-reputation CAPTCHA problem: see spec `serpcast-backend` (searchcast is
+   the browser fallback there).

@@ -124,7 +124,7 @@ no-money options; this note is specifically the "pay without an identity" lane.
 
 - The paid lane of `expand-search-backend-roster` (which covered keyed APIs like Brave but
   not the anonymous-payment angle).
-- Contrast: `public-searxng-over-egress` + `playwright-search-backend` are the no-money,
+- Contrast: `public-searxng-over-egress` + spec `serpcast-backend` are the no-money,
   no-account lanes; this is the pay-anonymously lane.
 - `default-backend-policy-account-vs-origin` frames the account-vs-origin distinction this
   builds on (anonymous payment removes the account-IDENTITY axis while still paying).

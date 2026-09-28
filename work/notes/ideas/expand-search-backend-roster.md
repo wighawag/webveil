@@ -40,9 +40,8 @@ honest tradeoffs, so "account-free search" is not synonymous with "run SearXNG".
 - **Public SearXNG instance**: keyless real results, ZERO self-hosting, but third-party
   (operator sees your query CONTENTS) and many block `format=json`. Coherent ONLY behind
   webveil's egress proxy: see the dedicated note `public-searxng-over-egress`.
-- **Playwright-driven engine backend**: drive a real browser against Google/Bing/DDG
-  directly, account-free, through your egress. Big dependency + anti-bot fragility: see the
-  dedicated note `playwright-search-backend`.
+- **Engines queried directly (HTTP with a browser fingerprint, real-browser fallback)**:
+  now specced as `work/specs/proposed/serpcast-backend.md` (serpcast + searchcast).
 
 ## The seam is cheap; the cost is the dep/tradeoff, not the code
 

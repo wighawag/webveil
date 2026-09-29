@@ -13,7 +13,7 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {delimiter, dirname, join} from 'node:path';
 import {PassThrough} from 'node:stream';
 import {Cli as IncurCli, Mcp} from 'incur';
 import {createSerpcast, SerpcastError} from 'serpcast';
@@ -451,5 +451,114 @@ describe('serpcast backend: one cached instance per identity', () => {
 		expect(fake.built).toHaveLength(1);
 		expect(fake.requests.filter((u) => u.includes('alpha'))).toHaveLength(1);
 		expect(fake.closed).toHaveLength(0);
+	});
+});
+
+describe('serpcast backend: code recipes are executable settings', () => {
+	/** A code recipe module whose import writes `marker` (an import-time side effect). */
+	function writeCodeRecipe(path: string, name: string): string {
+		const marker = `${path}.imported`;
+		mkdirSync(dirname(path), {recursive: true});
+		writeFileSync(
+			path,
+			`import {writeFileSync} from 'node:fs';
+writeFileSync(${JSON.stringify(marker)}, 'ran');
+export default {
+	name: ${JSON.stringify(name)},
+	async search(query, ctx) {
+		await ctx.http.text('https://${name}.test/?q=' + encodeURIComponent(query), {kind: 'document'});
+		return [{title: '${name} code hit', url: 'https://${name}.example/code'}];
+	},
+};
+`,
+			'utf8',
+		);
+		return marker;
+	}
+
+	it('loads code recipes from the global config (a directory, relative to that file) and runs them in the chain', async () => {
+		const marker = writeCodeRecipe(
+			join(dirname(globalPath), 'recipes', 'gamma.mjs'),
+			'gamma',
+		);
+		writeFileSync(join(dirname(globalPath), 'recipes', 'notes.txt'), 'x');
+		writeJson(globalPath, {serpcast: {codeRecipes: ['recipes']}});
+		writeProject({serpcast: {engines: ['gamma', 'alpha']}});
+		const fake = fakeFactory();
+		expect(await searchWith(fake.create)).toEqual([
+			{title: 'gamma code hit', url: 'https://gamma.example/code'},
+		]);
+		expect(existsSync(marker)).toBe(true);
+		// the code recipe's HTTP went through serpcast's transport (the egress)
+		expect(fake.requests).toEqual(['https://gamma.test/?q=webveil']);
+	});
+
+	it('keeps the global codeRecipes when the project sets only serpcast.engines', async () => {
+		const file = join(root, 'private', 'delta.mjs');
+		writeCodeRecipe(file, 'delta');
+		writeJson(globalPath, {serpcast: {codeRecipes: [file]}});
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['delta']},
+		});
+		const fake = fakeFactory();
+		const results = await searchWith(fake.create);
+		expect(results[0]!.url).toBe('https://delta.example/code');
+	});
+
+	it('loads them from env (a path-delimited list of absolute paths)', async () => {
+		const a = join(root, 'private', 'env-a.mjs');
+		const b = join(root, 'private', 'env-b.mjs');
+		writeCodeRecipe(a, 'enva');
+		writeCodeRecipe(b, 'envb');
+		writeProject({serpcast: {engines: ['envb']}});
+		const fake = fakeFactory();
+		const results = await searchWith(fake.create, {
+			WEBVEIL_SERPCAST_CODE_RECIPES: [a, b].join(delimiter),
+		});
+		expect(results[0]!.url).toBe('https://envb.example/code');
+	});
+
+	it('refuses a relative env path before importing it (never the cwd)', async () => {
+		const marker = writeCodeRecipe(join(cwd, 'rel.mjs'), 'rel');
+		writeProject({serpcast: {engines: ['rel']}});
+		await expect(
+			searchWith(fakeFactory().create, {
+				WEBVEIL_SERPCAST_CODE_RECIPES: 'rel.mjs',
+			}),
+		).rejects.toThrow(TrustError);
+		expect(existsSync(marker)).toBe(false);
+	});
+
+	it('refuses them from a project webveil.json, naming file and key, before any module is imported', async () => {
+		const marker = writeCodeRecipe(join(project, 'evil', 'evil.mjs'), 'evil');
+		writeProject({serpcast: {engines: ['evil'], codeRecipes: ['evil']}});
+		const fake = fakeFactory();
+		const error = await searchWith(fake.create).catch((e: Error) => e);
+		expect(error).toBeInstanceOf(TrustError);
+		expect(error.message).toContain(join(project, 'webveil.json'));
+		expect(error.message).toContain('serpcast.codeRecipes');
+		expect(existsSync(marker)).toBe(false);
+		expect(fake.built).toHaveLength(0);
+	});
+
+	it('still refuses them on the derived (unix baseUrl) config path', async () => {
+		const marker = writeCodeRecipe(join(project, 'evil.mjs'), 'evil');
+		writeProject({
+			baseUrl: 'unix:/nonexistent/socket',
+			serpcast: {engines: ['evil'], codeRecipes: ['evil.mjs']},
+		});
+		await expect(searchWith(fakeFactory().create)).rejects.toThrow(TrustError);
+		expect(existsSync(marker)).toBe(false);
+	});
+
+	it('fails loud on a code recipe name already taken by a declarative recipe', async () => {
+		const file = join(root, 'private', 'alpha.mjs');
+		writeCodeRecipe(file, 'alpha');
+		writeJson(globalPath, {serpcast: {codeRecipes: [file]}});
+		writeProject({});
+		await expect(searchWith(fakeFactory().create)).rejects.toThrow(
+			/duplicate recipe name 'alpha'/,
+		);
 	});
 });

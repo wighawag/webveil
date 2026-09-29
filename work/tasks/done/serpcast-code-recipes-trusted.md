@@ -32,3 +32,13 @@ The `serpcast` config section gains `codeRecipes`: paths to JS modules or direct
 Goal: private engines (challenge handling, sites with restrictive terms) plug in as files, without opening a code-execution path through project config (ADR 0004). Reuse the trust check from `config-trust-layers`; do not add a second one.
 
 FIRST, check this task against current reality (launch snapshot; may have drifted). RECORD non-obvious in-scope decisions.
+
+## Decisions
+
+These are recorded as comments where each choice is made; please link them from the done record.
+1. **Env form** (`config.ts`, comment on `SerpcastConfig`): `WEBVEIL_SERPCAST_CODE_RECIPES` is a list split on `:` (`;` on Windows), like `PATH`, and each entry must be absolute or `~/`. It is the only list setting with an env form. Without it, env could never supply a code recipe path, which the first acceptance criterion requires. I considered a JSON array in env and rejected it as awkward to type in a shell.
+2. **What a directory loads** (`config.ts`): every `*.js` and `*.mjs` file, sorted, matching how `loadRecipes` picks up `*.json`. `.cjs` and `.ts` files are not loaded.
+3. **One name space** (`serpcast.ts` header): code and declarative recipes share names, and a name used twice (across kinds or within one) is an error rather than a silent override, as `loadRecipes` already does for JSON recipes.
+4. **Import on every search** (`serpcast.ts` header): each listed module is imported on every search. Node's module cache makes repeats cheap, and a recipe's engine name is only known after importing it. Recipe paths are part of the resolved section, so they also count towards the identity key without any extra code.
+
+No observation notes were added.

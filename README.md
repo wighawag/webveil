@@ -160,7 +160,8 @@ never in webveil: see
   project file is a frontend-neutral `webveil.json` read identically by the CLI and the
   pi extension. See [`docs/adr/0002`](docs/adr/0002-config-file-location-neutral-webveil-json.md).
   - **Merge rule.** Layers merge key by key, and so do config sections (plain objects): a project `webveil.json` that sets one key of a section keeps the global config's other keys in that section. Scalars and arrays are replaced whole by the highest layer that sets them. `egress` and `fetchEgress` are also replaced whole (a project `{"mode": "direct"}` over a global SOCKS5 egress is exactly `direct`, never `direct` plus a stray url).
-  - **What a project config can and cannot do.** A `webveil.json` is read automatically from any checkout you run webveil in, so a cloned repository must never be able to make webveil run code. A project config may choose the backend, its URL, egress, fetch size and other plain settings, but a setting that makes webveil run code (today: the `custom` backend's command, i.e. its `baseUrl` when `backend` is `custom`, and the serpcast backend's `serpcast.libcurlPath`, a native library webveil loads) is refused when it comes from a project `webveil.json`, with an error naming the file and the key: put it in the global config or env instead. A project may still say `"backend": "custom"` when the command itself comes from the global config or env. The check runs only where the setting is used, so `web_fetch` keeps working in such a folder. Paths in executable settings never resolve against the cwd: `~/` is your home directory, a relative path is relative to the config file that set it, a value from env must be absolute or `~/`-prefixed, and a bare command name (no slash) is looked up on `PATH` by webveil itself, searching only absolute `PATH` entries: empty, `.` and other relative entries are ignored, so a file in the cwd is never picked up, and a name found in no absolute entry is an error before anything runs. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
+  - **What a project config can and cannot do.** A `webveil.json` is read automatically from any checkout you run webveil in, so a cloned repository must never be able to make webveil run code. A project config may choose the backend, its URL, egress, fetch size and other plain settings, but a setting that makes webveil run code (today: the `custom` backend's command, i.e. its `baseUrl` when `backend` is `custom`, the serpcast backend's `serpcast.libcurlPath`, a native library webveil loads, and its `serpcast.codeRecipes`, JS modules webveil imports and so runs) is refused when it comes from a project `webveil.json`, with an error naming the file and the key: put it in the global config or env instead. A project may still say `"backend": "custom"` when the command itself comes from the global config or env. The check runs only where the setting is used, so `web_fetch` keeps working in such a folder. Paths in executable settings never resolve against the cwd: `~/` is your home directory, a relative path is relative to the config file that set it, a value from env must be absolute or `~/`-prefixed, and a bare command name (no slash) is looked up on `PATH` by webveil itself, searching only absolute `PATH` entries: empty, `.` and other relative entries are ignored, so a file in the cwd is never picked up, and a name found in no absolute entry is an error before anything runs. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
+  - **Private serpcast recipes.** A code recipe (a JS module for an engine that needs challenge handling, or a site whose terms you would rather not publish in a repo) is code with full Node access, and loading it runs it. Keep such recipes outside any repository, for example in `~/.config/webveil/recipes/`, and list them in the global config as `"serpcast": {"codeRecipes": ["recipes"]}` (a module file, or a directory whose `*.js` and `*.mjs` files are all loaded; a relative path is relative to the global config file), or in env as `WEBVEIL_SERPCAST_CODE_RECIPES` (absolute or `~/` paths, separated by `:`, or `;` on Windows). A project `webveil.json` cannot name them: it is read automatically from any checkout, so a cloned repository could otherwise make webveil import its own module. The project config may still list those recipes in its `serpcast.engines` order, because `serpcast` merges key by key and keeps the global `codeRecipes`. Code and declarative recipes share one name space; a name used twice is an error.
 - **extractor seam**, `urlToMarkdown` via `distilly/fetch` by default, injected with
   webveil's egress-bound `fetch`; a backend's own `/extract` (Tavily-compat) may override
   it. Owns the context-friendly markdown + size presets (`s`/`m`/`l`/`f`). See
@@ -419,7 +420,7 @@ a promise); `LOC` is the actual line count of the built file.
 | src/cli.ts (incur frontend)        |  145 |    ~80 |
 | src/core/search.ts                 |  141 |    ~90 |
 | src/core/fetch.ts                  |  150 |    ~90 |
-| src/core/config.ts                 |  219 |    ~80 |
+| src/core/config.ts                 |  232 |    ~80 |
 | src/core/layers.ts (merge + prov.) |  121 |      - |
 | src/core/trust.ts (exec. settings) |  166 |      - |
 | src/core/identity.ts               |   29 |    ~30 |
@@ -433,8 +434,8 @@ a promise); `LOC` is the actual line count of the built file.
 | src/core/backends/searxng.ts       |  116 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
 | src/core/backends/custom.ts        |  187 |    ~70 |
-| src/core/backends/serpcast.ts      |  146 |    ~90 |
-| **subtotal**                       | 2384 |        |
+| src/core/backends/serpcast.ts      |  192 |    ~90 |
+| **subtotal**                       | 2443 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
@@ -442,7 +443,7 @@ a promise); `LOC` is the actual line count of the built file.
 | ------------ | --: | -----: |
 | src/index.ts | 183 |    ~90 |
 
-**Total own source: 2567 LOC** (excluding deps).
+**Total own source: 2626 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably
 > `tavily-compat.ts`, `custom.ts`, `pi-webveil/src/index.ts`), and two built modules

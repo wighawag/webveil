@@ -386,6 +386,90 @@ describe('searchcast executable settings (chrome, xvfb, chrome args)', () => {
 	});
 });
 
+describe('searchcast chrome args that would move the browser off egress', () => {
+	const switches = [
+		'proxy-server',
+		'no-proxy-server',
+		'proxy-bypass-list',
+		'proxy-pac-url',
+		'proxy-auto-detect',
+		'winhttp-proxy-resolver',
+		'host-resolver-rules',
+		'host-rules',
+	];
+	const mixed = (s: string) =>
+		[...s].map((c, i) => (i % 2 ? c.toUpperCase() : c)).join('');
+	const forms = switches.flatMap((name) => [
+		[name, `--${name}`],
+		[name, `--${name}=http://elsewhere:1`],
+		[name, `-${name}`],
+		[name, `--${mixed(name)}=x`],
+	]);
+
+	it.each(forms)(
+		'refuses %s given as %s from the global config',
+		async (name, arg) => {
+			writeJson(globalPath, {
+				serpcast: {searchcast: {chromeArgs: ['--lang=en', arg]}},
+			});
+			writeProject();
+			const fake = fakes();
+			const imported: number[] = [];
+			const error = await searchWith({
+				...fake.deps,
+				importSearchcast: async () => {
+					imported.push(1);
+					return fake.browser.module;
+				},
+			}).catch((e: Error) => e);
+			expect(error).toBeInstanceOf(EgressError);
+			expect(error.message).toContain(`'${arg}'`);
+			expect(error.message.toLowerCase()).toContain(name);
+			expect(error.message).toMatch(/egress/);
+			expect(imported).toHaveLength(0);
+			expect(fake.built).toHaveLength(0);
+			expect(fake.browser.browsers).toHaveLength(0);
+		},
+	);
+
+	it.each(switches)('refuses --%s from env', async (name) => {
+		writeProject();
+		const fake = fakes();
+		const error = await searchWith(fake.deps, {
+			WEBVEIL_SERPCAST_SEARCHCAST_CHROME_ARGS: `--lang=en --${name}=x`,
+		}).catch((e: Error) => e);
+		expect(error).toBeInstanceOf(EgressError);
+		expect(error.message).toContain(`'--${name}=x'`);
+		expect(fake.built).toHaveLength(0);
+	});
+
+	it('refuses them with no browser engine listed', async () => {
+		writeJson(globalPath, {
+			serpcast: {searchcast: {chromeArgs: ['--proxy-server=direct://']}},
+		});
+		writeProject({engines: ['alpha']});
+		const fake = fakes();
+		await expect(searchWith(fake.deps)).rejects.toThrow(EgressError);
+		expect(fake.built).toHaveLength(0);
+	});
+
+	it('passes unrelated args (even proxy-like ones) through unchanged', async () => {
+		const args = [
+			'--lang=en',
+			'--window-size=1280,800',
+			'--proxy-server-x=1',
+			'--enable-features=proxy-server',
+			'proxy-server',
+		];
+		writeJson(globalPath, {serpcast: {searchcast: {chromeArgs: args}}});
+		writeProject();
+		const fake = fakes();
+		await searchWith(fake.deps);
+		expect(fake.built[0]!.searchcast?.chromeArgs).toEqual(args);
+		expect(fake.browser.browsers[0]!.extraArgs).toEqual(args);
+	});
+});
+
 describe('searchcast browser profile, per identity', () => {
 	it('is ephemeral by default (serpcast makes and deletes a temp one)', async () => {
 		writeProject();

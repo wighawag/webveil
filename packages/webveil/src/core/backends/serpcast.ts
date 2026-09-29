@@ -69,6 +69,24 @@
 //   partition was idle past `sessionIdleMs` (serpcast's default when unset),
 //   the cached instance (and its browser) is closed first, then the profile
 //   deleted, so a long-lived MCP server is covered too, not only the CLI.
+//
+// Recorded decisions (task refuse-proxy-overriding-chrome-args):
+// - `chromeArgs` that would take the browser off `egress` are refused in
+//   `browserSettings`, so whether or not a browser engine is listed and before
+//   searchcast is imported, with an EgressError: it is an egress guard like
+//   `assertBrowserEgress`, not a shape error.
+// - The list (`EGRESS_SWITCHES`) is Chromium's proxy switches (`proxy-server`,
+//   `no-proxy-server`, `proxy-bypass-list`, `proxy-pac-url`,
+//   `proxy-auto-detect`, `winhttp-proxy-resolver`: chrome/common/
+//   chrome_switches.cc, read into the command-line proxy config by
+//   net/proxy_resolution) plus the host mapping switches, which can send a
+//   hostname to another address without the proxy's DNS
+//   (`host-resolver-rules`, `host-rules`: services/network/public/cpp/
+//   network_switches.cc). A deny list, not an allow list: an allow list would
+//   refuse the many harmless args users need.
+// - A name is matched case-insensitively (Chromium lowercases switch names on
+//   Windows) after one or two leading dashes, up to `=`. An argument without
+//   a leading dash is positional for Chromium, not a switch, so it passes.
 
 import {readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
@@ -126,6 +144,17 @@ const EXECUTABLE_KEYS = [
 /** The engine-name prefix of a browser engine (see the decisions above). */
 const BROWSER = 'searchcast:';
 const SOCKS = ['socks5', 'socks', 'socks5h'];
+/** Chromium switches that would move the browser off `egress` (see above). */
+const EGRESS_SWITCHES = new Set([
+	'proxy-server',
+	'no-proxy-server',
+	'proxy-bypass-list',
+	'proxy-pac-url',
+	'proxy-auto-detect',
+	'winhttp-proxy-resolver',
+	'host-resolver-rules',
+	'host-rules',
+]);
 const instances = new Map<string, Serpcast>();
 
 /** The proxy URL for serpcast: SOCKS always `socks5h` (DNS at the proxy). */
@@ -167,6 +196,16 @@ function browserSettings(
 		throw bad('.endpoint must be set in endpoint mode (a URL or socket path)');
 	if (b.chromeArgs !== undefined && !isList(b.chromeArgs))
 		throw bad('.chromeArgs must be a list of strings');
+	for (const arg of b.chromeArgs ?? []) {
+		const name = /^--?([^=]*)/.exec(arg)?.[1]!.toLowerCase();
+		if (name !== undefined && EGRESS_SWITCHES.has(name))
+			throw new EgressError(
+				`serpcast: serpcast.searchcast.chromeArgs: '${arg}' is refused: ` +
+					`--${name} would take the searchcast browser off webveil's ` +
+					'egress. The browser proxy comes from `egress`: set the proxy ' +
+					'there and remove this argument.',
+			);
+	}
 	if (b.persistProfile !== undefined && typeof b.persistProfile !== 'boolean')
 		throw bad('.persistProfile must be true or false');
 	for (const key of ['chrome', 'xvfb'] as const) {

@@ -10,6 +10,8 @@ covers: [18]
 
 The user-facing documentation pass once the serpcast backend is complete. README: a quick start that needs no SearXNG (install webveil, install libcurl-impersonate via serpcast's command or point at your own, drop recipes in a directory, set `backend: serpcast`); the anonymity section updated so it says that with this backend the search hop is webveil's own and `egress` governs it, that the loopback guard concerns SearXNG and the new external-searchcast guard, and how this looks under anonctl (`egress: direct`, forced account); a pointer to where private recipes go. CONTEXT.md: backend list, domain terms (serpcast, recipe, engine chain, identity partition, trusted layer), LOC table. The idea note `work/notes/ideas/expand-search-backend-roster.md` is trimmed to what remains open.
 
+> FORWARD-NOTE (conductor, 2026-09-29): observation `work/notes/observations/serpcast-recipe-dir-rejects-any-foreign-json.md` (from `serpcast-backend-basic`): `serpcast.recipes` directories fail whole if they contain any non-recipe `*.json` (for example the project's `webveil.json` via `"recipes": ["."]`). Say in the quick start to keep recipes in their own directory, then delete that observation. The quick start's libcurl step is `npx serpcast install-libcurl` (released in `serpcast@0.1.0`).
+
 ## Acceptance criteria
 
 - [ ] A new user can go from install to a first serpcast search by following the README alone.

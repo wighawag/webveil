@@ -30,3 +30,14 @@ serpcast 0.5.0 (released 2026-09-29) adds, since 0.3: recipes can declare `decoy
 ## Prompt
 
 FIRST, check this task against current reality (serpcast 0.5.0's README and exports). RECORD non-obvious decisions.
+
+## Decisions
+
+These are recorded in the JSDoc blocks in `serpcast.ts` and `config.ts`.
+
+1. **`set:<name>` / `set:<name>/<file>`**, resolved to serpcast's `recipesDir()` using `XDG_DATA_HOME` from the process environment, the same way the state folder is found. I rejected documenting only the `~/.local/share/...` path because it ignores `XDG_DATA_HOME`; that path still works. The file form exists because a set may contain helper modules that aren't engines. This only affects `recipes` and `codeRecipes`, not other path settings.
+2. **The trust rule is unchanged.** It still depends on the key, not the value, so `codeRecipes` from a project `webveil.json` is refused in any form, while `recipes` (data) may name a set from any config file.
+3. **What counts as an installed set:** a folder directly under `recipesDir()`, or one containing `.source.json`. Location counts as well as the marker file because a set placed by home-manager from `fetchzip` has no `.source.json`. Other recipe folders load exactly as before.
+4. **The env list keeps `set:<name>` whole** on POSIX, where the list is otherwise split on `:`.
+
+I added one observation note: `work/notes/observations/serpcast-loadrecipes-reads-set-metadata-as-recipes.md`, covering the serpcast `loadRecipes` gap and the fact that other README LOC rows use mixed counting methods.

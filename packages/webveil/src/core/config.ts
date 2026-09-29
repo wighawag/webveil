@@ -47,6 +47,11 @@ export type Egress =
  * without one, env could not supply a trusted code recipe path at all.
  * Alternative considered: a JSON array in env (awkward to type in a shell).
  *
+ * Recorded decision (task serpcast-0-5-recipes-and-nixos-docs): `recipes` and
+ * `codeRecipes` entries may also name an installed recipe set, `set:<name>` or
+ * `set:<name>/<file>` (see backends/serpcast.ts). In the env list a `set:`
+ * entry stays whole although POSIX splits on `:` (`splitPathList`).
+ *
  * Recorded decision (task searchcast-fallback-and-guard): the browser fallback
  * is the `searchcast` subsection (`SearchcastConfig`); its env forms cover the
  * three executable keys only: `WEBVEIL_SERPCAST_SEARCHCAST_CHROME`, `_XVFB`
@@ -70,9 +75,9 @@ export type Egress =
 export interface SerpcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
 	engines?: string[];
-	/** Declarative recipe files or directories (every `*.json` inside). */
+	/** Declarative recipe files or directories (every `*.json` inside), or `set:<name>[/<file>]`. */
 	recipes?: string[];
-	/** Code recipe modules or directories: EXECUTABLE (trusted layers only). */
+	/** Code recipe modules or directories, or `set:<name>[/<file>]`: EXECUTABLE (trusted layers only). */
 	codeRecipes?: string[];
 	/** The libcurl-impersonate library: EXECUTABLE (trusted layers only). */
 	libcurlPath?: string;
@@ -221,6 +226,21 @@ function parseEgressEnv(
 	return undefined;
 }
 
+/**
+ * A PATH-like list split on the platform delimiter, keeping an installed set
+ * entry (`set:<name>`, backends/serpcast.ts) whole where the delimiter is `:`:
+ * a lone `set` token would be a relative path, which env never accepts.
+ */
+function splitPathList(value: string): string[] {
+	const parts = value.split(delimiter);
+	const list: string[] = [];
+	for (let i = 0; i < parts.length; i++)
+		if (delimiter === ':' && parts[i] === 'set' && i + 1 < parts.length)
+			list.push(`set:${parts[++i]}`);
+		else list.push(parts[i]!);
+	return list.filter(Boolean);
+}
+
 /** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes, chrome args, decoy guard). */
 function readSerpcastEnv(
 	env: Record<string, string | undefined>,
@@ -241,7 +261,7 @@ function readSerpcastEnv(
 	if (xvfb) browser.xvfb = xvfb;
 	if (args?.trim()) browser.chromeArgs = args.trim().split(/\s+/);
 	if (Object.keys(browser).length > 0) section.searchcast = browser;
-	if (code) section.codeRecipes = code.split(delimiter).filter(Boolean);
+	if (code) section.codeRecipes = splitPathList(code);
 	if (decoy?.trim())
 		section.decoyGuard = decoy
 			.split(',')

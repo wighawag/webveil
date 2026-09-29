@@ -92,7 +92,7 @@ Requires Node 22 or later. The prebuilt native library covers Linux x64 and arm6
 What to expect:
 
 - **A failing engine hands over to the next one.** An engine that is blocked, times out, or returns a page that no longer fits its recipe is skipped for the next engine in the chain, and the results then carry `unresponsiveEngines`, naming the engines that failed first, so a fallback answer never passes for the first choice. An engine that answered `blocked` cools down: it is skipped for `serpcast.cooldownMs` (default 5 minutes).
-- **Decoy guard (opt in, for Bing).** Some engines, Bing above all, answer many queries (about half of realistic ones, measured in September 2026) with a well-formed page of results unrelated to the query: a **decoy**. List such engines in `serpcast.decoyGuard` (for example `"decoyGuard": ["bing"]`, any config layer, or `WEBVEIL_SERPCAST_DECOY_GUARD=bing`, comma-separated) and serpcast checks their answers: a page where at most one of the top 5 results mentions two of the query's content words counts as a decoy, which fails that engine (named in `unresponsiveEngines`, and listed as `decoy` if every engine fails) and hands over to the next one, with no cooldown. It is meant for engines known to serve decoys; an engine not listed is never judged. The rule is serpcast's `isDecoy`: see [serpcast's decoy guard](https://github.com/wighawag/serpcast#decoy-guard).
+- **Decoy guard (for Bing and the like).** Some engines, Bing above all, answer many queries (about half of realistic ones, measured in September 2026) with a well-formed page of results unrelated to the query: a **decoy**. serpcast checks the answers of a guarded engine: a page where at most one of the top 5 results mentions two of the query's content words counts as a decoy, which fails that engine (named in `unresponsiveEngines`, and listed as `decoy` if every engine fails) and hands over to the next one, with no cooldown. An engine is guarded when its recipe declares `"decoyProne": true` (the recipe's author knows the site serves decoys, so nothing is needed in your config), or when you list it in `serpcast.decoyGuard` (for example `"decoyGuard": ["bing"]`, any config layer, or `WEBVEIL_SERPCAST_DECOY_GUARD=bing`, comma-separated). `decoyGuard` is therefore only needed for a recipe that does not declare it; it adds to the recipes' own declarations and cannot switch a declared one off. An engine that is neither is never judged. The rule is serpcast's `isDecoy`: see [serpcast's decoy guard](https://github.com/wighawag/serpcast#decoy-guard).
 - **Every engine failed: an error, never an empty list.** The error lists each engine's failure. An empty result list means an engine's `empty` selector matched: the engine really found nothing.
 - **No fingerprint, no search.** Impersonation is always strict: if libcurl-impersonate is missing or not the right library, webveil refuses to search and says how to fix it. It never sends a request with a non-browser fingerprint.
 - **Sessions persist.** Engine cookies (such as a challenge clearance) and cooldowns are kept between calls in `~/.local/state/webveil/`, one directory per identity (egress plus serpcast settings), and expire after `serpcast.sessionIdleMs` (default 10 minutes) of disuse. `webveil state clear` drops the current identity's state, `--all` every identity's. See *serpcast state on disk* under [How it works](#how-it-works-seams).
@@ -100,6 +100,34 @@ What to expect:
 - **`web_fetch` gets the browser fingerprint too.** With this backend `fetchTransport` defaults to `serpcast`, so `web_fetch` also goes through libcurl-impersonate (and so also needs it). Set `"fetchTransport": "plain"` to keep the plain Node transport: see [The `web_fetch` transport](#the-web_fetch-transport-fetchtransport).
 
 **Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private serpcast recipes* under [How it works](#how-it-works-seams). serpcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/serpcast/tree/main/examples/recipes) is such a code recipe, so it goes under `serpcast.codeRecipes` in the global config; its shared `public` key is often rate limited or unresponsive (it timed out for most test queries on 2026-09-29, direct and through Tor), so ask Marginalia for a free personal key and set `MARGINALIA_API_KEY`.
+
+#### Installing recipes
+
+A recipe repository can publish its recipes as one release archive (a `.tar.gz` of `*.json` and `*.mjs` files, optionally with a `manifest.json` naming the set). serpcast installs it, only when you type the command:
+
+```sh
+npx serpcast install-recipes https://example.com/my-set-1.2.0.tar.gz --sha256 <hex>   # add --proxy socks5h://127.0.0.1:9050 to download through a proxy
+npx serpcast recipes list   # the installed sets, their source, sha256 and files
+```
+
+- **Why the pin is required.** A set may hold code recipes, which are code with full Node access, so `--sha256` (the archive's checksum, required for a URL and a local file alike) is your trust decision: exactly these bytes, which you reviewed or whose publisher you trust. Get it from the publisher through a channel you trust, or compute it yourself (`sha256sum my-set-1.2.0.tar.gz`) after reviewing the archive. It is checked before anything is unpacked.
+- **Where it goes.** The set is written to `~/.local/share/serpcast/recipes/<set>/` (`$XDG_DATA_HOME/serpcast/recipes/<set>/`), named after `--name` or the archive's `manifest.json`, with a `.source.json` recording where it came from. An identical set already there is left alone; a different one is replaced only with `--force`.
+- **A private GitHub release asset** needs authentication, which `install-recipes` does not do. Download it with the GitHub CLI first, then install the file: `gh release download v1.2.0 --repo owner/recipes --pattern 'my-set-1.2.0.tar.gz'`, then `npx serpcast install-recipes ./my-set-1.2.0.tar.gz --sha256 <hex>`.
+
+Point webveil at an installed set with `set:<name>` in `serpcast.recipes` (its declarative recipes) and `serpcast.codeRecipes` (its code recipes), in the global config:
+
+```json
+{
+	"backend": "serpcast",
+	"serpcast": {
+		"recipes": ["set:my-set"],
+		"codeRecipes": ["set:my-set"],
+		"engines": ["api", "web"]
+	}
+}
+```
+
+`set:my-set` is the whole set: every `*.json` file except its `manifest.json` for `recipes`, every `*.js` and `*.mjs` file for `codeRecipes`. `set:my-set/api.mjs` names one file, for a set that also holds helper modules that are not engines. The set is looked up in serpcast's recipes directory (following `XDG_DATA_HOME` in webveil's environment), never in the cwd; a set that is not installed is an error saying how to install it. `codeRecipes` stays a global-config-or-env setting whatever its form (`WEBVEIL_SERPCAST_CODE_RECIPES=set:my-set` works too): a project `webveil.json` naming `set:...` there is refused like any other code recipe path. The plain path (`~/.local/share/serpcast/recipes/my-set`) works as well, but ignores `XDG_DATA_HOME`.
 
 #### A browser engine as the fallback (searchcast)
 
@@ -125,9 +153,43 @@ Two limits of library mode. A persistent profile (`persistProfile`) must not be 
 
 #### On NixOS
 
-Verified on 2026-09-29 (NixOS, Node 24.19.0, webveil 0.5.0, serpcast 0.1.1).
+Everything below runs webveil's serpcast backend on NixOS without anything else. Verified on 2026-09-29 (NixOS, Node 24.19.0, webveil 0.5.0, serpcast 0.1.1), except where a point says otherwise.
 
 - **libcurl-impersonate.** `npx serpcast install-libcurl` works: the prebuilt linux-x64 library needs only libc and uses NixOS's CA bundle at `/etc/ssl/certs/ca-certificates.crt`. nixpkgs' `curl-impersonate` works too (the same pinned 2.1.1 release, identical JA4 and HTTP/2 fingerprint). Do not put a `/nix/store/...` path in a config file (it breaks after an upgrade or garbage collection): link the library where serpcast looks by default instead, for example with home-manager `xdg.dataFile."serpcast/libcurl-impersonate.so".source = "${pkgs.curl-impersonate}/lib/libcurl-impersonate.so";`, or set `WEBVEIL_SERPCAST_LIBCURL_PATH` in a dev shell. Check with `npx serpcast doctor`.
+- **Recipes.** `npx serpcast install-recipes <archive> --sha256 <hex>` works as is on NixOS, into `~/.local/share/serpcast/recipes/<set>/` (see [Installing recipes](#installing-recipes)). For a declarative setup, home-manager can place a pinned, unpacked archive there instead, which webveil reads the same way (`set:<name>`):
+
+  ```nix
+  # a public archive: fetchzip pins the UNPACKED content (a Nix hash, not the archive's sha256)
+  xdg.dataFile."serpcast/recipes/my-set".source = pkgs.fetchzip {
+    url = "https://example.com/my-set-1.2.0.tar.gz";
+    hash = "sha256-..."; # leave empty once; Nix prints the right one
+    # stripRoot = false; # when the files sit at the archive's root, not under one directory
+  };
+  # a private archive (downloaded with gh, see above): a local, already unpacked directory
+  # xdg.dataFile."serpcast/recipes/my-set".source = ./recipes/my-set;
+  ```
+
+  The `fetchzip` form was built with Nix 2.34.8 and nixpkgs 26.11 on 2026-09-29 (a set under one top directory with the default `stripRoot`, and a root-level set with `stripRoot = false`; a root-level set with the default fails with "zip file must contain a single file or directory"). The `xdg.dataFile` line is home-manager's documented option shape, not run here. A set placed this way has no `.source.json`, so `serpcast recipes list` shows no source for it; webveil loads it anyway.
+- **Where the global config lives.** `~/.config/webveil/config.json` (`$XDG_CONFIG_HOME/webveil/config.json`), as on any Linux. With home-manager, write it from Nix: `xdg.configFile."webveil/config.json".text = builtins.toJSON { ... };` (the file is then a read-only link into the store; edit the Nix expression instead).
+- **A complete minimal config**: the serpcast backend over Tor, recipes from an installed set, and `web_fetch` over serpcast too:
+
+  ```nix
+  services.tor.client.enable = true; # NixOS: SOCKS on 127.0.0.1:9050
+  # home-manager:
+  xdg.configFile."webveil/config.json".text = builtins.toJSON {
+    backend = "serpcast";
+    egress = { mode = "socks5"; url = "socks5://127.0.0.1:9050"; };
+    fetchTransport = "serpcast"; # the default with this backend; stated for clarity
+    serpcast = {
+      recipes = [ "set:my-set" ];
+      codeRecipes = [ "set:my-set" ];
+      engines = [ "api" "web" ]; # recipe names from the set, in order
+    };
+  };
+  xdg.dataFile."serpcast/libcurl-impersonate.so".source = "${pkgs.curl-impersonate}/lib/libcurl-impersonate.so";
+  ```
+
+  The `builtins.toJSON` expression was evaluated with `nix eval` (it gives `{"backend":"serpcast","egress":{"mode":"socks5","url":"socks5://127.0.0.1:9050"},"fetchTransport":"serpcast","serpcast":{"codeRecipes":["set:my-set"],"engines":["api","web"],"recipes":["set:my-set"]}}`), and webveil's tests load an installed set through `set:<name>`; the whole block was not applied with home-manager here. Replace `my-set`, `api` and `web` with your set and its recipe names, then check with `npx serpcast doctor` and `webveil search "hello world"`.
 - **npm's allow-scripts warning for `koffi`** (npm 11 blocks its install script) is harmless: koffi's prebuilt binary loads without it.
 - **Browser engines (library mode).** Set `serpcast.searchcast.chrome` to nixpkgs Chromium (`${pkgs.chromium}/bin/chromium`, or `/run/current-system/sw/bin/chromium` when installed system-wide); browsers downloaded by other tools (such as Playwright's) run only with `programs.nix-ld` enabled. Without a display (a server, an SSH session) set `serpcast.searchcast.xvfb` to nixpkgs' Xvfb (`${pkgs.xvfb}/bin/Xvfb`, `pkgs.xorg.xvfb` on older nixpkgs), or pass `"chromeArgs": ["--headless=new"]` (easier for sites to detect). Both verified.
 - **Tor.** `services.tor.client.enable = true;` gives a SOCKS proxy on `127.0.0.1:9050`: use `"egress": {"mode": "socks5", "url": "socks5://127.0.0.1:9050"}` (webveil hands serpcast `socks5h`, so DNS stays at Tor). Search and `web_fetch` (both transports) exit through Tor (`check.torproject.org/api/ip` reports `IsTor: true`) with the same fingerprint as direct.
@@ -300,7 +362,7 @@ never in webveil: see
   pi extension. See [`docs/adr/0002`](docs/adr/0002-config-file-location-neutral-webveil-json.md).
   - **Merge rule.** Layers merge key by key, and so do config sections (plain objects): a project `webveil.json` that sets one key of a section keeps the global config's other keys in that section. Scalars and arrays are replaced whole by the highest layer that sets them. `egress` and `fetchEgress` are also replaced whole (a project `{"mode": "direct"}` over a global SOCKS5 egress is exactly `direct`, never `direct` plus a stray url).
   - **What a project config can and cannot do.** A `webveil.json` is read automatically from any checkout you run webveil in, so a cloned repository must never be able to make webveil run code. A project config may choose the backend, its URL, egress, fetch size and other plain settings, but a setting that makes webveil run code (today: the `custom` backend's command, i.e. its `baseUrl` when `backend` is `custom`, the serpcast backend's `serpcast.libcurlPath`, a native library webveil loads, its `serpcast.codeRecipes`, JS modules webveil imports and so runs, and the searchcast browser's `serpcast.searchcast.chrome`, `serpcast.searchcast.xvfb` and `serpcast.searchcast.chromeArgs`, programs and arguments webveil launches) is refused when it comes from a project `webveil.json`, with an error naming the file and the key: put it in the global config or env instead. Even from a trusted layer, a searchcast chrome argument that controls the browser's proxy or host resolution (`--proxy-server`, `--no-proxy-server`, `--proxy-bypass-list`, `--proxy-pac-url`, `--proxy-auto-detect`, `--winhttp-proxy-resolver`, `--host-resolver-rules`, `--host-rules`, in any case, with one or two dashes) is refused with an error naming it: the browser's proxy comes from `egress`, and such an argument would silently take the browser off it. A project may still say `"backend": "custom"` when the command itself comes from the global config or env. The check runs only where the setting is used, so `web_fetch` keeps working in such a folder. Paths in executable settings never resolve against the cwd: `~/` is your home directory, a relative path is relative to the config file that set it, a value from env must be absolute or `~/`-prefixed, and a bare command name (no slash; on Windows, no `/`, no `\` and no drive prefix like `C:`) is looked up on `PATH` by webveil itself, searching only absolute `PATH` entries: empty, `.` and other relative entries are ignored, so a file in the cwd is never picked up, and a name found in no absolute entry is an error before anything runs. On Windows, only a drive path (`C:\...`) or a UNC path (`\\server\share\...`) counts as absolute; `\tools\x.exe` is relative to the config file (so it takes that file's drive), and a drive-relative `C:x.exe` is refused. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
-  - **Private serpcast recipes.** A code recipe (a JS module for an engine that needs challenge handling, or a site whose terms you would rather not publish in a repo) is code with full Node access, and loading it runs it. Keep such recipes outside any repository, for example in `~/.config/webveil/recipes/`, and list them in the global config as `"serpcast": {"codeRecipes": ["recipes"]}` (a module file, or a directory whose `*.js` and `*.mjs` files are all loaded; a relative path is relative to the global config file), or in env as `WEBVEIL_SERPCAST_CODE_RECIPES` (absolute or `~/` paths, separated by `:`, or `;` on Windows). A project `webveil.json` cannot name them: it is read automatically from any checkout, so a cloned repository could otherwise make webveil import its own module. The project config may still list those recipes in its `serpcast.engines` order, because `serpcast` merges key by key and keeps the global `codeRecipes`. Code and declarative recipes share one name space; a name used twice is an error.
+  - **Private serpcast recipes.** A code recipe (a JS module for an engine that needs challenge handling, or a site whose terms you would rather not publish in a repo) is code with full Node access, and loading it runs it. Keep such recipes outside any repository, for example in `~/.config/webveil/recipes/`, and list them in the global config as `"serpcast": {"codeRecipes": ["recipes"]}` (a module file, or a directory whose `*.js` and `*.mjs` files are all loaded; a relative path is relative to the global config file), or in env as `WEBVEIL_SERPCAST_CODE_RECIPES` (absolute or `~/` paths, separated by `:`, or `;` on Windows). A set installed with `serpcast install-recipes` is named `set:<name>` (or `set:<name>/<file>`) in either form: see [Installing recipes](#installing-recipes). A project `webveil.json` cannot name them: it is read automatically from any checkout, so a cloned repository could otherwise make webveil import its own module. The project config may still list those recipes in its `serpcast.engines` order, because `serpcast` merges key by key and keeps the global `codeRecipes`. Code and declarative recipes share one name space; a name used twice is an error.
   - **serpcast state on disk, per identity.** The serpcast backend keeps its sessions (an engine's cookies, such as a challenge clearance, and a code recipe's own JSON state) and its engine cooldowns in `$XDG_STATE_HOME/webveil/` (default `~/.local/state/webveil/`), so the one-shot CLI behaves like the long-lived MCP server and pi extension. Nothing else is stored (no queries, no results), except the searchcast browser profile when you opt into `serpcast.searchcast.persistProfile`: it lives in the identity's directory as `<hash>/browser-profile`, holds that browser's own cookies and history, and is deleted before the next use once the identity has been idle past `serpcast.sessionIdleMs`. State is partitioned per **identity**, the backend-hop `egress` plus the resolved `serpcast` section, hashed: each identity gets its own directory `<hash>/state.json`, so no proxy URL, credential or path appears in a file name, and a session obtained on one egress is never replayed on another (which would link the two). A session keeps its idle expiry (`serpcast.sessionIdleMs`, default 10 minutes) on disk: it is checked on every read and an expired entry is dropped, so saving state never lets cookies link searches across days. Concurrent `webveil search` calls share the file safely (a lock file around each update, writes replaced atomically). Files are `0600`, directories `0700`. Clear it with `webveil state clear` (the identity of the current folder's config) or `webveil state clear --all` (every identity); deleting the directory by hand is also fine.
 - **extractor seam**, `urlToMarkdown` via `distilly/fetch` by default, injected with
   webveil's egress-bound `fetch`; a backend's own `/extract` (Tavily-compat) may override
@@ -565,7 +627,7 @@ a promise); `LOC` is the actual line count of the built file.
 | src/core/search.ts                 |  141 |    ~90 |
 | src/core/fetch.ts                  |  160 |    ~90 |
 | src/core/fetch-transport.ts        |  160 |      - |
-| src/core/config.ts                 |  290 |    ~80 |
+| src/core/config.ts                 |  309 |    ~80 |
 | src/core/layers.ts (merge + prov.) |  121 |      - |
 | src/core/trust.ts (exec. settings) |  166 |      - |
 | src/core/identity.ts               |   29 |    ~30 |
@@ -580,8 +642,8 @@ a promise); `LOC` is the actual line count of the built file.
 | src/core/backends/searxng.ts       |  116 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
 | src/core/backends/custom.ts        |  187 |    ~70 |
-| src/core/backends/serpcast.ts      |  521 |    ~90 |
-| **subtotal**                       | 3297 |        |
+| src/core/backends/serpcast.ts      |  600 |    ~90 |
+| **subtotal**                       | 3395 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
@@ -589,7 +651,7 @@ a promise); `LOC` is the actual line count of the built file.
 | ------------ | --: | -----: |
 | src/index.ts | 183 |    ~90 |
 
-**Total own source: 3480 LOC** (excluding deps).
+**Total own source: 3578 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably `backends/serpcast.ts`, which also carries the trust, browser and egress-guard policy of that backend, `config.ts`, `tavily-compat.ts`, `custom.ts` and `pi-webveil/src/index.ts`), and six built modules (the `index.ts` barrel, the `security.ts` SSRF guard, the `baseurl.ts` backend transport, `layers.ts` and `trust.ts` behind the trust rule, and `fetch-transport.ts`, the `web_fetch` transport choice and serpcast adapter) have no ceiling of their own. The table above reflects the modules as actually built. For calibration, comparable pi web-search extensions: `pi-searxng-search` 350 LOC (1 backend, no egress, no fetch), `leing2021/pi-search` 1714, `pi-search-hub` 9047, `pi-web-providers` 18961. webveil delivers a 4-backend + egress + fetch + per-folder-config tool by leaning on `incur` (CLI/MCP/skills), `distilly` (extraction) and `serpcast` (the search engines of the `serpcast` backend).
 

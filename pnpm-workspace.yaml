@@ -1,5 +1,14 @@
 packages:
   - "packages/*"
+# Do not install peer dependencies nobody asked for. webveil declares
+# `searchcast` as an OPTIONAL peer (library-mode browser engines, installed
+# by the user next to webveil), and serpcast declares it as an optional peer
+# too; with pnpm's default (autoInstallPeers: true) it would be pulled into
+# the dev tree and the lockfile. pnpm has no per-package form of this
+# setting, so it is workspace-wide: every required peer in this workspace is
+# already satisfied by a direct dependency (checked with `pnpm install`,
+# which reports unmet peers). See work/tasks/*/searchcast-optional-peer-dependency.md.
+autoInstallPeers: false
 allowBuilds:
   '@parcel/watcher': true
   esbuild: true

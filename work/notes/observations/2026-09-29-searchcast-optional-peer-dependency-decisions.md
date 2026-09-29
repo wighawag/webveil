@@ -1,0 +1,10 @@
+# Decisions made while building searchcast-optional-peer-dependency (2026-09-29)
+
+Recorded for the `searchcast-optional-peer-dependency` done record. None meets the ADR bar.
+
+1. **`autoInstallPeers: false` in `pnpm-workspace.yaml`, workspace-wide.** Verified that without it, declaring the optional peer makes pnpm 11.25.0 install `searchcast@0.1.1` into the dev tree and the lockfile (both as webveil's importer entry and as `serpcast@0.1.0(searchcast@0.1.1)`, since serpcast also declares it as an optional peer). pnpm has no per-package or per-dependency form of `autoInstallPeers`, so the workspace is the narrowest scope the setting has. Alternatives considered: `peerDependencyRules.ignoreMissing` / `allowedVersions` (they only silence or relax peer warnings, they do not stop the install), and leaving the peer undeclared (the status quo the task exists to fix). Touches every package in the workspace: a required peer is no longer auto-installed. Checked: `pnpm peers check` reports "No peer dependency issues found"; neither `pi-webveil` nor `webveil` declares a required peer (pi-webveil has no `peerDependencies`). The lockfile change beyond the setting itself is vitest's snapshot key dropping its auto-resolved `vite` peer; vite is still installed as vitest's own dependency and the tests run. The setting is also recorded in the lockfile's `settings:` block, so a pnpm without it would re-resolve.
+2. **Range `>=0.1.1`, exactly as the task specifies**, matching serpcast's own optional peer range on `searchcast`.
+3. **`importSearchcast` keeps its variable specifier** (`import(name)`), so `tsc` does not need searchcast's types installed; only its comment changed.
+4. **A patch changeset for `webveil`** (`.changeset/searchcast-optional-peer-dependency.md`): the published manifest changes (verified in a real `pnpm pack`: `peerDependencies: {searchcast: '>=0.1.1'}`, `peerDependenciesMeta: {searchcast: {optional: true}}`), with no behaviour change.
+
+The observation `searchcast-not-declared-as-optional-peer.md` is resolved and deleted by this task.

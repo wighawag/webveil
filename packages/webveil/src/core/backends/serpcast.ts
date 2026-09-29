@@ -63,8 +63,11 @@
 //   building an instance that runs a library-mode engine, and hands it to
 //   serpcast as `searchcast.module`: a missing package is a clear error before
 //   any search, not one `transport` failure inside an exhausted chain. It is
-//   resolved from webveil's location and not declared as a peer dependency
-//   (work/notes/observations/searchcast-not-declared-as-optional-peer.md).
+//   resolved from webveil's location and declared as an OPTIONAL peer
+//   dependency (`searchcast >=0.1.1`), so the user installs it next to webveil
+//   and a strict pnpm layout still exposes it; the workspace sets
+//   `autoInstallPeers: false` so it never enters the dev tree (task
+//   searchcast-optional-peer-dependency).
 // - A persistent profile is expired before the instance is (re)used: if the
 //   partition was idle past `sessionIdleMs` (serpcast's default when unset),
 //   the cached instance (and its browser) is closed first, then the profile

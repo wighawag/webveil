@@ -1,7 +1,8 @@
 // serpcast backend: keyless search with no SearXNG. serpcast (policy-free, its
 // ADR 0002) runs recipes over libcurl-impersonate; webveil injects the policy
 // (docs/adr/0004): the backend-hop `egress` is serpcast's proxy, strict
-// impersonation is always on, the libcurl path is an executable setting.
+// impersonation is always on, the libcurl path and code recipe paths are
+// executable settings.
 // serpcast owns its own I/O, so the handed `http` helper is unused (as custom).
 //
 // Recorded decisions (task serpcast-backend-basic; config keys: config.ts,
@@ -11,9 +12,27 @@
 // - An `empty` answer after failures returns [] (serpcast's genuine "no
 //   results"); only `exhausted` is an error. Failed engines before an answer
 //   annotate the results as `unresponsiveEngines`, as for searxng.
+//
+// Recorded decisions (task serpcast-code-recipes-trusted; key and env form:
+// config.ts):
+// - `serpcast.codeRecipes` joins EXECUTABLE_KEYS, so the one trust check
+//   (`assertTrusted`, in `settings`) refuses a project-set path BEFORE any
+//   module is imported; paths are resolved absolute first (serpcast's
+//   `loadCodeRecipe` would resolve a relative one against the cwd).
+// - Code recipes and declarative recipes share one name space: a name used
+//   twice (across both kinds, or within either) is an error, never a silent
+//   override, as `loadRecipes` does for duplicate JSON recipes.
+// - Every listed module is imported on each search (Node's module cache makes
+//   repeats cheap), since a module's engine name is only known once imported.
 
-import {createSerpcast as realCreateSerpcast, SerpcastError} from 'serpcast';
-import type {Serpcast, SerpcastOptions} from 'serpcast';
+import {readdirSync, statSync} from 'node:fs';
+import {join} from 'node:path';
+import {
+	createSerpcast as realCreateSerpcast,
+	loadCodeRecipe,
+	SerpcastError,
+} from 'serpcast';
+import type {Engine, Serpcast, SerpcastOptions} from 'serpcast';
 import {loadRecipes} from 'serpcast-recipe/node';
 import type {Config, Egress, SerpcastConfig} from '../config.js';
 import {EgressError} from '../egress.js';
@@ -26,7 +45,7 @@ export interface SerpcastDeps {
 	createSerpcast?: (options: SerpcastOptions) => Serpcast;
 }
 
-const EXECUTABLE_KEYS = ['serpcast.libcurlPath'];
+const EXECUTABLE_KEYS = ['serpcast.libcurlPath', 'serpcast.codeRecipes'];
 const SOCKS = ['socks5', 'socks', 'socks5h'];
 const instances = new Map<string, Serpcast>();
 
@@ -56,16 +75,43 @@ function settings(config: Config): SerpcastConfig {
 	const s: SerpcastConfig = {...config.serpcast};
 	if (!isList(s.engines) || s.engines.length === 0)
 		throw new Error('serpcast: set serpcast.engines (engine names, in order)');
-	if (s.recipes !== undefined && !isList(s.recipes))
-		throw new Error('serpcast: serpcast.recipes must be a list of paths');
+	for (const key of ['recipes', 'codeRecipes'] as const)
+		if (s[key] !== undefined && !isList(s[key]))
+			throw new Error(`serpcast: serpcast.${key} must be a list of paths`);
 	for (const key of ['sessionIdleMs', 'cooldownMs'] as const)
 		if (s[key] !== undefined && !(Number(s[key]) >= 0))
 			throw new Error(`serpcast: serpcast.${key} must be a number >= 0`);
 	if (s.recipes)
 		s.recipes = s.recipes.map((p) => resolvePath(config, 'recipes', p));
+	if (s.codeRecipes)
+		s.codeRecipes = s.codeRecipes.map((p) =>
+			resolvePath(config, 'codeRecipes', p),
+		);
 	if (s.libcurlPath)
 		s.libcurlPath = resolvePath(config, 'libcurlPath', s.libcurlPath);
 	return s;
+}
+
+/** Every recipe by name: declarative, then code (imports, i.e. RUNS, each module). */
+async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
+	const engines = new Map<string, Engine>(loadRecipes(s.recipes ?? []));
+	const files = (s.codeRecipes ?? []).flatMap((p) =>
+		statSync(p).isDirectory()
+			? readdirSync(p)
+					.sort()
+					.filter((f) => /\.m?js$/.test(f))
+					.map((f) => join(p, f))
+			: [p],
+	);
+	for (const file of files) {
+		const recipe = await loadCodeRecipe(file);
+		if (engines.has(recipe.name))
+			throw new Error(
+				`serpcast: ${file}: duplicate recipe name '${recipe.name}'`,
+			);
+		engines.set(recipe.name, recipe);
+	}
+	return engines;
 }
 
 /** This backend's identity key (identity.ts): egress + resolved section. */
@@ -110,7 +156,7 @@ export function createSerpcastBackend(
 	return {
 		async search(query, _http, options = {}): Promise<SearchResult[]> {
 			const s = settings(config);
-			const recipes = loadRecipes(s.recipes ?? []);
+			const recipes = await loadEngines(s);
 			const engines = s.engines!.map((name) => {
 				const recipe = recipes.get(name);
 				if (recipe) return recipe;

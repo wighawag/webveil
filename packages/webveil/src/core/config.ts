@@ -13,7 +13,7 @@
 
 import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {dirname, join, parse} from 'node:path';
+import {delimiter, dirname, join, parse} from 'node:path';
 import {attachProvenance, mergeLayers} from './layers.js';
 import type {Layer} from './layers.js';
 
@@ -37,12 +37,23 @@ export type Egress =
  * (config-file relative, never the cwd). Env covers the scalars only
  * (`WEBVEIL_SERPCAST_LIBCURL_PATH`, `_SESSION_IDLE_MS`, `_COOLDOWN_MS`); lists
  * live in files. Alternative considered: `recipeDirs` (too narrow, files work).
+ *
+ * Recorded decision (task serpcast-code-recipes-trusted): `codeRecipes` takes
+ * JS module files or directories (every `*.js`/`*.mjs` inside, sorted, as
+ * `loadRecipes` does for `*.json`). Loading one RUNS it, so it is an executable
+ * setting (trusted layers only). Its env form is `WEBVEIL_SERPCAST_CODE_RECIPES`,
+ * a list split on the platform path delimiter (`:`, or `;` on Windows) like
+ * PATH, each entry absolute or `~/`. It is the only list with an env form:
+ * without one, env could not supply a trusted code recipe path at all.
+ * Alternative considered: a JSON array in env (awkward to type in a shell).
  */
 export interface SerpcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
 	engines?: string[];
 	/** Declarative recipe files or directories (every `*.json` inside). */
 	recipes?: string[];
+	/** Code recipe modules or directories: EXECUTABLE (trusted layers only). */
+	codeRecipes?: string[];
 	/** The libcurl-impersonate library: EXECUTABLE (trusted layers only). */
 	libcurlPath?: string;
 	sessionIdleMs?: number;
@@ -148,7 +159,7 @@ function parseEgressEnv(
 	return undefined;
 }
 
-/** The scalar `serpcast` settings from `WEBVEIL_SERPCAST_*` (arrays: files only). */
+/** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes only). */
 function readSerpcastEnv(
 	env: Record<string, string | undefined>,
 ): SerpcastConfig {
@@ -157,7 +168,9 @@ function readSerpcastEnv(
 		WEBVEIL_SERPCAST_LIBCURL_PATH: lib,
 		WEBVEIL_SERPCAST_SESSION_IDLE_MS: idle,
 		WEBVEIL_SERPCAST_COOLDOWN_MS: cooldown,
+		WEBVEIL_SERPCAST_CODE_RECIPES: code,
 	} = env;
+	if (code) section.codeRecipes = code.split(delimiter).filter(Boolean);
 	if (lib) section.libcurlPath = lib;
 	if (idle) section.sessionIdleMs = Number(idle);
 	if (cooldown) section.cooldownMs = Number(cooldown);

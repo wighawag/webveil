@@ -1,8 +1,8 @@
 // trust — the ONE place that decides whether an executable setting may be used.
 // Config is discovered by walking up from the cwd (docs/adr/0002), so a
 // `webveil.json` in any cloned repository is read automatically; a setting that
-// makes webveil run code (the `custom` backend command today; serpcast code
-// recipes, the libcurl path, searchcast browser paths and args later) is
+// makes webveil run code (the `custom` backend command, serpcast code recipes
+// and the libcurl path today; searchcast browser paths and args later) is
 // therefore accepted only from env or the global config (docs/adr/0004).
 //
 // The check runs where the setting is USED (by the backend that needs it), not

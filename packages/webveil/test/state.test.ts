@@ -24,6 +24,7 @@ import {
 	createStateStore,
 	partitionDir,
 	stateRoot,
+	withLock,
 } from '../src/core/state.js';
 
 const A = 'a'.repeat(64);
@@ -168,6 +169,117 @@ for (let i = 0; i < 25; i++) await store.set(process.argv[3] + '/' + i, {i});
 			for (let i = 0; i < 25; i++) expect(keys).toContain(`${name}/${i}`);
 		expect(readdirSync(dir)).toEqual(['state.json']); // no lock, no temp
 	}, 60_000);
+});
+
+/** Backdate a lock (a legacy lock file, or a lock directory and its token). */
+const makeStale = (lock: string) => {
+	const old = (Date.now() - 60_000) / 1000;
+	if (statSync(lock).isDirectory())
+		for (const name of readdirSync(lock))
+			utimesSync(join(lock, name), old, old);
+	utimesSync(lock, old, old);
+};
+
+/** A promise and its resolver. */
+const signal = () => {
+	let fire!: () => void;
+	const fired = new Promise<void>((resolve) => (fire = resolve));
+	return {fire, fired};
+};
+
+describe('withLock: breaking a stale lock', () => {
+	it('lets exactly one of two waiters take over the same stale lock', async () => {
+		const dir = partitionDir(A, root);
+		const lock = join(dir, 'state.lock');
+		// A holder that never releases (a crashed writer), made stale.
+		const crashedIn = signal();
+		const crash = signal();
+		const crashed = withLock(dir, async () => {
+			crashedIn.fire();
+			await crash.fired;
+		});
+		await crashedIn.fired;
+		makeStale(lock);
+
+		// Both waiters stop right after judging that lock stale (the seam),
+		// then the first breaks it and takes the lock, and only then the second
+		// goes on with its break.
+		const stops: Array<() => void> = [];
+		const bothStale = signal();
+		const secondMoved = signal();
+		let holding = 0;
+		let most = 0;
+		let released = false;
+		const waiter = () => {
+			let first = true;
+			return withLock(
+				dir,
+				async () => {
+					most = Math.max(most, ++holding);
+					if (!released) {
+						released = true;
+						stops[1]!();
+						await secondMoved.fired; // it waits or it gets in
+					} else secondMoved.fire();
+					holding--;
+				},
+				{
+					onStale: () => {
+						if (!first) return Promise.resolve();
+						first = false;
+						return new Promise<void>((resolve) => {
+							stops.push(resolve);
+							if (stops.length === 2) bothStale.fire();
+						});
+					},
+					onWait: () => secondMoved.fire(),
+				},
+			);
+		};
+		const waiters = [waiter(), waiter()];
+		await bothStale.fired;
+		stops[0]!();
+		await Promise.all(waiters);
+		expect(most).toBe(1);
+
+		crash.fire();
+		await crashed; // its lock was taken over: it releases nothing
+		expect(existsSync(lock)).toBe(false);
+		expect(readdirSync(dir)).toEqual([]);
+	});
+
+	it('never lets a holder release a lock it no longer owns', async () => {
+		const dir = partitionDir(A, root);
+		const lock = join(dir, 'state.lock');
+		const secondIn = signal();
+		const secondOut = signal();
+		let second!: Promise<void>;
+		await withLock(dir, async () => {
+			makeStale(lock); // held past LOCK_STALE_MS: the next waiter takes it
+			second = withLock(dir, async () => {
+				secondIn.fire();
+				await secondOut.fired;
+			});
+			await secondIn.fired;
+		});
+		// The first holder has released: the second's lock is still there.
+		expect(existsSync(lock)).toBe(true);
+		const thirdWaits = signal();
+		let thirdIn = false;
+		const third = withLock(
+			dir,
+			async () => {
+				thirdIn = true;
+			},
+			{onWait: () => thirdWaits.fire()},
+		);
+		await thirdWaits.fired;
+		expect(thirdIn).toBe(false);
+		secondOut.fire();
+		await Promise.all([second, third]);
+		expect(thirdIn).toBe(true);
+		expect(readdirSync(dir)).toEqual([]);
+	});
 });
 
 describe('clearState', () => {

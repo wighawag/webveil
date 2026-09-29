@@ -14,4 +14,4 @@ Keyless search without SearXNG (recipes over HTTP with a browser-grade fingerpri
 ## Consequences
 
 - A non-direct egress combined with an external searchcast endpoint webveil cannot proxy is refused, like the loopback-SearXNG guard (ADR 0003).
-- `web_fetch` stays on the undici path with its SSRF guard; moving it to the impersonated transport is a separate decision.
+- `web_fetch` can also use the impersonated transport: `fetchTransport` (`plain` | `serpcast`), which defaults to `serpcast` when the backend is `serpcast` (owner decision 2026-09-29, `core/fetch-transport.ts`). The serpcast fetch uses the fetch-hop egress, strict impersonation with no fallback to `plain`, and the SSRF guard on every redirect hop.

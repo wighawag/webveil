@@ -49,9 +49,13 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   pi-agnostic CLI and the pi extension. Per folder = per account/egress. See
   `docs/adr/0002`.
 - **provenance** — for every resolved leaf key path (e.g. `baseUrl`, `serpcast.engines`), the layer it came from: env, project (with the file path), global (with the file path) or defaults. Plain-object config sections merge key by key; scalars, arrays, `egress` and `fetchEgress` are leaves replaced whole. See `core/layers.ts`.
-- **executable setting**: a config key whose value makes webveil run code (today the `custom` backend's command, its `baseUrl`, `serpcast.libcurlPath` and `serpcast.codeRecipes`). Accepted only from a **trusted layer** (env or the global config), never from a project `webveil.json`; checked where the backend uses it, and its paths never resolve against the cwd. See `core/trust.ts` and `docs/adr/0004`.
-- **identity**: one search identity, named by the **identity key**: the sha256 of the backend-hop `egress` and the backend's whole resolved section (today the `serpcast` section; `core/identity.ts`, reached through `serpcastIdentityKey`). Everything webveil keeps per identity (the cached serpcast instance, its on-disk state, later the browser profile) is keyed by this one hash and never crosses identities, because replaying a session obtained on one egress over another links the two. See `docs/adr/0004`.
-- **state** (serpcast state): the sessions (engine cookies, a code recipe's JSON state) and engine cooldowns serpcast keeps in its injected `StateStore`. webveil's store (`core/state.ts`) keeps it on disk under `$XDG_STATE_HOME/webveil/` (default `~/.local/state/webveil/`), one **partition** per identity: the directory `<identity key>/`, holding `state.json` (0600, directories 0700), updated under a lock file with atomic replace. Expiry is enforced on read. `webveil state clear [--all]` removes the current identity's partition, or all.
+- **trusted layer**: env or the global config file. The project `webveil.json` is the untrusted layer, because it is discovered by walking up from the cwd, so any cloned repository can supply one (defaults and a config built in code count as trusted). See `core/trust.ts`.
+- **executable setting**: a config key whose value makes webveil run code: the `custom` backend's command (its `baseUrl`), and `serpcast.libcurlPath`, `serpcast.codeRecipes`, `serpcast.searchcast.chrome`, `serpcast.searchcast.xvfb` and `serpcast.searchcast.chromeArgs`. Accepted only from a trusted layer, never from a project `webveil.json`; checked where the backend uses it, and its paths never resolve against the cwd. See `core/trust.ts` and `docs/adr/0004`.
+- **serpcast**: the policy-free library (sibling repo `wighawag/serpcast`) behind the `serpcast` backend: recipes run over libcurl-impersonate with Chrome's fingerprint, an engine chain, and searchcast as the browser fallback. The caller injects the proxy, the state store and the recipe set; webveil is that caller and adds the policy (egress as the proxy, strict impersonation always on, per-identity state, trust). Not to be confused with the `serpcast` config section, which holds this backend's settings. See `docs/adr/0004`.
+- **recipe**: the description of one search engine. A **declarative recipe** is a JSON file (the `serpcast-recipe` format shared with searchcast: URL template, CSS selectors for results, empty and blocked pages), loaded from `serpcast.recipes` (files or directories, every `*.json` inside) by any layer, since it is data. A **code recipe** is a JS module (`serpcast.codeRecipes`), an executable setting. Both share one name space; a duplicate name is an error.
+- **engine chain**: `serpcast.engines`, the ordered engine names a search tries; the first answer (results, or a genuine empty match) wins, and the engines that failed before it annotate the results as `unresponsiveEngines`. Every engine failing is an error listing each failure, never `[]`. No chain is configured by default. A **browser engine** is named `searchcast:<recipe>` and runs that recipe in searchcast: in `library` mode (default) webveil starts searchcast in-process with `egress` as its proxy; in `endpoint` mode it calls a `searchcast serve` it does not control, so that mode requires `egress: direct`.
+- **identity**: one search identity, named by the **identity key**: the sha256 of the backend-hop `egress` and the backend's whole resolved section (today the `serpcast` section; `core/identity.ts`, reached through `serpcastIdentityKey`). Everything webveil keeps per identity (the cached serpcast instance, its on-disk state, a persistent browser profile) is keyed by this one hash and never crosses identities, because replaying a session obtained on one egress over another links the two. See `docs/adr/0004`.
+- **state** (serpcast state): the sessions (engine cookies, a code recipe's JSON state) and engine cooldowns serpcast keeps in its injected `StateStore`. webveil's store (`core/state.ts`) keeps it on disk under `$XDG_STATE_HOME/webveil/` (default `~/.local/state/webveil/`), one **identity partition** per identity: the directory `<identity key>/`, holding `state.json` (0600, directories 0700), updated under a lock file with atomic replace, and, with `serpcast.searchcast.persistProfile`, the browser profile `browser-profile/` (deleted once the partition is idle past `sessionIdleMs`). Expiry is enforced on read. `webveil state clear [--all]` removes the current identity's partition, or all.
 - **Extractor seam** — `urlToMarkdown` via `distilly/fetch` by default, INJECTED with
   webveil's egress-bound `fetch` (so distilly's network Rules rewrite to raw `.md`/API
   source over webveil's egress, never a global fetch); a backend's own `/extract`
@@ -68,6 +72,8 @@ tool, has a `webveil` bin) and `packages/pi-webveil` (the pi extension, depends 
 (tabs, single quotes, no bracket spacing). Key deps: `incur` (CLI/MCP framework),
 `distilly` (extraction), `socks-proxy-agent` (SOCKS egress); undici (in Node) for HTTP
 proxy.
+
+The `serpcast` backend adds `serpcast` and `serpcast-recipe` (the engine layer and its recipe format, installed with webveil) and, optionally, `searchcast` (the browser fallback in library mode, not installed with webveil).
 
 ## Size discipline (track LOC in the README)
 
@@ -91,15 +97,19 @@ core + frontends:
 | core/backends/serpcast.ts  |        ~90 |
 | core/identity.ts           |        ~30 |
 | core/state.ts              |       ~120 |
+| core/layers.ts             |          - |
+| core/trust.ts              |          - |
+| core/security.ts           |          - |
+| core/baseurl.ts            |          - |
+| index.ts (barrel)          |          - |
 | cli.ts (incur frontend)    |        ~80 |
 | pi-webveil/src/index.ts    |        ~90 |
 
+`-` means the module has no ceiling set. Actual LOC per module, and which modules exceed their ceilings, are tracked in the README.
+
 For calibration, the existing pi web-search extensions we reviewed:
 `pi-searxng-search` 350 LOC (1 backend, no egress, no fetch), `leing2021/pi-search`
-1714, `pi-search-hub` 9047, `pi-web-providers` 18961. webveil aims to deliver a
-3-backend + egress + fetch + per-folder-config tool well under ~1k LOC of our own
-code (excluding deps), by leaning on `incur` (CLI/MCP/skills) and `distilly`
-(extraction).
+1714, `pi-search-hub` 9047, `pi-web-providers` 18961. The original aim was a 3-backend + egress + fetch + per-folder-config tool under ~1k LOC of our own code (excluding deps); as built, the 4-backend tool (with the trust rule and per-identity state) is about 3.3k LOC, still leaning on `incur` (CLI/MCP/skills), `distilly` (extraction) and `serpcast` (the search engines of the `serpcast` backend).
 
 ## Verify gate
 

@@ -46,6 +46,14 @@ export type Egress =
  * PATH, each entry absolute or `~/`. It is the only list with an env form:
  * without one, env could not supply a trusted code recipe path at all.
  * Alternative considered: a JSON array in env (awkward to type in a shell).
+ *
+ * Recorded decision (task searchcast-fallback-and-guard): the browser fallback
+ * is the `searchcast` subsection (`SearchcastConfig`); its env forms cover the
+ * three executable keys only: `WEBVEIL_SERPCAST_SEARCHCAST_CHROME`, `_XVFB`
+ * (paths, absolute or `~/`) and `_CHROME_ARGS` (split on whitespace, like
+ * NODE_OPTIONS: Chromium flags carry no spaces). Mode, endpoint and profile
+ * persistence live in files. Alternative considered: a JSON array for the args
+ * (awkward to type, as for code recipes).
  */
 export interface SerpcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
@@ -58,6 +66,33 @@ export interface SerpcastConfig {
 	libcurlPath?: string;
 	sessionIdleMs?: number;
 	cooldownMs?: number;
+	/** The searchcast browser fallback (engines named `searchcast:<recipe>`). */
+	searchcast?: SearchcastConfig;
+}
+
+/**
+ * How the serpcast backend reaches searchcast (backends/serpcast.ts). Key names
+ * follow serpcast's `SearchcastLibraryOptions` (`chrome`, `xvfb`, `chromeArgs`).
+ */
+export interface SearchcastConfig {
+	/**
+	 * `library` (default): webveil starts searchcast in-process, with the egress
+	 * as the browser's proxy. `endpoint`: a `searchcast serve` the user runs.
+	 */
+	mode?: 'library' | 'endpoint';
+	/** Endpoint mode: the server's URL or Unix socket path. */
+	endpoint?: string;
+	/** Library mode: the Chrome/Chromium executable: EXECUTABLE. */
+	chrome?: string;
+	/** Library mode: an Xvfb executable for a private display: EXECUTABLE. */
+	xvfb?: string;
+	/** Library mode: extra Chromium arguments: EXECUTABLE. */
+	chromeArgs?: string[];
+	/**
+	 * Library mode: keep the browser profile in the identity's state partition
+	 * (deleted once idle past `sessionIdleMs`). Default: an ephemeral profile.
+	 */
+	persistProfile?: boolean;
 }
 
 /** Page-size budget preset for fetch (passed through to distilly). */
@@ -159,7 +194,7 @@ function parseEgressEnv(
 	return undefined;
 }
 
-/** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes only). */
+/** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes, chrome args). */
 function readSerpcastEnv(
 	env: Record<string, string | undefined>,
 ): SerpcastConfig {
@@ -169,7 +204,15 @@ function readSerpcastEnv(
 		WEBVEIL_SERPCAST_SESSION_IDLE_MS: idle,
 		WEBVEIL_SERPCAST_COOLDOWN_MS: cooldown,
 		WEBVEIL_SERPCAST_CODE_RECIPES: code,
+		WEBVEIL_SERPCAST_SEARCHCAST_CHROME: chrome,
+		WEBVEIL_SERPCAST_SEARCHCAST_XVFB: xvfb,
+		WEBVEIL_SERPCAST_SEARCHCAST_CHROME_ARGS: args,
 	} = env;
+	const browser: SearchcastConfig = {};
+	if (chrome) browser.chrome = chrome;
+	if (xvfb) browser.xvfb = xvfb;
+	if (args?.trim()) browser.chromeArgs = args.trim().split(/\s+/);
+	if (Object.keys(browser).length > 0) section.searchcast = browser;
 	if (code) section.codeRecipes = code.split(delimiter).filter(Boolean);
 	if (lib) section.libcurlPath = lib;
 	if (idle) section.sessionIdleMs = Number(idle);

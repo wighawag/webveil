@@ -4,7 +4,7 @@
 //
 // Layout: `$XDG_STATE_HOME/webveil/<identity key>/state.json` (default
 // `~/.local/state/webveil/`). The partition directory is the identity's home
-// for anything else it keeps on disk (the browser profile, later). Only the
+// for anything else it keeps on disk (the searchcast browser profile). Only the
 // hash appears in a path; store keys live inside the file, never as names.
 //
 // Recorded decisions (task identity-partitioned-state-store):
@@ -24,6 +24,17 @@
 //   the next write: state is a cache, losing it only costs a fresh session.
 // - The root follows `XDG_STATE_HOME` from the environment the process runs
 //   in (not the config layers), like any XDG tool.
+//
+// Recorded decisions (task searchcast-fallback-and-guard):
+// - A persistent searchcast browser profile is `<partition>/browser-profile`,
+//   so it inherits the partition's identity: no setting can point two
+//   identities at one profile.
+// - Its idle clock is the mtime of `<partition>/browser-profile.used`, touched
+//   on every search of the identity (not only browser ones: the partition's
+//   idleness, as the task says). A profile with no marker has an unknown age
+//   and counts as idle. Alternative considered: the profile directory's own
+//   mtime, rejected because Chromium rewrites files inside it without
+//   necessarily touching the directory entry, so it is no use-clock.
 
 import {randomBytes} from 'node:crypto';
 import {
@@ -35,6 +46,7 @@ import {
 	rename,
 	rm,
 	stat,
+	utimes,
 	writeFile,
 } from 'node:fs/promises';
 import {homedir} from 'node:os';
@@ -175,6 +187,43 @@ export function createStateStore(
 			await update((entries) => key in entries && delete entries[key]);
 		},
 	};
+}
+
+const PROFILE_DIR = 'browser-profile';
+const PROFILE_USED = 'browser-profile.used';
+
+/** The persistent browser profile of a partition directory. */
+export function profileDir(partition: string): string {
+	return join(partition, PROFILE_DIR);
+}
+
+/**
+ * True when the partition has been idle longer than `idleMs` (see the
+ * decisions above), so its browser profile must go before the next start.
+ */
+export async function isProfileIdle(
+	partition: string,
+	idleMs: number,
+	now = Date.now(),
+): Promise<boolean> {
+	const used = await stat(join(partition, PROFILE_USED)).catch(() => undefined);
+	return !used || now - used.mtimeMs > idleMs;
+}
+
+/** Delete the partition's browser profile (its browser must be closed). */
+export async function deleteProfile(partition: string): Promise<void> {
+	await rm(profileDir(partition), {recursive: true, force: true});
+}
+
+/** Mark the partition as used now (its browser profile's idle clock). */
+export async function touchProfile(
+	partition: string,
+	now = Date.now(),
+): Promise<void> {
+	await ensureDir(partition);
+	const marker = join(partition, PROFILE_USED);
+	await writeFile(marker, '', {mode: 0o600});
+	await utimes(marker, now / 1000, now / 1000);
 }
 
 /**

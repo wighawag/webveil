@@ -25,7 +25,23 @@
 //   treated like env (absolute or `~/` only). Values from `defaults` likewise.
 // - Only `~` and `~/...` expand, to `os.homedir()` (as a shell does); `~user`
 //   is not expanded and resolves as a relative path.
+//
+// Recorded decisions (task custom-command-path-lookup-skips-relative-entries):
+// - A bare command name (no slash) is looked up by webveil itself through
+//   `resolveCommandOnPath`, not by `spawn`: `spawn` would honour an empty, `.`
+//   or relative PATH entry against the inherited cwd. Only absolute PATH entries
+//   are searched and the absolute match is what gets spawned. Alternative
+//   considered: spawning with `cwd` set to a neutral directory, rejected because
+//   the command would then run somewhere else than it does today.
+// - The PATH searched is the webveil process's own `PATH` (what `spawn` would
+//   have used), not a config value. No match is a `TrustError` (like every other
+//   refused executable), raised before anything is spawned.
+// - "Executable" means a regular file (symlinks followed) with an execute bit
+//   for this process (`X_OK`); on Windows every regular file counts and the
+//   name is tried with each PATHEXT extension (default `.COM;.EXE;.BAT;.CMD`),
+//   and also as-is when it already ends in one of them.
 
+import {accessSync, constants, statSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname, isAbsolute, join, resolve} from 'node:path';
 import {configProvenance} from './layers.js';
@@ -89,5 +105,62 @@ export function resolveExecutablePath(
 	throw new TrustError(
 		`webveil: relative path '${value}' from ${source?.layer ?? 'code'} must ` +
 			'be absolute or start with ~/ (it is never resolved against the cwd)',
+	);
+}
+
+/** Environment and platform seams for `resolveCommandOnPath` (tests). */
+export interface PathLookupOptions {
+	env?: Record<string, string | undefined>;
+	platform?: NodeJS.Platform;
+}
+
+function isExecutableFile(path: string, windows: boolean): boolean {
+	try {
+		if (!statSync(path).isFile()) return false;
+		if (!windows) accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Resolve a bare command name (no slash) to an absolute executable path by
+ * walking PATH, skipping empty and non-absolute entries so the cwd (which a
+ * cloned repository controls) is never searched. Throws a `TrustError` naming
+ * the command when no absolute PATH entry holds it.
+ */
+export function resolveCommandOnPath(
+	name: string,
+	{env = process.env, platform = process.platform}: PathLookupOptions = {},
+): string {
+	const windows = platform === 'win32';
+	const pathValue =
+		env.PATH ??
+		(windows
+			? Object.entries(env).find(([k]) => k.toUpperCase() === 'PATH')?.[1]
+			: undefined) ??
+		'';
+	const sep = windows ? ';' : ':';
+	const dirs = pathValue.split(sep).filter((dir) => isAbsolute(dir));
+	let candidates = [name];
+	if (windows) {
+		const exts = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+			.split(';')
+			.filter(Boolean);
+		const hasExt = exts.some((ext) =>
+			name.toLowerCase().endsWith(ext.toLowerCase()),
+		);
+		candidates = [...(hasExt ? [name] : []), ...exts.map((ext) => name + ext)];
+	}
+	for (const dir of dirs)
+		for (const candidate of candidates) {
+			const full = join(dir, candidate);
+			if (isExecutableFile(full, windows)) return full;
+		}
+	throw new TrustError(
+		`webveil: command '${name}' was not found in any absolute PATH entry ` +
+			'(empty and relative PATH entries are ignored, so the cwd is never ' +
+			'searched); set an absolute path or ~/ path instead',
 	);
 }

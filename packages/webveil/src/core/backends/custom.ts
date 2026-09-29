@@ -16,7 +16,9 @@
 // refused when it came from a project `webveil.json`, and a command path with a
 // slash resolves via trust.ts (`~` = home, relative = the setting's config-file
 // directory, never the cwd; a relative path from env is refused). A bare name
-// (no slash) keeps today's PATH lookup. Both run in `search()`, where the
+// (no slash) is looked up by trust.ts `resolveCommandOnPath` over ABSOLUTE PATH
+// entries only (an empty, `.` or relative entry would otherwise let `spawn`
+// find a file in the cwd), and the absolute match is spawned. Both run in `search()`, where the
 // command is used, NOT in the factory: fetch.ts constructs the configured
 // backend just to probe for `/extract`, and `web_fetch` must keep working in a
 // folder whose project config names a command (recorded decision).
@@ -29,7 +31,12 @@
 
 import {spawn as defaultSpawn} from 'node:child_process';
 import type {Config} from '../config.js';
-import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
+import {
+	assertTrusted,
+	resolveCommandOnPath,
+	resolveExecutablePath,
+	sourceOf,
+} from '../trust.js';
 import type {Backend, Http, SearchOptions, SearchResult} from './types.js';
 
 /** The JSON request written to the command's stdin. */
@@ -71,7 +78,7 @@ const EXECUTABLE_KEYS = ['baseUrl'];
 /** Trust-check the command's source and resolve its executable (see header). */
 function resolveExecutable(config: Config, command: string): string {
 	assertTrusted(config, EXECUTABLE_KEYS);
-	if (!command.includes('/')) return command; // bare name: PATH lookup
+	if (!command.includes('/')) return resolveCommandOnPath(command);
 	return resolveExecutablePath(command, sourceOf(config, 'baseUrl'));
 }
 

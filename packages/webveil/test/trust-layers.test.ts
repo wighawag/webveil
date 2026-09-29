@@ -8,13 +8,14 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {basename, dirname, isAbsolute, join} from 'node:path';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import {resolveConfig} from '../src/core/config.js';
 import {configProvenance} from '../src/core/layers.js';
 import {
 	assertTrusted,
+	resolveCommandOnPath,
 	resolveExecutablePath,
 	TrustError,
 } from '../src/core/trust.js';
@@ -267,12 +268,25 @@ describe('executable path resolution never uses the cwd', () => {
 		).rejects.toThrow(/must be absolute or start with ~\//);
 	});
 
-	it('keeps PATH lookup for a bare command name', async () => {
+	it('keeps PATH lookup for a bare command name, spawning the absolute match', async () => {
 		writeJson(globalFile, {backend: 'custom', baseUrl: 'sh -c true'});
 		const calls: string[] = [];
 		const backend = createCustomBackend(resolveHere(), recordingSpawn(calls));
 		await backend.search('q', unusedHttp);
-		expect(calls).toEqual(['sh']);
+		expect(calls).toHaveLength(1);
+		expect(isAbsolute(calls[0]!)).toBe(true);
+		expect(basename(calls[0]!)).toBe('sh');
+	});
+
+	it('resolveCommandOnPath honours PATHEXT on Windows', () => {
+		const dir = join(root, 'winbin');
+		writeScript(join(dir, 'tool.CMD'), 'win');
+		const opts = {
+			env: {PATH: `.;${dir}`, PATHEXT: '.EXE;.CMD'},
+			platform: 'win32' as const,
+		};
+		expect(resolveCommandOnPath('tool', opts)).toBe(join(dir, 'tool.CMD'));
+		expect(resolveCommandOnPath('tool.CMD', opts)).toBe(join(dir, 'tool.CMD'));
 	});
 
 	it('resolveExecutablePath: ~ uses the given home, relative uses the file dir', () => {
@@ -284,5 +298,77 @@ describe('executable path resolution never uses the cwd', () => {
 			TrustError,
 		);
 		expect(() => resolveExecutablePath('a/b', undefined)).toThrow(TrustError);
+	});
+});
+
+describe('bare command PATH lookup skips empty and relative entries', () => {
+	const originalCwd = process.cwd();
+	const originalPath = process.env.PATH;
+	let absDir: string;
+	let marker: string;
+
+	beforeEach(() => {
+		absDir = join(root, 'absbin');
+		marker = join(root, 'decoy-ran');
+		writeScript(join(absDir, 'wvsearch'), 'absolute');
+		// Decoys in the cwd (and a relative `bin` under it) that must never run.
+		for (const decoy of [join(cwd, 'wvsearch'), join(cwd, 'bin', 'wvsearch')]) {
+			mkdirSync(dirname(decoy), {recursive: true});
+			writeFileSync(
+				decoy,
+				`#!/bin/sh\ncat >/dev/null\ntouch '${marker}'\necho '[{"title":"decoy","url":"https://example.com/decoy"}]'\n`,
+				'utf8',
+			);
+			chmodSync(decoy, 0o755);
+		}
+		writeJson(globalFile, {backend: 'custom', baseUrl: 'wvsearch'});
+		process.chdir(cwd);
+	});
+
+	afterEach(() => {
+		process.chdir(originalCwd);
+		process.env.PATH = originalPath;
+	});
+
+	for (const [label, prefix] of [
+		['a `.` entry', '.'],
+		['an empty entry', ''],
+		['a relative `bin` entry', 'bin'],
+	] as const) {
+		it(`runs the absolute-dir executable, never the cwd decoy, with ${label}`, async () => {
+			process.env.PATH = `${prefix}:${absDir}`;
+			const results = await searchHere();
+			expect(results.map((r) => r.title)).toEqual(['absolute']);
+			expect(existsSync(marker)).toBe(false);
+		});
+	}
+
+	it('fails clearly before spawning when only relative entries match', async () => {
+		process.env.PATH = `.::bin`;
+		const calls: string[] = [];
+		const backend = createCustomBackend(resolveHere(), recordingSpawn(calls));
+		const error = await backend
+			.search('q', unusedHttp)
+			.catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(TrustError);
+		expect((error as Error).message).toContain("'wvsearch'");
+		expect((error as Error).message).toMatch(
+			/relative PATH entries are ignored/,
+		);
+		expect(calls).toEqual([]);
+		expect(existsSync(marker)).toBe(false);
+	});
+
+	it('skips a non-executable match and a directory of that name', () => {
+		const first = join(root, 'first');
+		mkdirSync(join(first, 'wvsearch'), {recursive: true});
+		const second = join(root, 'second');
+		mkdirSync(second, {recursive: true});
+		writeFileSync(join(second, 'wvsearch'), 'x', 'utf8');
+		expect(
+			resolveCommandOnPath('wvsearch', {
+				env: {PATH: `${first}:${second}:${absDir}`},
+			}),
+		).toBe(join(absDir, 'wvsearch'));
 	});
 });

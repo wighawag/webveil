@@ -21,11 +21,17 @@ import {
 } from '../../../scripts/copy-publish-assets.mjs';
 
 // Build a throwaway "repo" with root README.md + LICENSE and a package dir
-// inside it, so we never touch the real repo or anything global.
+// inside it, so we never touch the real repo or anything global. The fake repo
+// sits one level down inside its own temp parent (not directly in os.tmpdir()),
+// so the "nothing written next to the repo root" check inspects a directory
+// this test owns, and a stray file in the host's temp dir cannot fail it.
+let fakeParent: string;
 let fakeRepo: string;
 
 beforeEach(() => {
-	fakeRepo = mkdtempSync(join(tmpdir(), 'webveil-copy-'));
+	fakeParent = mkdtempSync(join(tmpdir(), 'webveil-copy-'));
+	fakeRepo = join(fakeParent, 'repo');
+	mkdirSync(fakeRepo);
 	writeFileSync(
 		join(fakeRepo, 'README.md'),
 		'See [a note](work/notes/x.md) and [ADR](docs/adr/0001.md).',
@@ -35,7 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(fakeRepo, {recursive: true, force: true});
+	rmSync(fakeParent, {recursive: true, force: true});
 });
 
 describe('copyPublishAssets', () => {

@@ -31,3 +31,9 @@ The user-facing documentation pass once the serpcast backend is complete. README
 Goal: make the documented rules match the behaviour (spec story 18). Read ADRs 0003 and 0004 and the finished backend code; document what exists, not what the spec planned.
 
 FIRST, check this task against current reality (launch snapshot; may have drifted).
+
+## Decisions
+
+- **Placeholder recipe in the quick start.** The spec says public example recipes live in serpcast, but none exist, and serpcast's own policy is not to publish recipes for real sites. So step 3 shows a `search.example` template, points to the recipe format and to `serpcast query` for testing a recipe on its own. The alternative was shipping a recipe for a real site, which the spec rules out and which raises terms-of-use questions. This affects the "a new user can reach a first search from the README alone" criterion, and is recorded in the new observation note.
+- **The quick start uses the global config, not a project `webveil.json`.** This keeps recipes next to where private code recipes must live and away from the project-folder JSON problem. `WEBVEIL_BACKEND=serpcast` is mentioned as an alternative.
+- **No invented ceilings.** The modules added to CONTEXT.md's LOC table are marked `-` (no target) rather than given new limits. Setting them is left to a human.

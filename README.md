@@ -566,3 +566,9 @@ pnpm build
 pnpm test
 pnpm format:check
 ```
+
+The `test` workflow (`.github/workflows/test.yml`) runs the same gate on every push to main and every pull request.
+
+## Release
+
+Both packages are released with [changesets](https://github.com/changesets/changesets), each with its own version. A PR that should ship adds a changeset (`pnpm changeset`, pick the packages and the bump). On main, the `release` workflow (`.github/workflows/release.yml`) opens or updates a "Version Packages" PR from the pending changesets; merging it publishes the bumped packages to npm through npm Trusted Publishing (OIDC, no token), with provenance. There is no local publish script: every release goes through that workflow. Both published packages carry this README and the AGPL `LICENSE`, copied in at pack time by `scripts/copy-publish-assets.mjs`.

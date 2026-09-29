@@ -1,0 +1,36 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # The root `preinstall` (`npx only-allow pnpm`) fetches only-allow from
+      # the npm registry, which the runner reaches, and the root `prepare`
+      # already runs `pnpm build` (through `ldenv`, which needs no .env file).
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The same gate as `verify` in dorfl.json. The CLI tests that spawn the
+      # built bin skip themselves without `dist/`, so the build must come first.
+      - name: Verify
+        run: pnpm format:check && pnpm build && pnpm test

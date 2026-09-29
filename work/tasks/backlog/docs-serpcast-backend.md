@@ -2,7 +2,7 @@
 title: README and CONTEXT for the serpcast backend (quick start without SearXNG, anonymity section)
 slug: docs-serpcast-backend
 spec: serpcast-backend
-blockedBy: [searchcast-fallback-and-guard]
+blockedBy: [searchcast-fallback-and-guard, refuse-proxy-overriding-chrome-args]
 covers: [18]
 ---
 
@@ -11,6 +11,8 @@ covers: [18]
 The user-facing documentation pass once the serpcast backend is complete. README: a quick start that needs no SearXNG (install webveil, install libcurl-impersonate via serpcast's command or point at your own, drop recipes in a directory, set `backend: serpcast`); the anonymity section updated so it says that with this backend the search hop is webveil's own and `egress` governs it, that the loopback guard concerns SearXNG and the new external-searchcast guard, and how this looks under anonctl (`egress: direct`, forced account); a pointer to where private recipes go. CONTEXT.md: backend list, domain terms (serpcast, recipe, engine chain, identity partition, trusted layer), LOC table. The idea note `work/notes/ideas/expand-search-backend-roster.md` is trimmed to what remains open.
 
 > FORWARD-NOTE (conductor, 2026-09-29): observation `work/notes/observations/serpcast-recipe-dir-rejects-any-foreign-json.md` (from `serpcast-backend-basic`): `serpcast.recipes` directories fail whole if they contain any non-recipe `*.json` (for example the project's `webveil.json` via `"recipes": ["."]`). Say in the quick start to keep recipes in their own directory, then delete that observation. The quick start's libcurl step is `npx serpcast install-libcurl` (released in `serpcast@0.1.0`).
+
+> FORWARD-NOTE (conductor, 2026-09-29, from Gate-3 of `searchcast-fallback-and-guard`): document browser engines as `searchcast:<recipe>` entries in `serpcast.engines`, the `serpcast.searchcast.mode` (`library` default, `endpoint`), and two limitations: a persistent browser profile (`persistProfile`) must not be used by two webveil processes of the same identity at once (observation `searchcast-persistent-profile-concurrent-processes.md`, keep it), and `searchcast` must be installed alongside webveil for library mode (observation `searchcast-not-declared-as-optional-peer.md`, keep it). Proxy-related `chromeArgs` are refused (task `refuse-proxy-overriding-chrome-args`, built before this one).
 
 ## Acceptance criteria
 

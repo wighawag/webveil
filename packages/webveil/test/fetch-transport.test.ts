@@ -14,7 +14,11 @@ import {
 } from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
-import {createTransport as realCreateTransport, SerpcastError} from 'serpcast';
+import {
+	createTransport as realCreateTransport,
+	DEFAULT_SESSION_IDLE_MS,
+	SerpcastError,
+} from 'serpcast';
 import type {Transport, TransportOptions, TransportResponse} from 'serpcast';
 import type {Config} from '../src/core/config.js';
 import {resolveConfig} from '../src/core/config.js';
@@ -23,6 +27,7 @@ import type {FetchDeps} from '../src/core/fetch.js';
 import {
 	closeFetchTransports,
 	createSerpcastFetch,
+	MAX_IDLE_SESSIONS,
 	resolveFetchTransport,
 } from '../src/core/fetch-transport.js';
 import {closeBackends} from '../src/core/backends/registry.js';
@@ -70,10 +75,19 @@ interface Answer {
 	error?: Error;
 }
 
-/** A fake serpcast transport answering per url; records options and requests. */
-function fakeTransport(answers: Record<string, Answer> = {}) {
+/**
+ * A fake serpcast transport answering per url; records options, requests and
+ * closed sessions. Each session has its own cookie jar: a `set-cookie` answer
+ * header adds to it, and `cookieRequests` records the cookies each request was
+ * sent with. An answer with `gate` waits for it before answering.
+ */
+function fakeTransport(
+	answers: Record<string, Answer & {gate?: Promise<void>}> = {},
+) {
 	const built: TransportOptions[] = [];
 	const requests: {url: string; kind: string; session: number}[] = [];
+	const cookieRequests: {url: string; session: number; cookies: string[]}[] =
+		[];
 	const closed: number[] = [];
 	let sessions = 0;
 	const create = (options: TransportOptions): Transport => {
@@ -87,11 +101,16 @@ function fakeTransport(answers: Record<string, Answer> = {}) {
 			}),
 			session() {
 				const session = ++sessions;
+				let jar: string[] = [];
 				return {
 					async request(url, options): Promise<TransportResponse> {
 						requests.push({url, kind: options.kind, session});
+						cookieRequests.push({url, session, cookies: [...jar]});
 						const a = answers[url] ?? {};
+						if (a.gate) await a.gate;
 						if (a.error) throw a.error;
+						const set = a.headers?.['set-cookie'];
+						if (set) jar.push(set);
 						const html =
 							a.html ?? `<html><body><h1>at ${url}</h1></body></html>`;
 						return {
@@ -106,7 +125,9 @@ function fakeTransport(answers: Record<string, Answer> = {}) {
 						};
 					},
 					cookies: () => [],
-					clearCookies() {},
+					clearCookies() {
+						jar = [];
+					},
 					close() {
 						closed.push(session);
 					},
@@ -114,7 +135,7 @@ function fakeTransport(answers: Record<string, Answer> = {}) {
 			},
 		};
 	};
-	return {create, built, requests, closed};
+	return {create, built, requests, cookieRequests, closed};
 }
 
 type Fake = ReturnType<typeof fakeTransport>;
@@ -255,12 +276,8 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 			[second, 1],
 			[final, 1],
 		]);
-		// A second fetch is a fresh session: no cookies carried between fetches.
-		await adapter(final);
-		expect(fake.requests.at(-1)!.session).toBe(2);
-		// Each fetch closes its session (serpcast 0.2 keeps a session's
-		// connections open until then), so no connection outlives its fetch.
-		expect(fake.closed).toEqual([1, 2]);
+		// The session goes back to the pool, still open for the next fetch.
+		expect(fake.closed).toEqual([]);
 	});
 
 	it('runs the SSRF check on every hop: a redirect to a private address is refused before it is sent', async () => {
@@ -273,7 +290,8 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 		});
 		await expect(fetchWith(fake)).rejects.toThrow(SsrfError);
 		expect(fake.requests.map((r) => r.url)).toEqual([PAGE]);
-		expect(fake.closed).toEqual([1]); // closed on a refused hop too
+		// A failed fetch closes its session: never handed to the next fetch.
+		expect(fake.closed).toEqual([1]);
 	});
 
 	it('refuses a private first hop on direct egress, before any request', async () => {
@@ -441,6 +459,141 @@ describe('fetchTransport serpcast: transport reuse', () => {
 		await closeBackends();
 		await fetchWith(fake);
 		expect(fake.built).toHaveLength(3);
+	});
+});
+
+describe('fetchTransport serpcast: connection reuse, never cookies', () => {
+	const OTHER = 'https://1.1.1.1/other';
+	const TOR = {
+		WEBVEIL_FETCH_EGRESS: 'socks5',
+		WEBVEIL_FETCH_EGRESS_URL: 'socks5://127.0.0.1:9050',
+	};
+
+	it('two sequential fetches of one identity reuse one session; another egress never shares it', async () => {
+		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		const fake = fakeTransport();
+		await fetchWith(fake);
+		await fetchWith(fake, {}, OTHER);
+		expect(fake.requests.map((r) => r.session)).toEqual([1, 1]);
+		expect(fake.closed).toEqual([]);
+		await fetchWith(fake, TOR);
+		expect(fake.built).toHaveLength(2);
+		expect(fake.requests.at(-1)!.session).toBe(2);
+		await fetchWith(fake);
+		expect(fake.requests.at(-1)!.session).toBe(1);
+	});
+
+	it('each fetch starts with no cookies, even after the previous one received some; hops of one fetch share them', async () => {
+		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		const moved = 'https://93.184.215.14/moved';
+		const fake = fakeTransport({
+			[PAGE]: {
+				status: 302,
+				headers: {location: '/moved', 'set-cookie': 'sid=first'},
+			},
+			[moved]: {headers: {'set-cookie': 'late=1'}},
+		});
+		await fetchWith(fake);
+		await fetchWith(fake, {}, OTHER);
+		expect(fake.cookieRequests).toEqual([
+			{url: PAGE, session: 1, cookies: []},
+			{url: moved, session: 1, cookies: ['sid=first']},
+			{url: OTHER, session: 1, cookies: []},
+		]);
+	});
+
+	it('two concurrent fetches get different sessions and never see each other cookies', async () => {
+		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const fake = fakeTransport({
+			[PAGE]: {gate, headers: {'set-cookie': 'a=1'}},
+			[OTHER]: {headers: {'set-cookie': 'b=2'}},
+		});
+		const first = fetchWith(fake);
+		await vi.waitFor(() => expect(fake.requests).toHaveLength(1));
+		await fetchWith(fake, {}, OTHER); // while the first is still in flight
+		open();
+		await first;
+		expect(fake.requests.map((r) => [r.url, r.session])).toEqual([
+			[PAGE, 1],
+			[OTHER, 2],
+		]);
+		// Both sessions are idle now, each with an empty jar.
+		await Promise.all([fetchWith(fake), fetchWith(fake, {}, OTHER)]);
+		expect(fake.cookieRequests.slice(2).map((r) => r.cookies)).toEqual([
+			[],
+			[],
+		]);
+		expect(fake.built).toHaveLength(1);
+	});
+
+	it('closes a session idle for sessionIdleMs, on a timer, and opens a new one after', async () => {
+		vi.useFakeTimers();
+		try {
+			const fake = fakeTransport();
+			const adapter = createSerpcastFetch(cfg(), {
+				createTransport: fake.create,
+				sessionIdleMs: 1000,
+			});
+			await adapter(PAGE);
+			vi.advanceTimersByTime(999);
+			expect(fake.closed).toEqual([]);
+			await adapter(PAGE); // use resets the idle clock
+			vi.advanceTimersByTime(999);
+			expect(fake.closed).toEqual([]);
+			vi.advanceTimersByTime(1);
+			expect(fake.closed).toEqual([1]);
+			await adapter(PAGE);
+			expect(fake.requests.map((r) => r.session)).toEqual([1, 1, 2]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('uses serpcast session idle default, on a timer that never keeps the process alive', async () => {
+		const spy = vi.spyOn(globalThis, 'setTimeout');
+		try {
+			const fake = fakeTransport();
+			await createSerpcastFetch(cfg(), {createTransport: fake.create})(PAGE);
+			const call = spy.mock.results.findIndex(
+				(_, i) => spy.mock.calls[i]![1] === DEFAULT_SESSION_IDLE_MS,
+			);
+			expect(call).toBeGreaterThanOrEqual(0);
+			const timer = spy.mock.results[call]!.value as NodeJS.Timeout;
+			expect(timer.hasRef()).toBe(false);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('closeBackends closes the idle sessions; a session busy then closes when its fetch settles', async () => {
+		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const fake = fakeTransport({[OTHER]: {gate}});
+		await fetchWith(fake); // session 1, now idle
+		const busy = fetchWith(fake, {}, OTHER); // session 1 again, in flight
+		await vi.waitFor(() => expect(fake.requests).toHaveLength(2));
+		await fetchWith(fake); // session 2, idle
+		await closeBackends();
+		expect(fake.closed).toEqual([2]);
+		open();
+		await busy;
+		expect(fake.closed).toEqual([2, 1]);
+	});
+
+	it(`keeps at most ${MAX_IDLE_SESSIONS} idle sessions per identity`, async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const fake = fakeTransport({[PAGE]: {gate}});
+		const adapter = createSerpcastFetch(cfg(), {createTransport: fake.create});
+		const all = Array.from({length: MAX_IDLE_SESSIONS + 2}, () =>
+			adapter(PAGE),
+		);
+		open();
+		await Promise.all(all);
+		expect(fake.closed).toHaveLength(2);
 	});
 });
 

@@ -18,11 +18,12 @@
 //   `plain`: owner decision 2026-09-29); an explicit value always wins. Any
 //   other value is an error, not a silent `plain`. Alternative considered:
 //   a boolean `fetchImpersonate` (cannot name a later third transport).
-// - One fresh transport session per request distilly makes (so per `web_fetch`
-//   url): cookies are kept across that request's redirect hops (a site may set
-//   one on the 302) and dropped after it. Nothing persists between fetches and
-//   nothing is written to the serpcast state store: a fetch is not a search
-//   identity, and cookies carried between fetched pages would link them.
+// - Each request distilly makes (so each `web_fetch` url) starts with an empty
+//   cookie jar: cookies are kept across that request's redirect hops (a site
+//   may set one on the 302) and dropped after it. Nothing persists between
+//   fetches and nothing is written to the serpcast state store: a fetch is not
+//   a search identity, and cookies carried between fetched pages would link
+//   them.
 // - The caller's request headers are ignored (the Chrome `document` table is the
 //   only header set; adding headers would break the fingerprint) and only GET is
 //   sent (serpcast's transport has no other method). Redirects (301, 302, 303,
@@ -35,23 +36,51 @@
 //   used); `serpcast.engines` and the other keys are not needed or read.
 // - The transport is cached per fetch identity (the fetch-hop egress plus the
 //   resolved library path, hashed by `identityKey`); `closeFetchTransports`
-//   (from `closeBackends`) drops the cache. Each fetch closes its own session
-//   (below), so the cached transport holds no connection between fetches and
-//   there is nothing else to close.
+//   (from `closeBackends`) drops the cache and closes its sessions.
 //
-// Recorded decision (task serpcast-0-2-decoy-guard): serpcast 0.2 keeps a
-// session's connections open between its requests until `session.close()`.
-// A fetch still gets one session of its own (its redirect hops reuse its
-// connections), and closes it when the fetch settles, whatever the outcome.
-// Reusing one session (or its connections) across fetches was considered and
-// rejected: a kept connection would link fetches of unrelated pages at the TLS
-// and IP layer, the same reason cookies are not carried between them, and a
-// never-closed session would leak its connections until the server drops
-// them. Search sessions are the serpcast instance's business (reused per
-// engine, per identity: backends/serpcast.ts).
+// Recorded decisions (task serpcast-0-3-and-fetch-connection-reuse; owner
+// decision 2026-09-29, reversing the serpcast-0-2-decoy-guard choice of one
+// session per fetch, closed when it settles): connections are REUSED across
+// fetches of the same fetch identity, cookies never are. A new TCP + TLS
+// setup per fetch cost about 0.5 s over Tor versus about 0.09 s on a reused
+// session (measured). The price: a site sees repeated fetches to it arrive on
+// one TLS connection, which links them at the connection level; through one
+// proxy or Tor circuit they already share an exit IP, and no cookie or other
+// state is carried (README, fetch section).
+// - A POOL of serpcast sessions per identity (`SessionPool`). A fetch takes an
+//   idle session (else opens a new one), clears its cookies, runs its hops on
+//   it, clears the cookies again and returns it. A busy session is never
+//   shared, so concurrent fetches never see each other's cookies; they get
+//   different sessions (and so different connections). Alternative
+//   considered: one shared session with its jar cleared per fetch, rejected
+//   because two concurrent fetches would share (and clear) one jar.
+// - At most `MAX_IDLE_SESSIONS` (4) idle sessions are kept per identity; a
+//   session returned beyond that is closed. This bounds the connections held
+//   open after a burst of concurrent fetches.
+// - An idle session is closed after `DEFAULT_SESSION_IDLE_MS` (serpcast's
+//   session idle default, 10 minutes) without use, on an unref'd timer, so
+//   neither the timer nor the idle connections (serpcast schedules nothing
+//   for an idle session) keep the one-shot CLI alive. No config key: the
+//   value is serpcast's, like the timeout and size limit above.
+// - A fetch that fails (a transport error, a timeout, an abort, a refused
+//   hop, too many redirects) CLOSES its session instead of returning it: a
+//   connection left mid-transfer or broken is never handed to the next fetch,
+//   and a failure is rare enough that the lost reuse does not matter.
+// - `closeFetchTransports` closes every idle session at once; a session busy
+//   at that moment is closed when its fetch settles (serpcast's `close()` would
+//   wait for it anyway) and never returns to a pool.
 
-import {createTransport as realCreateTransport, SerpcastError} from 'serpcast';
-import type {Transport, TransportOptions, TransportResponse} from 'serpcast';
+import {
+	createTransport as realCreateTransport,
+	DEFAULT_SESSION_IDLE_MS,
+	SerpcastError,
+} from 'serpcast';
+import type {
+	Transport,
+	TransportOptions,
+	TransportResponse,
+	TransportSession,
+} from 'serpcast';
 import type {Config, FetchTransport} from './config.js';
 import type {EgressFetch} from './egress.js';
 import {identityKey} from './identity.js';
@@ -67,15 +96,73 @@ import {
 	trustedLibcurlPath,
 } from './backends/serpcast.js';
 
-/** Test seams: how the transport is created, how a hop is SSRF-checked. */
+/**
+ * Test seams: how the transport is created, how a hop is SSRF-checked, how
+ * long an idle session is kept (default `DEFAULT_SESSION_IDLE_MS`).
+ */
 export interface SerpcastFetchDeps {
 	createTransport?: (options: TransportOptions) => Transport;
 	assertPublicUrl?: (url: string, config: Config) => Promise<void>;
+	sessionIdleMs?: number;
 }
 
 const TRANSPORTS: FetchTransport[] = ['plain', 'serpcast'];
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
-const transports = new Map<string, Transport>();
+/** Idle sessions kept per fetch identity (see the recorded decisions). */
+export const MAX_IDLE_SESSIONS = 4;
+
+/**
+ * The sessions of one fetch identity: idle ones wait here (each with its
+ * release timer); a busy one is owned by its fetch alone until it returns.
+ */
+class SessionPool {
+	private idle: {session: TransportSession; timer: NodeJS.Timeout}[] = [];
+	private closed = false;
+
+	constructor(
+		private transport: Transport,
+		private idleMs: number,
+	) {}
+
+	/** An idle session (else a new one), with an empty cookie jar. */
+	take(): TransportSession {
+		const entry = this.idle.pop();
+		if (entry) clearTimeout(entry.timer);
+		const session = entry?.session ?? this.transport.session();
+		session.clearCookies();
+		return session;
+	}
+
+	/** Back to the pool, cookies cleared; closed if unusable or not wanted. */
+	release(session: TransportSession, reusable: boolean): void {
+		session.clearCookies();
+		if (!reusable || this.closed || this.idle.length >= MAX_IDLE_SESSIONS) {
+			session.close();
+			return;
+		}
+		const entry = {
+			session,
+			timer: setTimeout(() => {
+				this.idle = this.idle.filter((e) => e !== entry);
+				session.close();
+			}, this.idleMs),
+		};
+		entry.timer.unref(); // an idle session never keeps the process alive
+		this.idle.push(entry);
+	}
+
+	/** Close the idle sessions now; busy ones close when their fetch settles. */
+	close(): void {
+		this.closed = true;
+		for (const {session, timer} of this.idle) {
+			clearTimeout(timer);
+			session.close();
+		}
+		this.idle = [];
+	}
+}
+
+const pools = new Map<string, SessionPool>();
 
 /** The `web_fetch` transport: explicit `fetchTransport`, else by `backend`. */
 export function resolveFetchTransport(config: Config): FetchTransport {
@@ -89,9 +176,10 @@ export function resolveFetchTransport(config: Config): FetchTransport {
 	return value;
 }
 
-/** Drop the cached fetch transports (process shutdown; see closeBackends). */
+/** Close and drop the cached fetch transports (process shutdown; see closeBackends). */
 export async function closeFetchTransports(): Promise<void> {
-	transports.clear();
+	for (const pool of pools.values()) pool.close();
+	pools.clear();
 }
 
 /** The request's url and method, from any `fetch` input form. */
@@ -134,21 +222,25 @@ export function createSerpcastFetch(
 	const proxy = serpcastProxy(config.egress);
 	const assertPublicUrl = deps.assertPublicUrl ?? realAssertPublicUrl;
 	const key = identityKey(config.egress, {libcurlPath});
-	let transport = transports.get(key);
-	if (!transport) {
+	let pool = pools.get(key);
+	if (!pool) {
 		const create = deps.createTransport ?? realCreateTransport;
-		transport = create({libcurlPath, proxy, strict: true});
-		transports.set(key, transport);
+		pool = new SessionPool(
+			create({libcurlPath, proxy, strict: true}),
+			deps.sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS,
+		);
+		pools.set(key, pool);
 	}
-	const shared = transport;
+	const sessions = pool;
 	return (async (input: RequestInfo | URL, init?: RequestInit) => {
 		let {url, method} = target(input, init);
 		if (method !== 'GET')
 			throw new Error(
 				`webveil: fetchTransport serpcast sends GET only (got ${method} ${url})`,
 			);
-		const session = shared.session();
+		const session = sessions.take();
 		const signal = init?.signal ?? undefined;
+		let reusable = false;
 		try {
 			for (let hop = 0; ; hop++) {
 				await assertFetchableHop(url, config, assertPublicUrl);
@@ -162,13 +254,15 @@ export function createSerpcastFetch(
 						),
 					);
 				const location = response.headers.get('location');
-				if (!isRedirectStatus(response.status) || !location)
+				if (!isRedirectStatus(response.status) || !location) {
+					reusable = true;
 					return toResponse(response, hop > 0);
+				}
 				url = nextRedirectUrl(location, url, hop);
 			}
 		} finally {
-			// The body is already read (toResponse), so the connections can go.
-			session.close();
+			// The body is already read (toResponse): the session is free again.
+			sessions.release(session, reusable);
 		}
 	}) as EgressFetch;
 }

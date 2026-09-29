@@ -1,5 +1,52 @@
 # webveil
 
+## 0.5.0
+
+### Minor Changes
+
+- 3e3dcbb: Config trust layers: a cloned repository can no longer make webveil run code.
+
+  - **Executable settings are refused from a project `webveil.json`.** The `custom` backend's command (its `baseUrl` when `backend` is `custom`) is accepted only from env or the global config; from a project file, `search` fails with a `TrustError` naming the file and the key. A project may still set `"backend": "custom"` when the command comes from a trusted layer, and `web_fetch` keeps working in such a folder (the check runs where the command is used). **Breaking for anyone who kept a `custom` command in a project `webveil.json`: move it to `~/.config/webveil/config.json` or `WEBVEIL_BASE_URL`.**
+  - **Command paths never resolve against the cwd.** `~/` expands to the home directory, a relative path resolves against the directory of the config file that set it, a relative path from env is refused, and a bare command name (no slash) keeps its `PATH` lookup.
+  - **Config sections merge key by key** across layers, so a project config that sets one key of a section keeps the global config's other keys; scalars and arrays are still replaced whole, and `egress`/`fetchEgress` are replaced whole as before. Every existing config resolves to the same values.
+  - **Per-key provenance**: `configProvenance(config)` reports, for each resolved leaf key path, whether it came from env, a project file (with its path), the global file (with its path) or the defaults. `assertTrusted` and `resolveExecutablePath` are exported for backends that add executable settings.
+
+- 3b8bd4c: serpcast state persists between CLI calls, partitioned per identity.
+
+  - **On disk, per identity.** Sessions (engine cookies, code recipe state) and engine cooldowns live in `$XDG_STATE_HOME/webveil/<identity hash>/state.json` (default `~/.local/state/webveil/`), one directory per identity (backend-hop egress plus the resolved `serpcast` section, hashed with the same key as the cached instance). A session obtained on one egress is never read on another, and no URL or credential appears in a path.
+  - **Expiry on read.** An entry past its expiry (a session idle longer than `serpcast.sessionIdleMs`, an ended cooldown) is never returned and is removed from the file.
+  - **Safe under concurrency.** Each update runs under a lock file in the partition and replaces the file atomically (write, then rename); files are `0600`, directories `0700`.
+  - **`webveil state clear [--all]`** removes the current folder's identity partition, or every partition.
+  - New exports: `createStateStore`, `stateRoot`, `partitionDir`, `clearState`, `clearSerpcastState`.
+
+- cae4e1d: New `serpcast` backend: keyless web search with no SearXNG, where webveil's `egress` is the search egress.
+
+  - **`backend: "serpcast"`** runs declarative recipes through the [serpcast](https://github.com/wighawag/serpcast) engine chain over libcurl-impersonate. Configure it in a `serpcast` section: `engines` (engine names, tried in order), `recipes` (recipe files or directories), `libcurlPath`, `sessionIdleMs`, `cooldownMs`; env `WEBVEIL_SERPCAST_LIBCURL_PATH`, `WEBVEIL_SERPCAST_SESSION_IDLE_MS`, `WEBVEIL_SERPCAST_COOLDOWN_MS`.
+  - **Egress is the search egress.** The backend-hop `egress` becomes serpcast's proxy: `socks5://`, `socks://` and `socks5h://` all reach it as `socks5h://` (DNS at the proxy), `http` passes through, `direct` means no proxy. The loopback-`baseUrl` guard does not apply to this backend.
+  - **Strict impersonation, always.** Without a working libcurl-impersonate the search fails with the fix in the message (`npx serpcast install-libcurl`, or set `serpcast.libcurlPath`). There is no setting to turn strict mode off.
+  - **`serpcast.libcurlPath` is an executable setting**: refused from a project `webveil.json`, used from the global config or env.
+  - **Failures surface.** Engines that failed before the answering one appear in `unresponsiveEngines`; when every engine fails, the search is an error listing each engine's failure, never an empty list.
+  - **One serpcast instance per identity** (backend-hop egress plus the resolved `serpcast` section), kept across searches in the MCP server and pi extension so cooldowns and sessions carry over; `closeBackends()` releases it at process level (after a one-shot CLI command, when the MCP server's stdin ends or it is signalled, and on pi's `session_shutdown`).
+
+- d117757: serpcast code recipes: private engines (challenge handling, sites with restrictive terms) plug in as JS module files.
+
+  - **`serpcast.codeRecipes`** lists code recipe modules or directories (every `*.js` and `*.mjs` inside), loaded with serpcast's `loadCodeRecipe` and usable in `serpcast.engines` like declarative recipes. Env form: `WEBVEIL_SERPCAST_CODE_RECIPES`, absolute or `~/` paths separated by the platform path delimiter (`:`, or `;` on Windows).
+  - **An executable setting**: loading a code recipe runs it, so `serpcast.codeRecipes` is refused from a project `webveil.json` (with the file and key named) before any module is imported, and accepted from the global config or env. A project config that sets only `serpcast.engines` keeps the global `codeRecipes` and can list those recipes in its engine order.
+  - Code and declarative recipes share one name space: a name used twice is an error.
+
+- 1968497: `web_fetch` can use a real browser's TLS and HTTP/2 fingerprint: the new `fetchTransport` key (`plain` or `serpcast`, env `WEBVEIL_FETCH_TRANSPORT`).
+
+  - **`serpcast`** sends `web_fetch` through serpcast's libcurl-impersonate transport (Chrome's fingerprint and page-load headers, GET only) instead of undici. It is the default when `backend` is `serpcast`; `plain` stays the default with every other backend. An explicit value always wins.
+  - **Same egress and SSRF guard.** It uses the fetch-hop egress (`fetchEgress`, else `egress`), with SOCKS always as `socks5h`. webveil follows redirects itself (at most 20) and runs the SSRF guard on every hop.
+  - **Strict, never a fallback.** Without libcurl-impersonate `web_fetch` fails with the fix (`npx serpcast install-libcurl` or `serpcast.libcurlPath`); it never falls back to `plain`. With the serpcast backend this means `web_fetch` now needs the library too, or `"fetchTransport": "plain"`.
+  - **No cookies between fetches**: each fetch is a fresh session, and nothing is written to the serpcast state.
+  - `serpcast.libcurlPath` keeps its trust rule for fetch (refused from a project `webveil.json`, including with `fetchEgress` set).
+
+### Patch Changes
+
+- f8c19de: Security fix: `web_fetch` now runs the SSRF guard on every redirect hop, not only the first url. On `direct` egress (the default) a public page that redirected to a private address (`127.0.0.1`, cloud metadata at `169.254.169.254`, or a hostname resolving to one) was fetched and returned; webveil now follows redirects itself (at most 20, http(s) only) and refuses such a target before it is requested. Legitimate redirect chains and their `web_fetch` output are unchanged, and `http`/`socks5` egress behaves as before (no local DNS).
+- 57e27ce: Declare `searchcast` (`>=0.1.1`) as an optional peer dependency. It is still not installed with webveil: install it next to webveil for library-mode browser engines. Declaring it lets a strict pnpm layout expose it to webveil.
+
 ## 0.4.0
 
 ### Minor Changes

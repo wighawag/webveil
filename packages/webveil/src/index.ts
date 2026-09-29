@@ -15,6 +15,7 @@
 //   - core/security.ts          : SSRF guard wrapped around the egress fetch
 //   - core/fetch.ts             : the framework-agnostic fetch() both frontends call
 //   - core/backends/custom.ts  : the local-command escape hatch (JSON stdin/stdout)
+//   - core/backends/serpcast.ts : keyless recipes over libcurl-impersonate (egress = search egress)
 //   - cli.ts                    : the incur CLI + MCP frontend (the `webveil` bin)
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
@@ -37,6 +38,7 @@ export type {
 	FetchSize,
 	PartialConfig,
 	ResolveOptions,
+	SerpcastConfig,
 } from './core/config.js';
 
 // egress seam
@@ -77,12 +79,22 @@ export type {
 } from './core/backends/types.js';
 
 // backend registry + implementations
-export {backendNames, getBackend} from './core/backends/registry.js';
+export {
+	backendNames,
+	closeBackends,
+	getBackend,
+} from './core/backends/registry.js';
 export type {BackendFactory} from './core/backends/registry.js';
 export {createSearxngBackend} from './core/backends/searxng.js';
 export {createTavilyCompatBackend} from './core/backends/tavily-compat.js';
 export {createCustomBackend} from './core/backends/custom.js';
 export type {SpawnFn} from './core/backends/custom.js';
+export {
+	createSerpcastBackend,
+	serpcastIdentityKey,
+	serpcastProxy,
+} from './core/backends/serpcast.js';
+export type {SerpcastDeps} from './core/backends/serpcast.js';
 
 // core search (the framework-agnostic search() both frontends call)
 export {search} from './core/search.js';
@@ -93,5 +105,5 @@ export {fetch, fetchAll} from './core/fetch.js';
 export type {FetchCoreOptions, FetchDeps} from './core/fetch.js';
 
 // incur CLI + MCP frontend (the `webveil` bin builds and serves this)
-export {createCli} from './cli.js';
+export {createCli, serveCli} from './cli.js';
 export type {CliDeps} from './cli.js';

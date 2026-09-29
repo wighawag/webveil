@@ -44,3 +44,15 @@ Results map to `SearchResult`; the failures of engines tried before the answerin
 Goal: keyless search with no SearXNG, where webveil's egress is the search egress (ADR 0004). serpcast is policy-free (its ADR 0002): webveil supplies the proxy, the store and the recipes. Read serpcast's README for the API (`createSerpcast`, engines, `SerpcastError` kinds, store interface) and its note on proxy schemes (libcurl resolves DNS locally for `socks5://`, at the proxy for `socks5h://`). Keep the backend module within the size budget in CONTEXT.md.
 
 FIRST, check this task against current reality: in particular that serpcast's released API matches what this task assumes. If it differs, route to needs-attention with the difference. RECORD non-obvious in-scope decisions (for example config key names and the cache key).
+
+## Decisions
+
+I couldn't edit the done record, so each decision is recorded in a comment where the choice is made:
+1. **Config key names** (`config.ts`, on `SerpcastConfig`): `engines`, `recipes` (files or directories, to pair with the planned `codeRecipes`), `libcurlPath`, `sessionIdleMs`, `cooldownMs`. Env only covers the three scalar settings. Recipes may come from any layer but resolve relative to the config file that set them. I considered `recipeDirs` but it's too narrow, since single files also work.
+2. **Identity and cache key** (`core/identity.ts`): a sha256 of the backend-hop egress plus the whole `serpcast` section with paths resolved. New settings join the identity automatically. I rejected picking a subset of fields, because each new setting would have to remember to join it.
+3. **Engine list and empty results** (`serpcast.ts` header): a missing or empty `engines` list is an error rather than "use every loaded recipe", because the order decides which engines get traffic. An empty answer after earlier failures returns `[]`, since that is a genuine "no results".
+4. **pi shutdown** (`pi-webveil/src/index.ts`): it closes on every `session_shutdown` reason, not only `quit`. The cost is that in-memory cooldowns reset on `/new` until the on-disk state store lands.
+5. **Proxy URL checks** (`serpcast.ts`, `serpcastProxy`): a proxy URL whose scheme doesn't match its mode is refused with `EgressError`. Otherwise an `http` egress pointing at a `socks5://` URL would reach libcurl as-is, and libcurl resolves DNS locally for plain `socks5://`, leaking lookups.
+6. **Workspace:** `pnpm-workspace.yaml` gets `allowBuilds: koffi: false` (serpcast's own repo does the same; koffi loads its bundled binaries) and `minimumReleaseAgeExclude` entries for the two serpcast packages. pnpm added the exclusions itself because the releases are newer than its minimum release age, so they're a policy choice for you to confirm or revert.
+
+**Observation note:** `work/notes/observations/serpcast-recipe-dir-rejects-any-foreign-json.md`. Any non-recipe `*.json` in a recipe directory, such as a project's own `webveil.json`, makes every search fail. The docs task should tell users to keep recipes in their own directory.

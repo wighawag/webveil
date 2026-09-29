@@ -41,7 +41,9 @@ export class EgressError extends Error {
  * classification), not a parallel check.
  */
 export function assertEgressAllowsBaseUrl(cfg: Config): void {
-	if (cfg.egress.mode === 'direct') return;
+	// serpcast has no baseUrl hop: its egress IS the search egress (ADR 0004),
+	// so the (default, loopback) baseUrl it ignores must not trip this guard.
+	if (cfg.egress.mode === 'direct' || cfg.backend === 'serpcast') return;
 	if (isUnixBaseUrl(cfg.baseUrl))
 		throw new EgressError(
 			`egress ${cfg.egress.mode}: a unix: (local socket) baseUrl cannot be ` +

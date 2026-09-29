@@ -10,6 +10,7 @@ import type {Backend} from './types.js';
 import {createSearxngBackend} from './searxng.js';
 import {createTavilyCompatBackend} from './tavily-compat.js';
 import {createCustomBackend} from './custom.js';
+import {closeSerpcastInstances, createSerpcastBackend} from './serpcast.js';
 
 /** Builds a Backend from the resolved config (knows its baseUrl / apiKey). */
 export type BackendFactory = (config: Config) => Backend;
@@ -19,6 +20,7 @@ const FACTORIES: Record<string, BackendFactory> = {
 	searxng: createSearxngBackend,
 	'tavily-compat': createTavilyCompatBackend,
 	custom: createCustomBackend,
+	serpcast: createSerpcastBackend,
 };
 
 /** The backend names the registry can resolve. */
@@ -38,4 +40,13 @@ export function getBackend(name: string, config: Config): Backend {
 			`webveil: unknown backend '${name}' (known: ${backendNames().join(', ')})`,
 		);
 	return factory(config);
+}
+
+/**
+ * Release what backends keep across searches (the cached serpcast instances).
+ * Frontends call it at PROCESS level (never per command: under MCP that would
+ * defeat the cache): after a one-shot CLI command, at MCP server or pi shutdown.
+ */
+export async function closeBackends(): Promise<void> {
+	await closeSerpcastInstances();
 }

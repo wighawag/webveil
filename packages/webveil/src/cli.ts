@@ -21,6 +21,7 @@ import {fileURLToPath} from 'node:url';
 import {Cli, z} from 'incur';
 import {search as coreSearch} from './core/search.js';
 import {fetch as coreFetch} from './core/fetch.js';
+import {closeBackends} from './core/backends/registry.js';
 
 /**
  * The two core functions the frontend wraps, seamed so tests can inject fakes.
@@ -117,6 +118,28 @@ function isMain(): boolean {
 	}
 }
 
-if (isMain()) cli.serve();
+/**
+ * Serve `argv` and release what backends keep across searches at PROCESS
+ * level, never inside a command handler (under `--mcp` that would defeat the
+ * serpcast instance cache). A one-shot command closes once served, so the
+ * process exits on its own; the MCP server closes when its stdin ends or it
+ * is signalled. incur exits the process itself on a failed command.
+ */
+export async function serveCli(
+	target: {serve(argv?: string[]): Promise<void>},
+	args: string[] = argv.slice(2),
+	close: () => Promise<void> = closeBackends,
+): Promise<void> {
+	if (!args.includes('--mcp')) return target.serve(args).finally(close);
+	process.stdin.once('end', () => void close());
+	for (const [signal, code] of [
+		['SIGINT', 130],
+		['SIGTERM', 143],
+	] as const)
+		process.once(signal, () => void close().finally(() => process.exit(code)));
+	return target.serve(args);
+}
+
+if (isMain()) void serveCli(cli);
 
 export default cli;

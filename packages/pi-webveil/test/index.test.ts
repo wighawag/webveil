@@ -6,7 +6,15 @@
 // the fake core with the parsed args and the per-folder `cwd` from `ctx.cwd`.
 
 import {describe, expect, it, vi} from 'vitest';
+import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import piWebveil from '../src/index.js';
+import {
+	closeBackends,
+	createSerpcastBackend,
+	search as coreSearch,
+} from 'webveil';
 import type {SearchResult, FetchResult} from 'webveil';
 
 /** A captured tool registration (what `pi.registerTool` was handed). */
@@ -231,5 +239,80 @@ describe('pi-webveil — no live network', () => {
 			});
 		expect(fetchSpy).not.toHaveBeenCalled();
 		vi.restoreAllMocks();
+	});
+});
+
+describe('pi-webveil: serpcast backend through the real core', () => {
+	it('returns results from a serpcast project config and closes at shutdown', async () => {
+		const root = mkdtempSync(join(tmpdir(), 'pi-webveil-serpcast-'));
+		try {
+			mkdirSync(join(root, 'recipes'));
+			writeFileSync(
+				join(root, 'recipes', 'e.json'),
+				JSON.stringify({
+					navigate: {url: 'https://e.test/?q={query}'},
+					ready: '.r',
+					results: {item: '.r', fields: {title: {}, url: {attr: 'href'}}},
+				}),
+			);
+			writeFileSync(
+				join(root, 'webveil.json'),
+				JSON.stringify({
+					backend: 'serpcast',
+					serpcast: {engines: ['e'], recipes: ['recipes']},
+				}),
+			);
+			const created: unknown[] = [];
+			const closed: unknown[] = [];
+			const createSerpcast = (options: unknown) => {
+				created.push(options);
+				return {
+					search: async () => ({
+						results: [{title: 'Hit', url: 'https://example.com/hit'}],
+						engine: 'e',
+						failures: [],
+					}),
+					clearSessions: async () => {},
+					close: async () => void closed.push(1),
+				};
+			};
+			const search: typeof coreSearch = (query, options) =>
+				coreSearch(
+					query,
+					{...options, globalPath: join(root, 'global.json'), env: {}},
+					{
+						getBackend: (_name, config) =>
+							createSerpcastBackend(config, {createSerpcast}),
+					},
+				);
+			const shutdown: (() => Promise<void>)[] = [];
+			const {pi, tools} = fakePi();
+			piWebveil(
+				{
+					...pi,
+					on: (_event: string, handler: () => Promise<void>) =>
+						void shutdown.push(handler),
+				},
+				{search, closeBackends},
+			);
+			const tool = tools.get('web_search')!;
+			for (let i = 0; i < 2; i++) {
+				const result = await tool.execute(
+					'id',
+					{query: 'q'},
+					undefined,
+					undefined,
+					{cwd: root},
+				);
+				expect(result.content[0]!.text).toContain('https://example.com/hit');
+			}
+			expect(created).toHaveLength(1); // one cached instance for both calls
+			expect(closed).toHaveLength(0);
+			expect(shutdown).toHaveLength(1);
+			await shutdown[0]!();
+			expect(closed).toHaveLength(1);
+		} finally {
+			rmSync(root, {recursive: true, force: true});
+		}
 	});
 });

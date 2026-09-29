@@ -7,11 +7,18 @@
 
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {spawn, spawnSync} from 'node:child_process';
-import {existsSync, mkdtempSync, rmSync, symlinkSync} from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createCli} from '../src/cli.js';
+import {createCli, serveCli} from '../src/cli.js';
 import type {SearchResult, FetchResult} from '../src/core/backends/types.js';
 
 /** Serve the CLI with captured stdout and a no-op exit; returns stdout text. */
@@ -232,5 +239,139 @@ describe('webveil CLI — bin entry through a symlink (isMain)', () => {
 		expect(res.status).toBe(0);
 		expect(res.stdout.length).toBeGreaterThan(0);
 		expect(res.stdout).toContain('webveil');
+	});
+});
+
+// Process-level close: `serveCli` releases cached backend state (the serpcast
+// instance) AFTER a one-shot command is served, never inside the handler.
+describe('webveil CLI: serveCli closes backends at process level', () => {
+	it('closes after the one-shot command has printed', async () => {
+		const events: string[] = [];
+		const target = {
+			async serve(args?: string[]) {
+				events.push(`serve ${args?.join(' ')}`);
+			},
+		};
+		await serveCli(target, ['search', 'q'], async () => {
+			events.push('close');
+		});
+		expect(events).toEqual(['serve search q', 'close']);
+	});
+
+	it('closes even when serving fails', async () => {
+		const close = vi.fn(async () => {});
+		const target = {serve: () => Promise.reject(new Error('boom'))};
+		await expect(serveCli(target, ['search', 'q'], close)).rejects.toThrow(
+			'boom',
+		);
+		expect(close).toHaveBeenCalledTimes(1);
+	});
+
+	// The built entry, in a real process: a cached serpcast instance that holds
+	// a handle (like a library-mode browser) until closed. The process must
+	// exit on its own after printing, which it only can if the instance is
+	// closed at process level by `serveCli` + `closeBackends`.
+	const script = (closeArg: string) => `
+		import {createCli, createSerpcastBackend, search, serveCli} from ${JSON.stringify(
+			new URL('../dist/index.js', import.meta.url).href,
+		)};
+		const create = () => {
+			const handle = setInterval(() => {}, 1000);
+			return {
+				search: async () => ({results: [{title: 'Hit', url: 'https://example.com/hit'}], engine: 'e', failures: []}),
+				clearSessions: async () => {},
+				close: async () => clearInterval(handle),
+			};
+		};
+		const config = {backend: 'serpcast', baseUrl: 'http://127.0.0.1:8080', egress: {mode: 'direct'}, fetchSize: 'm', serpcast: {engines: ['e'], recipes: [process.argv[1]]}};
+		const cli = createCli({
+			search: (q, o) => search(q, o, {
+				resolveConfig: () => config,
+				getBackend: (_n, c) => createSerpcastBackend(c, {createSerpcast: create}),
+			}),
+		});
+		await serveCli(cli, ['search', 'q']${closeArg});
+	`;
+
+	function runScript(closeArg: string, timeout: number) {
+		dir = mkdtempSync(join(tmpdir(), 'webveil-oneshot-'));
+		writeFileSync(
+			join(dir, 'e.json'),
+			JSON.stringify({
+				navigate: {url: 'https://e.test/?q={query}'},
+				ready: '.r',
+				results: {item: '.r', fields: {title: {}, url: {attr: 'href'}}},
+			}),
+		);
+		return spawnSync(
+			process.execPath,
+			['--input-type=module', '-e', script(closeArg), dir],
+			{encoding: 'utf8', timeout},
+		);
+	}
+	let dir: string;
+	afterEach(() => {
+		if (dir) rmSync(dir, {recursive: true, force: true});
+	});
+
+	it.skipIf(!existsSync(BIN))(
+		'a one-shot search exits on its own after printing',
+		() => {
+			const res = runScript('', 4_000);
+			expect(res.error).toBeUndefined(); // not killed by the timeout
+			expect(res.status).toBe(0);
+			expect(res.stdout).toContain('example.com/hit');
+		},
+	);
+
+	it.skipIf(!existsSync(BIN))(
+		'(control) without the process-level close it would hang',
+		() => {
+			const res = runScript(', async () => {}', 1_500);
+			expect(res.stdout).toContain('example.com/hit');
+			expect(res.signal).toBe('SIGTERM'); // killed by the timeout
+		},
+	);
+});
+
+// The real bin with the real serpcast and no libcurl-impersonate: strict mode
+// refuses to search, the error carries the fix, and the process exits.
+describe('webveil CLI: serpcast backend without libcurl-impersonate', () => {
+	let dir: string;
+	afterEach(() => {
+		if (dir) rmSync(dir, {recursive: true, force: true});
+	});
+
+	it.skipIf(!existsSync(BIN))('fails loud with the fix and exits', () => {
+		dir = mkdtempSync(join(tmpdir(), 'webveil-nolib-'));
+		mkdirSync(join(dir, 'recipes'));
+		writeFileSync(
+			join(dir, 'recipes', 'e.json'),
+			JSON.stringify({
+				navigate: {url: 'https://e.test/?q={query}'},
+				ready: '.r',
+				results: {item: '.r', fields: {title: {}, url: {attr: 'href'}}},
+			}),
+		);
+		writeFileSync(
+			join(dir, 'webveil.json'),
+			JSON.stringify({
+				backend: 'serpcast',
+				serpcast: {engines: ['e'], recipes: ['recipes']},
+			}),
+		);
+		const res = spawnSync(process.execPath, [BIN, 'search', 'q'], {
+			cwd: dir,
+			encoding: 'utf8',
+			timeout: 10_000,
+			env: {
+				...process.env,
+				XDG_CONFIG_HOME: join(dir, 'xdg'),
+				WEBVEIL_SERPCAST_LIBCURL_PATH: join(dir, 'missing.so'),
+			},
+		});
+		expect(res.status).toBe(1);
+		expect(res.stdout).toContain('impersonation is not active');
+		expect(res.stdout).toContain('npx serpcast install-libcurl');
 	});
 });

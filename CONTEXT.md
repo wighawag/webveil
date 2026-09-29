@@ -30,8 +30,11 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
 - **backend seam** — where results/content come from. Implementations: `searxng`
   (keyless self-hosted metasearch), `tavily-compat` (a generic Tavily-shaped
   `/search`+`/extract`, covering orio-search / searcharvester / agent-search by base
-  URL), and `custom` (a local command via a JSON stdin/stdout contract). The backend is
-  HANDED a proxied `http` helper so it cannot bypass egress.
+  URL), `custom` (a local command via a JSON stdin/stdout contract), and `serpcast`
+  (keyless engines from recipes over libcurl-impersonate via the `serpcast` library; the
+  backend-hop `egress` becomes its proxy, so its egress IS the search egress, see
+  `docs/adr/0004`). The backend is HANDED a proxied `http` helper so it cannot bypass
+  egress (`custom` and `serpcast` own their I/O and leave it unused).
 - **egress seam** — how outbound HTTP leaves the machine: `direct`, `http` (undici
   ProxyAgent, zero extra deps), or `socks5` (Tor `127.0.0.1:9050`, Mullvad
   `10.64.0.1:1080`, via `socks-proxy-agent`). SOCKS5 is the mode that matters for
@@ -46,7 +49,7 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   pi-agnostic CLI and the pi extension. Per folder = per account/egress. See
   `docs/adr/0002`.
 - **provenance** — for every resolved leaf key path (e.g. `baseUrl`, `serpcast.engines`), the layer it came from: env, project (with the file path), global (with the file path) or defaults. Plain-object config sections merge key by key; scalars, arrays, `egress` and `fetchEgress` are leaves replaced whole. See `core/layers.ts`.
-- **executable setting** — a config key whose value makes webveil run code (today the `custom` backend's command, its `baseUrl`). Accepted only from a **trusted layer** (env or the global config), never from a project `webveil.json`; checked where the backend uses it, and its paths never resolve against the cwd. See `core/trust.ts` and `docs/adr/0004`.
+- **executable setting**: a config key whose value makes webveil run code (today the `custom` backend's command, its `baseUrl`, and `serpcast.libcurlPath`). Accepted only from a **trusted layer** (env or the global config), never from a project `webveil.json`; checked where the backend uses it, and its paths never resolve against the cwd. See `core/trust.ts` and `docs/adr/0004`.
 - **Extractor seam** — `urlToMarkdown` via `distilly/fetch` by default, INJECTED with
   webveil's egress-bound `fetch` (so distilly's network Rules rewrite to raw `.md`/API
   source over webveil's egress, never a global fetch); a backend's own `/extract`
@@ -83,6 +86,8 @@ core + frontends:
 | core/backends/searxng.ts   |        ~90 |
 | core/backends/tavily-compat.ts | ~90 |
 | core/backends/custom.ts    |        ~70 |
+| core/backends/serpcast.ts  |        ~90 |
+| core/identity.ts           |        ~30 |
 | cli.ts (incur frontend)    |        ~80 |
 | pi-webveil/src/index.ts    |        ~90 |
 

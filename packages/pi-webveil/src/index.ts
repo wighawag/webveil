@@ -12,6 +12,7 @@
 // (no commands/widgets/statusline; see the spec "Out of Scope").
 
 import {
+	closeBackends as coreCloseBackends,
 	search as coreSearch,
 	fetch as coreFetch,
 	type SearchResult,
@@ -26,6 +27,7 @@ import {
 export interface PiWebveilDeps {
 	search?: typeof coreSearch;
 	fetch?: typeof coreFetch;
+	closeBackends?: typeof coreCloseBackends;
 }
 
 /**
@@ -60,9 +62,10 @@ interface ToolDef {
 	): Promise<ToolResult>;
 }
 
-/** The slice of pi's `ExtensionAPI` the extension uses: just `registerTool`. */
+/** The slice of pi's `ExtensionAPI` the extension uses. */
 interface PiLike {
 	registerTool(tool: ToolDef): void;
+	on?(event: 'session_shutdown', handler: () => Promise<void>): void;
 }
 
 /** JSON-schema params for `web_search` (Ollama-shaped: `query` + `max_results`). */
@@ -132,6 +135,17 @@ function textResult(text: string, details: unknown): ToolResult {
 export default function piWebveil(pi: PiLike, deps: PiWebveilDeps = {}): void {
 	const search = deps.search ?? coreSearch;
 	const fetch = deps.fetch ?? coreFetch;
+	const closeBackends = deps.closeBackends ?? coreCloseBackends;
+
+	// The core caches long-lived backend state across calls (the serpcast
+	// instance, so cooldowns and sessions survive between searches); release it
+	// when pi tears the extension runtime down, so nothing is left running.
+	// Recorded decision (task serpcast-backend-basic): close on EVERY
+	// `session_shutdown` (quit, reload, new, resume, fork), not only `quit`: a
+	// torn-down runtime must not leave an instance (later a browser) behind, at
+	// the cost of in-memory cooldowns across `/new` (the planned on-disk state
+	// store keeps them). `on` is optional so a minimal host still works.
+	pi.on?.('session_shutdown', () => closeBackends());
 
 	pi.registerTool({
 		name: 'web_search',

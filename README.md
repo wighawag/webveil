@@ -135,8 +135,10 @@ never in webveil: see
 - **core**, the framework-agnostic `search(query, opts)` and `fetch(url, opts)` functions.
   Both frontends call the same core.
 - **backend seam**, where results/content come from: `searxng` (keyless self-hosted
-  metasearch), `tavily-compat` (a generic Tavily-shaped `/search` + `/extract`), and
-  `custom` (a local command via a JSON stdin/stdout contract). The backend is handed a
+  metasearch), `tavily-compat` (a generic Tavily-shaped `/search` + `/extract`),
+  `custom` (a local command via a JSON stdin/stdout contract), and `serpcast` (keyless
+  search engines from recipes over libcurl-impersonate, no SearXNG; webveil's `egress`
+  is its search egress). The backend is handed a
   proxied `http` helper so it cannot bypass egress. The searxng backend also surfaces
   engine degradation from the response's `unresponsive_engines` — partial failures
   **annotate** the results (`unresponsiveEngines`, so a degraded answer never masquerades
@@ -158,7 +160,7 @@ never in webveil: see
   project file is a frontend-neutral `webveil.json` read identically by the CLI and the
   pi extension. See [`docs/adr/0002`](docs/adr/0002-config-file-location-neutral-webveil-json.md).
   - **Merge rule.** Layers merge key by key, and so do config sections (plain objects): a project `webveil.json` that sets one key of a section keeps the global config's other keys in that section. Scalars and arrays are replaced whole by the highest layer that sets them. `egress` and `fetchEgress` are also replaced whole (a project `{"mode": "direct"}` over a global SOCKS5 egress is exactly `direct`, never `direct` plus a stray url).
-  - **What a project config can and cannot do.** A `webveil.json` is read automatically from any checkout you run webveil in, so a cloned repository must never be able to make webveil run code. A project config may choose the backend, its URL, egress, fetch size and other plain settings, but a setting that makes webveil run code (today: the `custom` backend's command, i.e. its `baseUrl` when `backend` is `custom`) is refused when it comes from a project `webveil.json`, with an error naming the file and the key: put it in the global config or env instead. A project may still say `"backend": "custom"` when the command itself comes from the global config or env. The check runs only where the setting is used, so `web_fetch` keeps working in such a folder. Paths in executable settings never resolve against the cwd: `~/` is your home directory, a relative path is relative to the config file that set it, a value from env must be absolute or `~/`-prefixed, and a bare command name (no slash) is looked up on `PATH` by webveil itself, searching only absolute `PATH` entries: empty, `.` and other relative entries are ignored, so a file in the cwd is never picked up, and a name found in no absolute entry is an error before anything runs. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
+  - **What a project config can and cannot do.** A `webveil.json` is read automatically from any checkout you run webveil in, so a cloned repository must never be able to make webveil run code. A project config may choose the backend, its URL, egress, fetch size and other plain settings, but a setting that makes webveil run code (today: the `custom` backend's command, i.e. its `baseUrl` when `backend` is `custom`, and the serpcast backend's `serpcast.libcurlPath`, a native library webveil loads) is refused when it comes from a project `webveil.json`, with an error naming the file and the key: put it in the global config or env instead. A project may still say `"backend": "custom"` when the command itself comes from the global config or env. The check runs only where the setting is used, so `web_fetch` keeps working in such a folder. Paths in executable settings never resolve against the cwd: `~/` is your home directory, a relative path is relative to the config file that set it, a value from env must be absolute or `~/`-prefixed, and a bare command name (no slash) is looked up on `PATH` by webveil itself, searching only absolute `PATH` entries: empty, `.` and other relative entries are ignored, so a file in the cwd is never picked up, and a name found in no absolute entry is an error before anything runs. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
 - **extractor seam**, `urlToMarkdown` via `distilly/fetch` by default, injected with
   webveil's egress-bound `fetch`; a backend's own `/extract` (Tavily-compat) may override
   it. Owns the context-friendly markdown + size presets (`s`/`m`/`l`/`f`). See
@@ -413,32 +415,34 @@ a promise); `LOC` is the actual line count of the built file.
 
 | module                             |  LOC | target |
 | ---------------------------------- | ---: | -----: |
-| src/index.ts (barrel)              |   97 |      - |
-| src/cli.ts (incur frontend)        |  122 |    ~80 |
+| src/index.ts (barrel)              |  109 |      - |
+| src/cli.ts (incur frontend)        |  145 |    ~80 |
 | src/core/search.ts                 |  141 |    ~90 |
 | src/core/fetch.ts                  |  150 |    ~90 |
-| src/core/config.ts                 |  173 |    ~80 |
+| src/core/config.ts                 |  219 |    ~80 |
 | src/core/layers.ts (merge + prov.) |  121 |      - |
-| src/core/trust.ts (exec. settings) |   93 |      - |
-| src/core/egress.ts                 |  169 |    ~70 |
+| src/core/trust.ts (exec. settings) |  166 |      - |
+| src/core/identity.ts               |   29 |    ~30 |
+| src/core/egress.ts                 |  171 |    ~70 |
 | src/core/http.ts                   |   62 |    ~60 |
 | src/core/extract.ts                |   82 |    ~60 |
 | src/core/security.ts (SSRF guard)  |  158 |      - |
 | src/core/baseurl.ts (transport)    |  104 |      - |
 | src/core/backends/types.ts         |   70 |    ~40 |
-| src/core/backends/registry.ts      |   41 |    ~60 |
+| src/core/backends/registry.ts      |   52 |    ~60 |
 | src/core/backends/searxng.ts       |  116 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
-| src/core/backends/custom.ts        |  180 |    ~70 |
-| **subtotal**                       | 2035 |        |
+| src/core/backends/custom.ts        |  187 |    ~70 |
+| src/core/backends/serpcast.ts      |  146 |    ~90 |
+| **subtotal**                       | 2384 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
 | module       | LOC | target |
 | ------------ | --: | -----: |
-| src/index.ts | 169 |    ~90 |
+| src/index.ts | 183 |    ~90 |
 
-**Total own source: 2204 LOC** (excluding deps).
+**Total own source: 2567 LOC** (excluding deps).
 
 > Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably
 > `tavily-compat.ts`, `custom.ts`, `pi-webveil/src/index.ts`), and two built modules

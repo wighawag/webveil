@@ -23,6 +23,32 @@ export type Egress =
 	| {mode: 'http'; url: string}
 	| {mode: 'socks5'; url: string};
 
+/**
+ * The `serpcast` backend's section (see backends/serpcast.ts). Merged key by
+ * key across layers, so a project file setting `engines` keeps the global
+ * `libcurlPath`. There is deliberately no `strict` key: strict impersonation is
+ * always on (docs/adr/0004).
+ *
+ * Recorded decision (task serpcast-backend-basic): the key names follow
+ * serpcast's options (`libcurlPath`, `sessionIdleMs`, `cooldownMs`); `recipes`
+ * takes declarative recipe files or directories (serpcast-recipe's
+ * `loadRecipes`), named to pair with the planned `codeRecipes`. Recipes are data,
+ * so any layer may set them, but their paths resolve like executable ones
+ * (config-file relative, never the cwd). Env covers the scalars only
+ * (`WEBVEIL_SERPCAST_LIBCURL_PATH`, `_SESSION_IDLE_MS`, `_COOLDOWN_MS`); lists
+ * live in files. Alternative considered: `recipeDirs` (too narrow, files work).
+ */
+export interface SerpcastConfig {
+	/** Engine names, tried in order (each names a loaded recipe). */
+	engines?: string[];
+	/** Declarative recipe files or directories (every `*.json` inside). */
+	recipes?: string[];
+	/** The libcurl-impersonate library: EXECUTABLE (trusted layers only). */
+	libcurlPath?: string;
+	sessionIdleMs?: number;
+	cooldownMs?: number;
+}
+
 /** Page-size budget preset for fetch (passed through to distilly). */
 export type FetchSize = 's' | 'm' | 'l' | 'f';
 
@@ -46,6 +72,8 @@ export interface Config {
 	 */
 	fetchEgress?: Egress;
 	fetchSize: FetchSize;
+	/** Settings of the `serpcast` backend (unused by the other backends). */
+	serpcast?: SerpcastConfig;
 }
 
 /** A config file / env layer: any subset of the resolved shape. */
@@ -120,6 +148,22 @@ function parseEgressEnv(
 	return undefined;
 }
 
+/** The scalar `serpcast` settings from `WEBVEIL_SERPCAST_*` (arrays: files only). */
+function readSerpcastEnv(
+	env: Record<string, string | undefined>,
+): SerpcastConfig {
+	const section: SerpcastConfig = {};
+	const {
+		WEBVEIL_SERPCAST_LIBCURL_PATH: lib,
+		WEBVEIL_SERPCAST_SESSION_IDLE_MS: idle,
+		WEBVEIL_SERPCAST_COOLDOWN_MS: cooldown,
+	} = env;
+	if (lib) section.libcurlPath = lib;
+	if (idle) section.sessionIdleMs = Number(idle);
+	if (cooldown) section.cooldownMs = Number(cooldown);
+	return section;
+}
+
 function readEnv(env: Record<string, string | undefined>): PartialConfig {
 	const layer: PartialConfig = {};
 	if (env.WEBVEIL_BACKEND) layer.backend = env.WEBVEIL_BACKEND;
@@ -134,6 +178,8 @@ function readEnv(env: Record<string, string | undefined>): PartialConfig {
 		env.WEBVEIL_FETCH_EGRESS_URL,
 	);
 	if (fetchEgress) layer.fetchEgress = fetchEgress;
+	const serpcast = readSerpcastEnv(env);
+	if (Object.keys(serpcast).length > 0) layer.serpcast = serpcast;
 	return layer;
 }
 

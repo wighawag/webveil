@@ -8,13 +8,14 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {basename, dirname, isAbsolute, join} from 'node:path';
+import {basename, dirname, isAbsolute, join, win32} from 'node:path';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import {resolveConfig} from '../src/core/config.js';
 import {configProvenance} from '../src/core/layers.js';
 import {
 	assertTrusted,
+	isCommandPath,
 	resolveCommandOnPath,
 	resolveExecutablePath,
 	TrustError,
@@ -370,5 +371,130 @@ describe('bare command PATH lookup skips empty and relative entries', () => {
 				env: {PATH: `${first}:${second}:${absDir}`},
 			}),
 		).toBe(join(absDir, 'wvsearch'));
+	});
+});
+
+describe('Windows command paths (platform seam)', () => {
+	const file = {
+		layer: 'global',
+		path: 'C:\\cfg\\webveil\\config.json',
+	} as const;
+	const home = 'C:\\Users\\u';
+	const win = (
+		value: string,
+		source: Parameters<typeof resolveExecutablePath>[1],
+	) => resolveExecutablePath(value, source, home, 'win32');
+
+	it('classifies backslash, forward-slash and drive-prefixed values as paths on win32', () => {
+		for (const value of [
+			'C:\\x\\y.exe',
+			'C:/x/y.exe',
+			'\\\\srv\\share\\y.exe',
+			'bin\\y.cmd',
+			'.\\y.cmd',
+			'bin/y.cmd',
+			'C:y.exe',
+		])
+			expect(isCommandPath(value, 'win32')).toBe(true);
+		expect(isCommandPath('search', 'win32')).toBe(false);
+		expect(isCommandPath('search.exe', 'win32')).toBe(false);
+	});
+
+	it('keeps a backslash-only name a bare name on POSIX', () => {
+		expect(isCommandPath('bin\\y', 'linux')).toBe(false);
+		expect(isCommandPath('C:y', 'linux')).toBe(false);
+		expect(isCommandPath('bin/y', 'linux')).toBe(true);
+		expect(
+			resolveExecutablePath(
+				'./a\\b',
+				{layer: 'global', path: '/etc/w/c.json'},
+				'/h',
+				'linux',
+			),
+		).toBe('/etc/w/a\\b');
+	});
+
+	it('treats drive-letter and UNC paths as absolute, from any layer', () => {
+		for (const source of [file, {layer: 'env'} as const, undefined]) {
+			expect(win('C:\\x\\y.exe', source)).toBe('C:\\x\\y.exe');
+			expect(win('C:/x/y.exe', source)).toBe('C:/x/y.exe');
+			expect(win('\\\\srv\\share\\y.exe', source)).toBe(
+				'\\\\srv\\share\\y.exe',
+			);
+		}
+	});
+
+	it('resolves Windows-relative paths against the config-file directory', () => {
+		expect(win('bin\\y.cmd', file)).toBe('C:\\cfg\\webveil\\bin\\y.cmd');
+		expect(win('.\\y.cmd', file)).toBe('C:\\cfg\\webveil\\y.cmd');
+		expect(win('..\\y.cmd', file)).toBe('C:\\cfg\\y.cmd');
+		// Root-relative takes the config file's drive, never the cwd's.
+		expect(win('\\tools\\y.exe', file)).toBe('C:\\tools\\y.exe');
+	});
+
+	it('refuses Windows-relative paths from env or code', () => {
+		for (const value of [
+			'bin\\y.cmd',
+			'.\\y.cmd',
+			'\\tools\\y.exe',
+			'/tools/y.exe',
+		])
+			for (const source of [{layer: 'env'} as const, undefined])
+				expect(() => win(value, source)).toThrow(
+					/must be absolute or start with ~\//,
+				);
+	});
+
+	it('refuses a drive-relative path (it names a per-drive cwd)', () => {
+		for (const source of [file, {layer: 'env'} as const])
+			expect(() => win('C:y.exe', source)).toThrow(TrustError);
+	});
+
+	it('expands ~ with either separator on win32', () => {
+		expect(win('~\\bin\\y.exe', {layer: 'env'})).toBe(
+			'C:\\Users\\u\\bin\\y.exe',
+		);
+		expect(win('~/bin/y.exe', {layer: 'env'})).toBe('C:\\Users\\u\\bin\\y.exe');
+	});
+
+	it('the custom backend routes a backslash command through the path rules on win32', async () => {
+		writeJson(globalFile, {backend: 'custom', baseUrl: 'bin\\search.cmd'});
+		const calls: string[] = [];
+		const backend = createCustomBackend(
+			resolveHere(),
+			recordingSpawn(calls),
+			'win32',
+		);
+		await backend.search('q', unusedHttp);
+		expect(calls).toEqual([
+			win32.resolve(dirname(globalFile), 'bin\\search.cmd'),
+		]);
+	});
+
+	it('the custom backend refuses a relative backslash command from env on win32', async () => {
+		const calls: string[] = [];
+		const backend = createCustomBackend(
+			resolveHere({WEBVEIL_BACKEND: 'custom', WEBVEIL_BASE_URL: '.\\y.cmd'}),
+			recordingSpawn(calls),
+			'win32',
+		);
+		await expect(backend.search('q', unusedHttp)).rejects.toThrow(
+			/must be absolute or start with ~\//,
+		);
+		expect(calls).toEqual([]);
+	});
+
+	it('the custom backend keeps a backslash name a bare PATH lookup on POSIX', async () => {
+		writeJson(globalFile, {backend: 'custom', baseUrl: 'no\\such-webveil-cmd'});
+		const calls: string[] = [];
+		const backend = createCustomBackend(
+			resolveHere(),
+			recordingSpawn(calls),
+			'linux',
+		);
+		await expect(backend.search('q', unusedHttp)).rejects.toThrow(
+			/not found in any absolute PATH entry/,
+		);
+		expect(calls).toEqual([]);
 	});
 });

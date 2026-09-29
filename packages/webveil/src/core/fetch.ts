@@ -23,6 +23,10 @@ import {
 	fetchEgressConfig as defaultFetchEgressConfig,
 } from './egress.js';
 import type {Dispatcher} from './egress.js';
+import {
+	createSerpcastFetch as defaultCreateSerpcastFetch,
+	resolveFetchTransport,
+} from './fetch-transport.js';
 import {extract as defaultExtract} from './extract.js';
 import type {ExtractDeps} from './extract.js';
 import {getBackend as defaultGetBackend} from './backends/registry.js';
@@ -47,6 +51,8 @@ export interface FetchDeps {
 	createHttp?: (dispatcher: Dispatcher | undefined) => Http;
 	createEgressFetch?: (config: Config) => EgressFetch;
 	guardEgressFetch?: (fetch: EgressFetch, config: Config) => EgressFetch;
+	/** Builds the `fetchTransport: serpcast` fetch (per-hop SSRF inside). */
+	createSerpcastFetch?: (config: Config) => EgressFetch;
 	/** Resolve the FETCH-hop egress config (`fetchEgress ?? egress`). */
 	fetchEgressConfig?: (config: Config) => Config;
 	extract?: (
@@ -82,6 +88,8 @@ export async function fetchAll(
 	const guardEgressFetch = deps.guardEgressFetch ?? defaultGuardEgressFetch;
 	const fetchEgressConfig = deps.fetchEgressConfig ?? defaultFetchEgressConfig;
 	const extract = deps.extract ?? defaultExtract;
+	const createSerpcastFetch =
+		deps.createSerpcastFetch ?? defaultCreateSerpcastFetch;
 
 	const config = resolveConfig({
 		cwd: options.cwd,
@@ -115,11 +123,13 @@ export async function fetchAll(
 	// egress-bound fetch ONCE, wrap it with the SSRF guard, and inject THAT into
 	// distilly (never a global fetch). The guard covers distilly's rule-rewritten
 	// requests too. A configured-but-unbuildable proxy throws at build time
-	// (fail-loud), before any I/O.
-	const guardedFetch = guardEgressFetch(
-		createEgressFetch(fetchConfig),
-		fetchConfig,
-	);
+	// (fail-loud), before any I/O. With `fetchTransport: serpcast` the injected
+	// fetch is serpcast's impersonated transport instead, which follows redirects
+	// itself and runs the SSRF guard on every hop (fetch-transport.ts).
+	const guardedFetch =
+		resolveFetchTransport(config) === 'serpcast'
+			? createSerpcastFetch(fetchConfig)
+			: guardEgressFetch(createEgressFetch(fetchConfig), fetchConfig);
 	const extractDeps: ExtractDeps = {createEgressFetch: () => guardedFetch};
 	return runAll(urls, (url) =>
 		extract(url, config, {size: options.size}, extractDeps),

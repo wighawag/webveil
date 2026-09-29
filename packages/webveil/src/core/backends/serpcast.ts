@@ -379,16 +379,34 @@ export async function closeSerpcastInstances(): Promise<void> {
 	await Promise.allSettled(all.map((instance) => instance.close()));
 }
 
+/**
+ * `serpcast.libcurlPath` trust-checked and resolved (never the cwd), without
+ * the rest of the section: `web_fetch`'s serpcast transport needs only this
+ * key (fetch-transport.ts), so it must not require `engines`.
+ */
+export function trustedLibcurlPath(config: Config): string | undefined {
+	assertTrusted(config, ['serpcast.libcurlPath']);
+	const lib = config.serpcast?.libcurlPath;
+	if (lib === undefined) return undefined;
+	if (typeof lib !== 'string')
+		throw new Error('serpcast: serpcast.libcurlPath must be a path');
+	return resolvePath(config, 'libcurlPath', lib);
+}
+
+/** An `impersonation` SerpcastError as an error carrying the fix (search and fetch). */
+export function impersonationFailure(error: SerpcastError): Error {
+	return new Error(
+		`serpcast: browser impersonation is not active (${error.message}). ` +
+			'Fix: run `npx serpcast install-libcurl`, or set serpcast.libcurlPath ' +
+			'in the global config (or WEBVEIL_SERPCAST_LIBCURL_PATH) to a ' +
+			'libcurl-impersonate library.',
+		{cause: error},
+	);
+}
+
 function failure(error: unknown): Error {
 	if (!(error instanceof SerpcastError)) return error as Error;
-	if (error.kind === 'impersonation')
-		return new Error(
-			`serpcast: browser impersonation is not active (${error.message}). ` +
-				'Fix: run `npx serpcast install-libcurl`, or set serpcast.libcurlPath ' +
-				'in the global config (or WEBVEIL_SERPCAST_LIBCURL_PATH) to a ' +
-				'libcurl-impersonate library.',
-			{cause: error},
-		);
+	if (error.kind === 'impersonation') return impersonationFailure(error);
 	if (error.kind !== 'exhausted') return error;
 	const each = (error.failures ?? []).map(
 		(f) => `${f.engine} (${f.error.kind}: ${f.error.message})`,

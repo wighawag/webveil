@@ -95,6 +95,14 @@ export interface SearchcastConfig {
 	persistProfile?: boolean;
 }
 
+/**
+ * How `web_fetch` sends its requests (fetch-transport.ts): `plain` is undici
+ * over the egress dispatcher (a Node TLS fingerprint); `serpcast` is serpcast's
+ * libcurl-impersonate transport (Chrome's TLS/HTTP2 fingerprint). No default in
+ * DEFAULTS: when unset it follows `backend` (`resolveFetchTransport`).
+ */
+export type FetchTransport = 'plain' | 'serpcast';
+
 /** Page-size budget preset for fetch (passed through to distilly). */
 export type FetchSize = 's' | 'm' | 'l' | 'f';
 
@@ -118,6 +126,11 @@ export interface Config {
 	 */
 	fetchEgress?: Egress;
 	fetchSize: FetchSize;
+	/**
+	 * The `web_fetch` transport. OPTIONAL: unset, it is `serpcast` when
+	 * `backend` is `serpcast` and `plain` otherwise (`resolveFetchTransport`).
+	 */
+	fetchTransport?: FetchTransport;
 	/** Settings of the `serpcast` backend (unused by the other backends). */
 	serpcast?: SerpcastConfig;
 }
@@ -227,6 +240,8 @@ function readEnv(env: Record<string, string | undefined>): PartialConfig {
 	if (env.WEBVEIL_API_KEY) layer.apiKey = env.WEBVEIL_API_KEY;
 	if (env.WEBVEIL_FETCH_SIZE)
 		layer.fetchSize = env.WEBVEIL_FETCH_SIZE as FetchSize;
+	if (env.WEBVEIL_FETCH_TRANSPORT)
+		layer.fetchTransport = env.WEBVEIL_FETCH_TRANSPORT as FetchTransport;
 	const egress = parseEgressEnv(env.WEBVEIL_EGRESS, env.WEBVEIL_EGRESS_URL);
 	if (egress) layer.egress = egress;
 	const fetchEgress = parseEgressEnv(

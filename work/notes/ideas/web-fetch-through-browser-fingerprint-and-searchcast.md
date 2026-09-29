@@ -2,6 +2,10 @@
 
 Raised 2026-09-29 by the owner ("webveil web_fetch should ideally use searchcast fetch, no?") while the serpcast backend was being built. The `serpcast-backend` spec lists "Routing `web_fetch` through the impersonated transport" as out of scope, so this is the follow-up.
 
+## Status (2026-09-29)
+
+Step 2 is done (task `web-fetch-via-serpcast-transport`): `fetchTransport` (`plain` | `serpcast`, env `WEBVEIL_FETCH_TRANSPORT`) selects it, defaulting to `serpcast` when `backend` is `serpcast` (owner decision, which also answers the first open question below for that backend), with the adapter in `packages/webveil/src/core/fetch-transport.ts`. Step 3 (searchcast) remains an idea. The "Today" section below describes the state before step 2.
+
 ## Today
 
 `web_fetch` runs distilly's `urlToMarkdown` with webveil's guarded egress fetch injected (ADR 0001): undici, so a Node TLS/HTTP2 fingerprint. Sites that gate on fingerprint or serve a challenge get a block page or an empty JS shell. searchcast has no fetch capability today: its API is `/search`, `/recipes`, `/health` only.

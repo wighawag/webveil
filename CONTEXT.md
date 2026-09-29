@@ -61,6 +61,7 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   source over webveil's egress, never a global fetch); a backend's own `/extract`
   (Tavily-compat) may override it. Owns the context-friendly markdown + size presets
   (`s`/`m`/`l`/`f`) and surfaces distilly's `truncated`. See `docs/adr/0001`.
+- **fetch transport**: how `web_fetch` sends the requests whose responses distilly converts, set by `fetchTransport`: `plain` (undici over the fetch-hop egress, a Node TLS fingerprint) or `serpcast` (a `fetch`-shaped adapter over serpcast's libcurl-impersonate transport: Chrome's TLS/HTTP2 fingerprint and `document` header table, GET only, caller headers ignored). Unset, it is `serpcast` when `backend` is `serpcast` and `plain` otherwise; an explicit value (env `WEBVEIL_FETCH_TRANSPORT`) always wins. The `serpcast` fetch transport uses the fetch-hop egress mapped as for the backend (SOCKS always `socks5h`), follows redirects itself (at most 20) with the SSRF guard on every hop, is always strict (no fallback to `plain`), reads only the executable setting `serpcast.libcurlPath`, and starts a fresh session per fetch: no cookies persist between fetches and nothing enters the serpcast state (a fetch is not an identity). Not to be confused with the backend `transport` of `baseurl.ts` (how webveil reaches a backend `baseUrl`). See `core/fetch-transport.ts`.
 - **drop-in (Ollama)** — `pi-webveil` deliberately uses the tool names `web_search` and
   `web_fetch` so it replaces `@ollama/pi-web-search` without changing anything else.
 
@@ -89,6 +90,7 @@ core + frontends:
 | core/egress.ts             |        ~70 |
 | core/http.ts               |        ~60 |
 | core/extract.ts            |        ~60 |
+| core/fetch-transport.ts    |          - |
 | core/backends/types.ts     |        ~40 |
 | core/backends/registry.ts  |        ~60 |
 | core/backends/searxng.ts   |        ~90 |

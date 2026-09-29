@@ -11,6 +11,7 @@ import {createSearxngBackend} from './searxng.js';
 import {createTavilyCompatBackend} from './tavily-compat.js';
 import {createCustomBackend} from './custom.js';
 import {closeSerpcastInstances, createSerpcastBackend} from './serpcast.js';
+import {closeFetchTransports} from '../fetch-transport.js';
 
 /** Builds a Backend from the resolved config (knows its baseUrl / apiKey). */
 export type BackendFactory = (config: Config) => Backend;
@@ -43,10 +44,11 @@ export function getBackend(name: string, config: Config): Backend {
 }
 
 /**
- * Release what backends keep across searches (the cached serpcast instances).
+ * Release what backends keep across searches (the cached serpcast instances,
+ * and the cached serpcast transports of `fetchTransport: serpcast`).
  * Frontends call it at PROCESS level (never per command: under MCP that would
  * defeat the cache): after a one-shot CLI command, at MCP server or pi shutdown.
  */
 export async function closeBackends(): Promise<void> {
-	await closeSerpcastInstances();
+	await Promise.all([closeSerpcastInstances(), closeFetchTransports()]);
 }

@@ -1,5 +1,12 @@
 # webveil
 
+## 0.7.0
+
+### Minor Changes
+
+- 9843314: Require `serpcast` `^0.3.0` (`sec-fetch-site`, `referer`, `origin` and `sec-fetch-storage-access` now follow Chromium for same-site and cross-site subresources). `web_fetch` over the serpcast transport now reuses connections across fetches of the same fetch-hop egress (about 0.09 s instead of about 0.5 s per fetch over Tor): a small pool of sessions per egress, each fetch taking an idle one with its cookies cleared, never sharing a busy one, so no cookie is carried from one fetch to another. Idle sessions close after 10 minutes, or when webveil exits. A site sees repeated fetches to it on one TLS connection (see the README fetch section).
+- a983a32: Require `serpcast` `^0.5.0` (and `serpcast-recipe` `^0.2.0`). Recipes may now declare `decoyProne: true` and are then checked for decoys without being listed in `serpcast.decoyGuard`; code recipes can POST (`ctx.http.post`, `ctx.http.postJson`) and set cookies (`ctx.cookies`). A recipe set installed with `npx serpcast install-recipes <archive> --sha256 <hex>` is named `set:<name>` (the whole set) or `set:<name>/<file>` in `serpcast.recipes` and `serpcast.codeRecipes` (and in `WEBVEIL_SERPCAST_CODE_RECIPES`), looked up in `$XDG_DATA_HOME/serpcast/recipes/`, never the cwd; `codeRecipes` stays refused from a project `webveil.json` whatever its form. A set directory's `manifest.json` and `.source.json` are no longer loaded as recipes. The README gains an "Installing recipes" section and a complete NixOS section (recipes, home-manager config, a full Tor example).
+
 ## 0.6.0
 
 ### Minor Changes

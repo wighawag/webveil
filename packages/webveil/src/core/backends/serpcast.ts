@@ -108,14 +108,42 @@
 //   already keeps one serpcast per identity, so reused connections never cross
 //   identities, and `closeSerpcastInstances` (`close()`) releases them; idle
 //   connections hold no Node handle, so the one-shot CLI still exits.
+//
+// Recorded decisions (task serpcast-0-5-recipes-and-nixos-docs):
+// - An installed recipe set (`serpcast install-recipes`) is named in
+//   `recipes` or `codeRecipes` as `set:<name>` (the whole set) or
+//   `set:<name>/<file>` (one file, for a set holding helper modules that are
+//   not engines), resolved to serpcast's `recipesDir()/<name>`. Alternative
+//   considered: documenting only the `~/.local/share/serpcast/recipes/<set>`
+//   path, rejected as the only form because it ignores `XDG_DATA_HOME`. That
+//   plain path still works (below). `recipesDir()` reads `XDG_DATA_HOME` from
+//   the process environment, like the state root (state.ts), never a config
+//   layer, and never the cwd. A set name and a file name follow serpcast's set
+//   name rule, so `..` and `/` cannot leave the set; a set that is not
+//   installed is an error naming the install command, at the first search.
+// - The trust rule is unchanged: `set:` is a value, the key decides. A
+//   `codeRecipes` entry from a project `webveil.json` is refused whatever its
+//   form; a `recipes` entry (data) may name a set from any layer.
+// - A `recipes` directory that is an installed set (directly under
+//   `recipesDir()`, by `set:` or by path, or holding serpcast's `.source.json`)
+//   loads its `*.json` files except hidden ones (`.source.json`) and
+//   `manifest.json`, which serpcast-recipe's `loadRecipes` would otherwise
+//   parse as recipes and fail on. The location counts, not only the marker,
+//   because a set placed declaratively (home-manager `xdg.dataFile` from
+//   `fetchzip`) has no `.source.json`. Other directories load as before.
+// - Recipes that declare `decoyProne` (serpcast 0.4) need nothing here:
+//   serpcast guards them itself, and `decoyGuard` stays an addition.
+// - The `WEBVEIL_SERPCAST_CODE_RECIPES` split (config.ts) keeps `set:<name>`
+//   whole where the path delimiter is `:`.
 
-import {readdirSync, statSync} from 'node:fs';
-import {join} from 'node:path';
+import {existsSync, readdirSync, statSync} from 'node:fs';
+import {dirname, join} from 'node:path';
 import {
 	createSerpcast as realCreateSerpcast,
 	DEFAULT_SESSION_IDLE_MS,
 	isCodeRecipe,
 	loadCodeRecipe,
+	recipesDir,
 	SerpcastError,
 } from 'serpcast';
 import type {
@@ -164,6 +192,10 @@ const EXECUTABLE_KEYS = [
 ];
 /** The engine-name prefix of a browser engine (see the decisions above). */
 const BROWSER = 'searchcast:';
+/** The prefix of an installed recipe set entry in `recipes`/`codeRecipes`. */
+const SET = 'set:';
+/** What `serpcast install-recipes` writes beside a set's recipes. */
+const SOURCE_FILE = '.source.json';
 const SOCKS = ['socks5', 'socks', 'socks5h'];
 /** Chromium switches that would move the browser off `egress` (see above). */
 const EGRESS_SWITCHES = new Set([
@@ -189,9 +221,58 @@ export function serpcastProxy(egress: Egress): string | undefined {
 	return egress.mode === 'http' ? url : `socks5h${url.slice(scheme.length)}`;
 }
 
+/** The name rule of an installed set, and of a file in one (no `/`, no `..`). */
+const SET_PART = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * An installed recipe set entry (`set:<name>` or `set:<name>/<file>`) as its
+ * path under serpcast's `recipesDir()` (the user's data directory, never the
+ * cwd), or undefined when `value` is not one.
+ */
+function installedSetPath(value: string): string | undefined {
+	if (!value.startsWith(SET)) return undefined;
+	const parts = value.slice(SET.length).split('/');
+	if (parts.length > 2 || !parts.every((p) => SET_PART.test(p)))
+		throw new Error(
+			`serpcast: '${value}' is not an installed recipe set entry ` +
+				'(set:<name> or set:<name>/<file>)',
+		);
+	const dir = join(recipesDir(), parts[0]!);
+	if (!existsSync(dir))
+		throw new Error(
+			`serpcast: recipe set '${parts[0]}' is not installed in ` +
+				`${recipesDir()} (install it with \`npx serpcast install-recipes ` +
+				'<archive> --sha256 <hex>`; `npx serpcast recipes list` shows the ' +
+				'installed sets)',
+		);
+	return parts[1] ? join(dir, parts[1]) : dir;
+}
+
 /** Resolve a path setting where it was set (never against the cwd). */
 function resolvePath(config: Config, key: string, value: string): string {
 	return resolveExecutablePath(value, sourceOf(config, `serpcast.${key}`));
+}
+
+/** A `recipes`/`codeRecipes` entry: an installed set entry, else a path. */
+function resolveRecipePath(config: Config, key: string, value: string): string {
+	return installedSetPath(value) ?? resolvePath(config, key, value);
+}
+
+/**
+ * A `recipes` entry as serpcast-recipe's `loadRecipes` paths: an installed set
+ * directory (directly under `recipesDir()`, or holding serpcast's
+ * `.source.json`) as its recipe files, without hidden files (`.source.json`)
+ * and the set's `manifest.json`, which are not recipes.
+ */
+function declarativePaths(path: string): string[] {
+	const isSet =
+		dirname(path) === recipesDir() || existsSync(join(path, SOURCE_FILE));
+	if (!isSet || !statSync(path).isDirectory()) return [path];
+	return readdirSync(path)
+		.sort()
+		.filter((f) => f.endsWith('.json') && !f.startsWith('.'))
+		.filter((f) => f !== 'manifest.json')
+		.map((f) => join(path, f));
 }
 
 const isList = (v: unknown): v is string[] =>
@@ -254,10 +335,10 @@ function settings(config: Config): SerpcastConfig {
 		if (s[key] !== undefined && !(Number(s[key]) >= 0))
 			throw new Error(`serpcast: serpcast.${key} must be a number >= 0`);
 	if (s.recipes)
-		s.recipes = s.recipes.map((p) => resolvePath(config, 'recipes', p));
+		s.recipes = s.recipes.map((p) => resolveRecipePath(config, 'recipes', p));
 	if (s.codeRecipes)
 		s.codeRecipes = s.codeRecipes.map((p) =>
-			resolvePath(config, 'codeRecipes', p),
+			resolveRecipePath(config, 'codeRecipes', p),
 		);
 	if (s.libcurlPath)
 		s.libcurlPath = resolvePath(config, 'libcurlPath', s.libcurlPath);
@@ -342,7 +423,9 @@ function reserved(name: string, where: string): void {
 
 /** Every recipe by name: declarative, then code (imports, i.e. RUNS, each module). */
 async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
-	const engines = new Map<string, Engine>(loadRecipes(s.recipes ?? []));
+	const engines = new Map<string, Engine>(
+		loadRecipes((s.recipes ?? []).flatMap(declarativePaths)),
+	);
 	for (const name of engines.keys()) reserved(name, 'declarative recipe');
 	const files = (s.codeRecipes ?? []).flatMap((p) =>
 		statSync(p).isDirectory()

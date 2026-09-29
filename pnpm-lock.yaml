@@ -58,11 +58,11 @@ importers:
         specifier: 0.4.10
         version: 0.4.10
       serpcast:
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.5.0
+        version: 0.5.0
       serpcast-recipe:
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       undici:
         specifier: ^7.28.0
         version: 7.28.0
@@ -1437,11 +1437,11 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  serpcast-recipe@0.1.0:
-    resolution: {integrity: sha512-LSrrKiWcaatb0qVuIJu7Udh+Hhla2gTSNDuu1ybnOlenyrObsurcU+r74p9AEJKqkW+aSS3/YtopV1POBvl6LA==}
+  serpcast-recipe@0.2.0:
+    resolution: {integrity: sha512-ngDFQkUYNfBp05xsU/bpTiCrM0I6EF+e5HQX2Eb2OB1w8qysCfp//lzkgATMEfqTpfej6B70sbpmc0EGpD5z1A==}
 
-  serpcast@0.3.0:
-    resolution: {integrity: sha512-kLufKGFjT0JcTJcfosZGUkAmS883LuUUFJVqlRxXuEbirHOZHpGgXs6ZLIanchBKmtTOsbLHY8dnX/+QLOykww==}
+  serpcast@0.5.0:
+    resolution: {integrity: sha512-/UgUdIbZW992/owB8tsvcFKeSuPgJEBpiah9HuRUY9jevhJX9tMyCUBIe3gvmfM8DW5XC17/seLy09UpJNtETQ==}
     hasBin: true
     peerDependencies:
       searchcast: '>=0.1.1'
@@ -3220,15 +3220,15 @@ snapshots:
 
   semver@7.8.5: {}
 
-  serpcast-recipe@0.1.0: {}
+  serpcast-recipe@0.2.0: {}
 
-  serpcast@0.3.0:
+  serpcast@0.5.0:
     dependencies:
       css-select: 7.0.0
       domhandler: 6.0.1
       htmlparser2: 12.0.0
       koffi: 3.3.2
-      serpcast-recipe: 0.1.0
+      serpcast-recipe: 0.2.0
 
   shebang-command@2.0.0:
     dependencies:

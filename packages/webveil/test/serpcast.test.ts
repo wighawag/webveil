@@ -17,6 +17,9 @@ import {
 import {homedir, tmpdir} from 'node:os';
 import {delimiter, dirname, join} from 'node:path';
 import {PassThrough} from 'node:stream';
+import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {Cli as IncurCli, Mcp} from 'incur';
 import {createSerpcast, SerpcastError} from 'serpcast';
 import type {Serpcast, SerpcastOptions, TransportSession} from 'serpcast';
@@ -740,5 +743,155 @@ export default {
 		await expect(searchWith(fakeFactory().create)).rejects.toThrow(
 			/duplicate recipe name 'alpha'/,
 		);
+	});
+});
+
+describe('serpcast backend: installed recipe sets (set:<name>)', () => {
+	let dataHome: string | undefined;
+	beforeEach(() => {
+		dataHome = process.env.XDG_DATA_HOME;
+		process.env.XDG_DATA_HOME = join(root, 'data');
+	});
+	afterEach(() => {
+		if (dataHome === undefined) delete process.env.XDG_DATA_HOME;
+		else process.env.XDG_DATA_HOME = dataHome;
+	});
+
+	/**
+	 * Build a set archive (a code recipe `gamma`, a declarative recipe `web`,
+	 * a manifest) and install it with serpcast's own `install-recipes` CLI
+	 * into the temp XDG_DATA_HOME. Returns the code recipe's import marker.
+	 */
+	function installSet(name = 'myset'): string {
+		const src = join(root, 'archive-src', name);
+		const marker = join(root, 'gamma.imported');
+		mkdirSync(src, {recursive: true});
+		writeFileSync(
+			join(src, 'gamma.mjs'),
+			`import {writeFileSync} from 'node:fs';
+writeFileSync(${JSON.stringify(marker)}, 'ran');
+export default {
+	name: 'gamma',
+	async search(query, ctx) {
+		await ctx.http.text('https://gamma.test/?q=' + encodeURIComponent(query), {kind: 'document'});
+		return [{title: 'gamma set hit', url: 'https://gamma.example/set'}];
+	},
+};
+`,
+		);
+		writeRecipe(join(src, 'web.json'), 'web');
+		writeJson(join(src, 'manifest.json'), {name, version: '1.0.0'});
+		const archive = join(root, `${name}.tar.gz`);
+		const tar = spawnSync('tar', ['czf', archive, '-C', dirname(src), name]);
+		expect(tar.status).toBe(0);
+		const sha256 = createHash('sha256')
+			.update(readFileSync(archive))
+			.digest('hex');
+		const cli = join(
+			dirname(fileURLToPath(import.meta.resolve('serpcast'))),
+			'cli.js',
+		);
+		const install = spawnSync(
+			process.execPath,
+			[cli, 'install-recipes', archive, '--sha256', sha256],
+			{env: {...process.env}, encoding: 'utf8'},
+		);
+		expect(install.status, install.stderr).toBe(0);
+		expect(install.stdout.trim()).toBe(
+			join(root, 'data', 'serpcast', 'recipes', name),
+		);
+		return marker;
+	}
+
+	it('loads a set installed by serpcast install-recipes from the global config, code and declarative', async () => {
+		const marker = installSet();
+		writeJson(globalPath, {
+			serpcast: {codeRecipes: ['set:myset'], recipes: ['set:myset']},
+		});
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['gamma', 'web']},
+		});
+		const fake = fakeFactory();
+		expect(await searchWith(fake.create)).toEqual([
+			{title: 'gamma set hit', url: 'https://gamma.example/set'},
+		]);
+		expect(existsSync(marker)).toBe(true);
+		expect(fake.requests).toEqual(['https://gamma.test/?q=webveil']);
+	});
+
+	it("loads the set's declarative recipes without its manifest.json and .source.json, by set: or by path", async () => {
+		installSet();
+		for (const entry of [
+			'set:myset',
+			join(root, 'data', 'serpcast', 'recipes', 'myset'),
+		]) {
+			writeJson(join(project, 'webveil.json'), {
+				backend: 'serpcast',
+				serpcast: {engines: ['web'], recipes: [entry]},
+			});
+			const results = await searchWith(fakeFactory().create);
+			expect(results[0]!.url).toBe('https://web.example/hit');
+			await closeSerpcastInstances();
+		}
+	});
+
+	it('treats a set placed without install (no .source.json, as home-manager does) the same way', async () => {
+		const dir = join(root, 'data', 'serpcast', 'recipes', 'placed');
+		writeRecipe(join(dir, 'web.json'), 'web');
+		writeJson(join(dir, 'manifest.json'), {name: 'placed', version: '1'});
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['web'], recipes: ['set:placed']},
+		});
+		const results = await searchWith(fakeFactory().create);
+		expect(results[0]!.url).toBe('https://web.example/hit');
+	});
+
+	it('takes one file of a set (set:<name>/<file>) and the env form', async () => {
+		installSet();
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['gamma']},
+		});
+		const results = await searchWith(fakeFactory().create, {
+			WEBVEIL_SERPCAST_CODE_RECIPES: 'set:myset/gamma.mjs',
+		});
+		expect(results[0]!.url).toBe('https://gamma.example/set');
+		await closeSerpcastInstances();
+		// a set in a delimited list, beside a path (`:` on POSIX)
+		const other = join(root, 'other.mjs');
+		writeFileSync(other, "export default {name: 'other', search: () => []};");
+		const again = await searchWith(fakeFactory().create, {
+			WEBVEIL_SERPCAST_CODE_RECIPES: [other, 'set:myset'].join(delimiter),
+		});
+		expect(again[0]!.url).toBe('https://gamma.example/set');
+	});
+
+	it('still refuses code recipes from a project webveil.json, set: included, before importing', async () => {
+		const marker = installSet();
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['gamma'], codeRecipes: ['set:myset']},
+		});
+		const fake = fakeFactory();
+		const error = await searchWith(fake.create).catch((e: Error) => e);
+		expect(error).toBeInstanceOf(TrustError);
+		expect(error.message).toContain('serpcast.codeRecipes');
+		expect(existsSync(marker)).toBe(false);
+		expect(fake.built).toHaveLength(0);
+	});
+
+	it('fails loud on a set that is not installed, or an entry leaving the set', async () => {
+		for (const [entry, message] of [
+			['set:missing', /recipe set 'missing' is not installed.*install-recipes/],
+			['set:../evil', /not an installed recipe set entry/],
+			['set:myset/../x.mjs', /not an installed recipe set entry/],
+			['set:a/b/c.mjs', /not an installed recipe set entry/],
+		] as const) {
+			writeJson(globalPath, {serpcast: {codeRecipes: [entry]}});
+			writeProject({});
+			await expect(searchWith(fakeFactory().create)).rejects.toThrow(message);
+		}
 	});
 });

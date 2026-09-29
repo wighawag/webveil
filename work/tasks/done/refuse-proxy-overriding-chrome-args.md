@@ -25,3 +25,12 @@ covers: []
 ## Prompt
 
 Goal: the browser's egress is only ever webveil's `egress`. Keep the change small and in one place. FIRST, check this task against current reality (launch snapshot; may have drifted). RECORD non-obvious in-scope decisions.
+
+## Decisions
+
+These are recorded in the "Recorded decisions (task refuse-proxy-overriding-chrome-args)" comment block at the top of `serpcast.ts`:
+1. **Error type:** it throws `EgressError`, not the plain settings error. It is an egress guard like `assertBrowserEgress`, so the error type is the user-visible choice here. The alternative was the plain `Error` used for badly formed settings.
+2. **The list and its source:** Chromium's proxy switches (from `chrome_switches.cc`, read by `net/proxy_resolution`), plus the two host-mapping switches (from `network_switches.cc`), which can send a hostname to another address without using the proxy's DNS. It is a deny list rather than an allow list, because an allow list would refuse the many harmless arguments people need.
+3. **Matching:** names are matched ignoring case, because Chromium lowercases switch names on Windows. An argument with no leading dash is a positional argument to Chromium, not a switch, so it passes.
+
+The LOC table in the README was already out of date for `serpcast.ts` (it says 237; the built file is now 396 lines). I left it, because `docs-serpcast-backend` owns that table.

@@ -50,6 +50,14 @@
 		"serpcast-recipe": "^0.1.0",
 		"undici": "^7.28.0"
 	},
+	"peerDependencies": {
+		"searchcast": ">=0.1.1"
+	},
+	"peerDependenciesMeta": {
+		"searchcast": {
+			"optional": true
+		}
+	},
 	"devDependencies": {
 		"@types/node": "^25.2.0",
 		"as-soon": "^0.1.5",

@@ -254,7 +254,7 @@ describe('searchcast library mode', () => {
 		expect(fake.built).toHaveLength(0);
 	});
 
-	it('fails naming the package with the real import (searchcast is not a dependency here)', async () => {
+	it('fails naming the package with the real import (searchcast is an optional peer, not installed here)', async () => {
 		writeProject();
 		const fake = fakes();
 		const {importSearchcast: _, ...deps} = fake.deps;

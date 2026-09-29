@@ -16,6 +16,7 @@
 //   - core/fetch.ts             : the framework-agnostic fetch() both frontends call
 //   - core/backends/custom.ts  : the local-command escape hatch (JSON stdin/stdout)
 //   - core/backends/serpcast.ts : keyless recipes over libcurl-impersonate (egress = search egress)
+//   - core/state.ts             : serpcast's state store on disk, one partition per identity
 //   - cli.ts                    : the incur CLI + MCP frontend (the `webveil` bin)
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
@@ -90,11 +91,21 @@ export {createTavilyCompatBackend} from './core/backends/tavily-compat.js';
 export {createCustomBackend} from './core/backends/custom.js';
 export type {SpawnFn} from './core/backends/custom.js';
 export {
+	clearSerpcastState,
 	createSerpcastBackend,
 	serpcastIdentityKey,
 	serpcastProxy,
 } from './core/backends/serpcast.js';
 export type {SerpcastDeps} from './core/backends/serpcast.js';
+
+// per-identity state (serpcast sessions and cooldowns on disk; ADR 0004)
+export {
+	clearState,
+	createStateStore,
+	partitionDir,
+	stateRoot,
+} from './core/state.js';
+export type {StateStoreOptions} from './core/state.js';
 
 // core search (the framework-agnostic search() both frontends call)
 export {search} from './core/search.js';

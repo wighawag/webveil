@@ -24,6 +24,16 @@
 //   override, as `loadRecipes` does for duplicate JSON recipes.
 // - Every listed module is imported on each search (Node's module cache makes
 //   repeats cheap), since a module's engine name is only known once imported.
+//
+// Recorded decisions (task identity-partitioned-state-store; the store and its
+// lock: state.ts):
+// - Every instance gets the on-disk store of its identity's partition, keyed by
+//   the SAME `serpcastIdentityKey` that keys the instance cache, so one hash
+//   names both and they cannot drift apart.
+// - `clearSerpcastState` without `all` clears the partition of the serpcast
+//   section resolved here, whatever `backend` is selected, so a user who
+//   switched backends can still drop the old sessions. A section that does not
+//   resolve (no `engines`) is an error pointing at `--all`.
 
 import {readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
@@ -34,9 +44,21 @@ import {
 } from 'serpcast';
 import type {Engine, Serpcast, SerpcastOptions} from 'serpcast';
 import {loadRecipes} from 'serpcast-recipe/node';
-import type {Config, Egress, SerpcastConfig} from '../config.js';
+import {resolveConfig} from '../config.js';
+import type {
+	Config,
+	Egress,
+	ResolveOptions,
+	SerpcastConfig,
+} from '../config.js';
 import {EgressError} from '../egress.js';
 import {identityKey} from '../identity.js';
+import {
+	clearState,
+	createStateStore,
+	partitionDir,
+	stateRoot,
+} from '../state.js';
 import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
 import type {Backend, SearchResult} from './types.js';
 
@@ -122,6 +144,28 @@ export function serpcastIdentityKey(
 	return identityKey(config.egress, resolved);
 }
 
+/**
+ * Clear persisted serpcast state: the partition of the identity resolved from
+ * `options` (cwd, env, global config), or with `all` every partition. Returns
+ * the identity keys removed.
+ */
+export async function clearSerpcastState(
+	options: ResolveOptions & {all?: boolean} = {},
+): Promise<string[]> {
+	const root = stateRoot(options.env ?? process.env, options.homeDir);
+	if (options.all) return clearState(root);
+	let key: string;
+	try {
+		key = serpcastIdentityKey(resolveConfig(options));
+	} catch (error) {
+		throw new Error(
+			`webveil: no serpcast identity to clear here (${(error as Error).message}); use --all to clear every identity`,
+			{cause: error},
+		);
+	}
+	return clearState(root, key);
+}
+
 /** Close every cached instance (process shutdown; see registry closeBackends). */
 export async function closeSerpcastInstances(): Promise<void> {
 	const all = [...instances.values()];
@@ -174,6 +218,7 @@ export function createSerpcastBackend(
 					libcurlPath: s.libcurlPath,
 					sessionIdleMs: num(s.sessionIdleMs),
 					cooldownMs: num(s.cooldownMs),
+					store: createStateStore(partitionDir(key)),
 				});
 				instances.set(key, instance);
 			}

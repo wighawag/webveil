@@ -74,6 +74,7 @@ interface Answer {
 function fakeTransport(answers: Record<string, Answer> = {}) {
 	const built: TransportOptions[] = [];
 	const requests: {url: string; kind: string; session: number}[] = [];
+	const closed: number[] = [];
 	let sessions = 0;
 	const create = (options: TransportOptions): Transport => {
 		built.push(options);
@@ -106,11 +107,14 @@ function fakeTransport(answers: Record<string, Answer> = {}) {
 					},
 					cookies: () => [],
 					clearCookies() {},
+					close() {
+						closed.push(session);
+					},
 				};
 			},
 		};
 	};
-	return {create, built, requests};
+	return {create, built, requests, closed};
 }
 
 type Fake = ReturnType<typeof fakeTransport>;
@@ -254,6 +258,9 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 		// A second fetch is a fresh session: no cookies carried between fetches.
 		await adapter(final);
 		expect(fake.requests.at(-1)!.session).toBe(2);
+		// Each fetch closes its session (serpcast 0.2 keeps a session's
+		// connections open until then), so no connection outlives its fetch.
+		expect(fake.closed).toEqual([1, 2]);
 	});
 
 	it('runs the SSRF check on every hop: a redirect to a private address is refused before it is sent', async () => {
@@ -266,6 +273,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 		});
 		await expect(fetchWith(fake)).rejects.toThrow(SsrfError);
 		expect(fake.requests.map((r) => r.url)).toEqual([PAGE]);
+		expect(fake.closed).toEqual([1]); // closed on a refused hop too
 	});
 
 	it('refuses a private first hop on direct egress, before any request', async () => {
@@ -309,9 +317,9 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 			'transport',
 			'response is larger than 16777216 bytes',
 		);
-		await expect(
-			fetchWith(fakeTransport({[PAGE]: {error: big}})),
-		).rejects.toThrow(/larger than/);
+		const failing = fakeTransport({[PAGE]: {error: big}});
+		await expect(fetchWith(failing)).rejects.toThrow(/larger than/);
+		expect(failing.closed).toEqual([1]); // closed on a failed request too
 		await closeFetchTransports();
 		const slow = new SerpcastError('timeout', `request to ${PAGE} timed out`);
 		await expect(

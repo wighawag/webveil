@@ -50,6 +50,8 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   `docs/adr/0002`.
 - **provenance** — for every resolved leaf key path (e.g. `baseUrl`, `serpcast.engines`), the layer it came from: env, project (with the file path), global (with the file path) or defaults. Plain-object config sections merge key by key; scalars, arrays, `egress` and `fetchEgress` are leaves replaced whole. See `core/layers.ts`.
 - **executable setting**: a config key whose value makes webveil run code (today the `custom` backend's command, its `baseUrl`, `serpcast.libcurlPath` and `serpcast.codeRecipes`). Accepted only from a **trusted layer** (env or the global config), never from a project `webveil.json`; checked where the backend uses it, and its paths never resolve against the cwd. See `core/trust.ts` and `docs/adr/0004`.
+- **identity**: one search identity, named by the **identity key**: the sha256 of the backend-hop `egress` and the backend's whole resolved section (today the `serpcast` section; `core/identity.ts`, reached through `serpcastIdentityKey`). Everything webveil keeps per identity (the cached serpcast instance, its on-disk state, later the browser profile) is keyed by this one hash and never crosses identities, because replaying a session obtained on one egress over another links the two. See `docs/adr/0004`.
+- **state** (serpcast state): the sessions (engine cookies, a code recipe's JSON state) and engine cooldowns serpcast keeps in its injected `StateStore`. webveil's store (`core/state.ts`) keeps it on disk under `$XDG_STATE_HOME/webveil/` (default `~/.local/state/webveil/`), one **partition** per identity: the directory `<identity key>/`, holding `state.json` (0600, directories 0700), updated under a lock file with atomic replace. Expiry is enforced on read. `webveil state clear [--all]` removes the current identity's partition, or all.
 - **Extractor seam** — `urlToMarkdown` via `distilly/fetch` by default, INJECTED with
   webveil's egress-bound `fetch` (so distilly's network Rules rewrite to raw `.md`/API
   source over webveil's egress, never a global fetch); a backend's own `/extract`
@@ -88,6 +90,7 @@ core + frontends:
 | core/backends/custom.ts    |        ~70 |
 | core/backends/serpcast.ts  |        ~90 |
 | core/identity.ts           |        ~30 |
+| core/state.ts              |       ~120 |
 | cli.ts (incur frontend)    |        ~80 |
 | pi-webveil/src/index.ts    |        ~90 |
 

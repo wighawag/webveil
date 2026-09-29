@@ -9,6 +9,8 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from 'node:fs';
@@ -19,6 +21,7 @@ import {Cli as IncurCli, Mcp} from 'incur';
 import {createSerpcast, SerpcastError} from 'serpcast';
 import type {Serpcast, SerpcastOptions, TransportSession} from 'serpcast';
 import {
+	clearSerpcastState,
 	closeSerpcastInstances,
 	createSerpcastBackend,
 	serpcastIdentityKey,
@@ -31,6 +34,7 @@ import {carryProvenance} from '../src/core/layers.js';
 import {assertEgressAllowsBaseUrl, EgressError} from '../src/core/egress.js';
 import {search} from '../src/core/search.js';
 import {TrustError} from '../src/core/trust.js';
+import {partitionDir, stateRoot} from '../src/core/state.js';
 import {createCli} from '../src/cli.js';
 
 const realGlobal = join(
@@ -350,6 +354,81 @@ describe('serpcast backend: the libcurl path is an executable setting', () => {
 		await expect(
 			searchWith(fake.create, {WEBVEIL_SERPCAST_LIBCURL_PATH: 'rel.so'}),
 		).rejects.toThrow(TrustError);
+	});
+});
+
+describe('serpcast backend: state persisted per identity (as between CLI calls)', () => {
+	const socks = {
+		WEBVEIL_EGRESS: 'socks5',
+		WEBVEIL_EGRESS_URL: 'socks5://127.0.0.1:9050',
+	};
+	const keyOf = (env: Record<string, string> = {}) =>
+		serpcastIdentityKey(resolveConfig({cwd, globalPath, env}));
+	let fileState: string | undefined;
+	beforeEach(() => {
+		// This test's own state root (inside the temp root), so `all` sees
+		// only this test's partitions.
+		fileState = process.env.XDG_STATE_HOME;
+		process.env.XDG_STATE_HOME = join(root, 'state');
+	});
+	afterEach(() => {
+		process.env.XDG_STATE_HOME = fileState;
+	});
+
+	it('shares sessions and cooldowns across processes with the same config, on disk under the hash only', async () => {
+		writeProject({});
+		const first = fakeFactory({alpha: 403});
+		await searchWith(first.create);
+		await closeSerpcastInstances(); // the one-shot CLI process ends
+		const dir = partitionDir(keyOf());
+		expect(dir).toBe(join(stateRoot(), keyOf()));
+		expect(readdirSync(stateRoot())).toContain(keyOf());
+		const stored = readFileSync(join(dir, 'state.json'), 'utf8');
+		expect(stored).toContain('engine/alpha/cooldown');
+		expect(stored).toContain('engine/beta/session');
+
+		// A new process (new instance, alpha healthy now) still sees the cooldown.
+		const second = fakeFactory();
+		const results = await searchWith(second.create);
+		expect(results[0]).toMatchObject({unresponsiveEngines: ['alpha']});
+		expect(second.requests).toEqual(['https://beta.test/?q=webveil']);
+	});
+
+	it('gives a different egress a different partition that never sees the first one', async () => {
+		writeProject({});
+		await searchWith(fakeFactory({alpha: 403}).create);
+		await closeSerpcastInstances();
+		expect(keyOf(socks)).not.toBe(keyOf());
+		const other = fakeFactory();
+		const results = await searchWith(other.create, socks);
+		expect(results[0]!.unresponsiveEngines).toBeUndefined();
+		expect(other.requests).toEqual(['https://alpha.test/?q=webveil']);
+		expect(existsSync(join(partitionDir(keyOf(socks)), 'state.json'))).toBe(
+			true,
+		);
+	});
+
+	it('clears the current identity only, or every identity with all', async () => {
+		writeProject({});
+		await searchWith(fakeFactory().create);
+		await searchWith(fakeFactory().create, socks);
+		const options = {cwd, globalPath};
+		expect(
+			await clearSerpcastState({...options, env: {...process.env}}),
+		).toEqual([keyOf()]);
+		expect(existsSync(partitionDir(keyOf()))).toBe(false);
+		expect(existsSync(partitionDir(keyOf(socks)))).toBe(true);
+		await searchWith(fakeFactory().create);
+		expect((await clearSerpcastState({...options, all: true})).sort()).toEqual(
+			[keyOf(), keyOf(socks)].sort(),
+		);
+		expect(readdirSync(stateRoot())).toEqual([]);
+	});
+
+	it('refuses to guess the current identity without a serpcast section, pointing at --all', async () => {
+		await expect(
+			clearSerpcastState({cwd, globalPath, env: {...process.env}}),
+		).rejects.toThrow(/no serpcast identity to clear here.*--all/);
 	});
 });
 

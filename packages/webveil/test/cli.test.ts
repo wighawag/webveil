@@ -20,6 +20,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createCli, serveCli} from '../src/cli.js';
 import type {SearchResult, FetchResult} from '../src/core/backends/types.js';
+import {createStateStore, partitionDir, stateRoot} from '../src/core/state.js';
 
 /** Serve the CLI with captured stdout and a no-op exit; returns stdout text. */
 async function run(
@@ -203,6 +204,27 @@ function mcpToolNames(): Promise<string[]> {
 		send({jsonrpc: '2.0', id: 2, method: 'tools/list'});
 	});
 }
+
+describe('webveil CLI: state clear command', () => {
+	it('clears the current identity by default and every identity with --all', async () => {
+		const clearState = vi.fn(async () => ['a'.repeat(64)]);
+		const out = await run(createCli({clearState}), ['state', 'clear']);
+		expect(clearState.mock.calls[0]![0]).toEqual({all: undefined});
+		expect(out).toContain('a'.repeat(64));
+		await run(createCli({clearState}), ['state', 'clear', '--all']);
+		expect(clearState.mock.calls[1]![0]).toEqual({all: true});
+	});
+
+	it('really removes every partition under XDG_STATE_HOME with --all', async () => {
+		const id = 'c'.repeat(64);
+		await createStateStore(partitionDir(id)).set('k', 1);
+		expect(existsSync(partitionDir(id))).toBe(true);
+		const out = await run(createCli(), ['state', 'clear', '--all']);
+		expect(out).toContain(id);
+		expect(existsSync(partitionDir(id))).toBe(false);
+		expect(existsSync(stateRoot())).toBe(true);
+	});
+});
 
 describe('webveil CLI — MCP frontend (--mcp)', () => {
 	it.skipIf(!existsSync(BIN))(

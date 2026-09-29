@@ -22,6 +22,7 @@ import {Cli, z} from 'incur';
 import {search as coreSearch} from './core/search.js';
 import {fetch as coreFetch} from './core/fetch.js';
 import {closeBackends} from './core/backends/registry.js';
+import {clearSerpcastState} from './core/backends/serpcast.js';
 
 /**
  * The two core functions the frontend wraps, seamed so tests can inject fakes.
@@ -30,6 +31,7 @@ import {closeBackends} from './core/backends/registry.js';
 export interface CliDeps {
 	search?: typeof coreSearch;
 	fetch?: typeof coreFetch;
+	clearState?: typeof clearSerpcastState;
 }
 
 /** The size presets `fetch` accepts, mirroring the core's `FetchSize`. */
@@ -44,6 +46,24 @@ const SIZES = ['s', 'm', 'l', 'f'] as const;
 export function createCli(deps: CliDeps = {}) {
 	const search = deps.search ?? coreSearch;
 	const fetch = deps.fetch ?? coreFetch;
+	const clearState = deps.clearState ?? clearSerpcastState;
+
+	// Recorded decision (task identity-partitioned-state-store): `state clear`
+	// is a `state` group (room for later state verbs) and, like every command,
+	// also an MCP tool: clearing only drops sessions, so an agent may do it.
+	// Alternative: a CLI-only flag on `search`, rejected as mixing two jobs.
+	const state = Cli.create('state', {
+		description: 'Persisted serpcast state (sessions, cooldowns) per identity.',
+	}).command('clear', {
+		description:
+			"Clear the current identity's state (this folder's egress and serpcast config), or every identity with --all.",
+		options: z.object({
+			all: z.boolean().optional().describe('Clear every identity'),
+		}),
+		async run(c) {
+			return {cleared: await clearState({all: c.options.all})};
+		},
+	});
 
 	return Cli.create('webveil', {
 		description:
@@ -91,7 +111,8 @@ export function createCli(deps: CliDeps = {}) {
 			async run(c) {
 				return fetch(c.args.url, {size: c.options.size});
 			},
-		});
+		})
+		.command(state);
 }
 
 // The real CLI (also `export default` so `incur gen` can import it for typed

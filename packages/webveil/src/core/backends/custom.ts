@@ -13,10 +13,11 @@
 // decision; see the task's Decisions block.)
 //
 // Trust (docs/adr/0004): the command is EXECUTABLE config, so `baseUrl` is
-// refused when it came from a project `webveil.json`, and a command path with a
-// slash resolves via trust.ts (`~` = home, relative = the setting's config-file
-// directory, never the cwd; a relative path from env is refused). A bare name
-// (no slash) is looked up by trust.ts `resolveCommandOnPath` over ABSOLUTE PATH
+// refused when it came from a project `webveil.json`, and a command that is a
+// path (trust.ts `isCommandPath`: a slash, or on Windows also a backslash or a
+// drive prefix) resolves via trust.ts (`~` = home, relative = the setting's
+// config-file directory, never the cwd; a relative path from env is refused).
+// A bare name is looked up by trust.ts `resolveCommandOnPath` over ABSOLUTE PATH
 // entries only (an empty, `.` or relative entry would otherwise let `spawn`
 // find a file in the cwd), and the absolute match is spawned. Both run in `search()`, where the
 // command is used, NOT in the factory: fetch.ts constructs the configured
@@ -33,6 +34,7 @@ import {spawn as defaultSpawn} from 'node:child_process';
 import type {Config} from '../config.js';
 import {
 	assertTrusted,
+	isCommandPath,
 	resolveCommandOnPath,
 	resolveExecutablePath,
 	sourceOf,
@@ -76,10 +78,20 @@ function parseCommand(baseUrl: string): [string, string[]] {
 const EXECUTABLE_KEYS = ['baseUrl'];
 
 /** Trust-check the command's source and resolve its executable (see header). */
-function resolveExecutable(config: Config, command: string): string {
+function resolveExecutable(
+	config: Config,
+	command: string,
+	platform: NodeJS.Platform,
+): string {
 	assertTrusted(config, EXECUTABLE_KEYS);
-	if (!command.includes('/')) return resolveCommandOnPath(command);
-	return resolveExecutablePath(command, sourceOf(config, 'baseUrl'));
+	if (!isCommandPath(command, platform))
+		return resolveCommandOnPath(command, {platform});
+	return resolveExecutablePath(
+		command,
+		sourceOf(config, 'baseUrl'),
+		undefined,
+		platform,
+	);
 }
 
 /**
@@ -155,11 +167,13 @@ function runCommand(
 /**
  * Build a custom backend bound to the configured command. The command owns its
  * own I/O; webveil hands it the request as JSON on stdin and parses
- * SearchResult[] from stdout, failing clearly on malformed output.
+ * SearchResult[] from stdout, failing clearly on malformed output. `platform`
+ * is a test seam selecting the Windows or POSIX path rules (trust.ts).
  */
 export function createCustomBackend(
 	config: Config,
 	spawn: SpawnFn = defaultSpawn,
+	platform: NodeJS.Platform = process.platform,
 ): Backend {
 	const [command, args] = parseCommand(config.baseUrl);
 	return {
@@ -168,7 +182,7 @@ export function createCustomBackend(
 			_http: Http,
 			options: SearchOptions = {},
 		): Promise<SearchResult[]> {
-			const exe = resolveExecutable(config, command);
+			const exe = resolveExecutable(config, command, platform);
 			const request: CustomRequest = {query};
 			if (options.maxResults !== undefined)
 				request.maxResults = options.maxResults;

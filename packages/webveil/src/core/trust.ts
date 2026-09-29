@@ -40,10 +40,39 @@
 //   for this process (`X_OK`); on Windows every regular file counts and the
 //   name is tried with each PATHEXT extension (default `.COM;.EXE;.BAT;.CMD`),
 //   and also as-is when it already ends in one of them.
+//
+// Recorded decisions (task custom-command-windows-backslash-paths):
+// - Whether a command value is a PATH (resolved by `resolveExecutablePath`) or
+//   a bare name (looked up by `resolveCommandOnPath`) is decided here, by
+//   `isCommandPath`, per platform: on Windows a `/`, a `\` or a drive prefix
+//   (`C:`) makes it a path; elsewhere only `/` does, since `\` is a legal
+//   file-name character on POSIX. Callers: the custom backend's command
+//   (custom.ts). serpcast's path settings (`libcurlPath`, `recipes`,
+//   `codeRecipes`, searchcast `chrome`/`xvfb`) are always paths, never bare
+//   names, so they only need `resolveExecutablePath`, which is now
+//   platform-aware too (serpcast.ts `resolvePath`).
+// - On Windows only a FULLY QUALIFIED path is absolute: drive + root
+//   (`C:\x`, `C:/x`) or UNC (`\\srv\share`, `//srv/share`, device paths).
+//   A root-relative path (`\tools\x.exe`, `/tools/x.exe`), which node's
+//   `isAbsolute` accepts but which takes the CURRENT drive, is treated as
+//   relative: resolved against the config file's directory (so it takes that
+//   file's drive) and refused from env/code. Before this task it was returned
+//   as-is on a real Windows host. Alternative considered: keep node's
+//   `isAbsolute` (the cwd's drive would then pick the file).
+// - A drive-relative path (`C:x.exe`) is REFUSED from every layer (a new
+//   `TrustError`): it resolves against the per-drive cwd, and resolving it
+//   against the config directory would silently ignore the drive it names.
+//   Alternative considered: resolving it against the config directory when the
+//   drives match.
+// - On Windows `~\...` expands to the home directory like `~/...` (the
+//   separator is `\` there). `~user` still does not expand.
+// - The platform is a seam (`platform` parameter, default `process.platform`)
+//   selecting `node:path`'s `win32` or `posix` functions, so the Windows rules
+//   are tested on Linux.
 
 import {accessSync, constants, statSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {dirname, isAbsolute, join, resolve} from 'node:path';
+import {isAbsolute, join, posix, win32} from 'node:path';
 import {configProvenance} from './layers.js';
 import type {ConfigSource, Provenance} from './layers.js';
 
@@ -89,19 +118,54 @@ export function assertTrusted(
 }
 
 /**
+ * Whether a command value names a path (resolved by `resolveExecutablePath`)
+ * rather than a bare name looked up on PATH (`resolveCommandOnPath`). On
+ * Windows `/`, `\` or a drive prefix (`C:`) makes it a path; elsewhere only
+ * `/` does (`\` is a legal file-name character on POSIX).
+ */
+export function isCommandPath(
+	command: string,
+	platform: NodeJS.Platform = process.platform,
+): boolean {
+	if (platform === 'win32')
+		return /[\\/]/.test(command) || /^[A-Za-z]:/.test(command);
+	return command.includes('/');
+}
+
+/** Windows: drive + root (`C:\`, `C:/`) or UNC/device (`\\`, `//`). */
+const WIN32_FULLY_QUALIFIED = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/;
+/** Windows: a drive with no root (`C:x`), relative to that drive's cwd. */
+const WIN32_DRIVE_RELATIVE = /^[A-Za-z]:(?![\\/])/;
+
+/**
  * Resolve a path from an executable setting without ever touching the cwd.
  * `source` is where the value came from (`sourceOf`); `undefined` means code.
+ * `platform` selects the Windows or POSIX path rules (see the decisions above).
  */
 export function resolveExecutablePath(
 	value: string,
 	source: ConfigSource | undefined,
 	home: string = homedir(),
+	platform: NodeJS.Platform = process.platform,
 ): string {
-	if (value === '~' || value.startsWith('~/'))
-		return join(home, value.slice(1));
-	if (isAbsolute(value)) return value;
+	const windows = platform === 'win32';
+	const path = windows ? win32 : posix;
+	if (
+		value === '~' ||
+		value.startsWith('~/') ||
+		(windows && value.startsWith('~\\'))
+	)
+		return path.join(home, value.slice(1));
+	if (windows ? WIN32_FULLY_QUALIFIED.test(value) : path.isAbsolute(value))
+		return value;
+	if (windows && WIN32_DRIVE_RELATIVE.test(value))
+		throw new TrustError(
+			`webveil: drive-relative path '${value}' from ${source?.layer ?? 'code'} ` +
+				"is refused: it resolves against that drive's cwd; write it as " +
+				'C:\\... (absolute), ~/..., or relative to the config file',
+		);
 	if (source?.layer === 'global' || source?.layer === 'project')
-		return resolve(dirname(source.path), value);
+		return path.resolve(path.dirname(source.path), value);
 	throw new TrustError(
 		`webveil: relative path '${value}' from ${source?.layer ?? 'code'} must ` +
 			'be absolute or start with ~/ (it is never resolved against the cwd)',

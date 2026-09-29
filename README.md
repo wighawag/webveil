@@ -98,7 +98,7 @@ What to expect:
 - **Anonymity.** With this backend `egress` governs the requests that reach the search engines: see [Where does anonymity live?](#where-does-anonymity-live-read-before-turning-on-egress).
 - **`web_fetch` gets the browser fingerprint too.** With this backend `fetchTransport` defaults to `serpcast`, so `web_fetch` also goes through libcurl-impersonate (and so also needs it). Set `"fetchTransport": "plain"` to keep the plain Node transport: see [The `web_fetch` transport](#the-web_fetch-transport-fetchtransport).
 
-**Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private serpcast recipes* under [How it works](#how-it-works-seams).
+**Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private serpcast recipes* under [How it works](#how-it-works-seams). serpcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/serpcast/tree/main/examples/recipes) is such a code recipe, so it goes under `serpcast.codeRecipes` in the global config; its shared `public` key is often rate limited or unresponsive (it timed out for most test queries on 2026-09-29, direct and through Tor), so ask Marginalia for a free personal key and set `MARGINALIA_API_KEY`.
 
 #### A browser engine as the fallback (searchcast)
 
@@ -121,6 +121,15 @@ A **browser engine** runs a declarative recipe in [searchcast](https://github.co
 - **`endpoint`**: a `searchcast serve` you run yourself, `"searchcast": {"mode": "endpoint", "endpoint": "/run/searchcast/searchcast.sock"}` (a Unix socket path or an `http://` URL); `<recipe>` is then the recipe's name on that server and is not loaded locally. webveil does not run that browser, so it cannot put it on its egress: endpoint mode requires `egress: direct` (see [Where does anonymity live?](#where-does-anonymity-live-read-before-turning-on-egress)).
 
 Two limits of library mode. A persistent profile (`persistProfile`) must not be used by two webveil processes of the same identity at once (two parallel CLI calls, or the CLI next to a running MCP server or pi extension): Chromium's profile lock refuses the second browser. And searchcast is resolved from webveil's own install location, so it must be installed alongside webveil: webveil declares it as an optional peer dependency (`searchcast >=0.1.1`), so a package manager does not install it for you but, once you install it next to webveil (in the same project, or globally next to a global webveil), exposes it to webveil even under a strict pnpm layout. Without it a library-mode engine fails before any search with an error saying to install it.
+
+#### On NixOS
+
+Verified on 2026-09-29 (NixOS, Node 24.19.0, webveil 0.5.0, serpcast 0.1.1).
+
+- **libcurl-impersonate.** `npx serpcast install-libcurl` works: the prebuilt linux-x64 library needs only libc and uses NixOS's CA bundle at `/etc/ssl/certs/ca-certificates.crt`. nixpkgs' `curl-impersonate` works too (the same pinned 2.1.1 release, identical JA4 and HTTP/2 fingerprint). Do not put a `/nix/store/...` path in a config file (it breaks after an upgrade or garbage collection): link the library where serpcast looks by default instead, for example with home-manager `xdg.dataFile."serpcast/libcurl-impersonate.so".source = "${pkgs.curl-impersonate}/lib/libcurl-impersonate.so";`, or set `WEBVEIL_SERPCAST_LIBCURL_PATH` in a dev shell. Check with `npx serpcast doctor`.
+- **npm's allow-scripts warning for `koffi`** (npm 11 blocks its install script) is harmless: koffi's prebuilt binary loads without it.
+- **Browser engines (library mode).** Set `serpcast.searchcast.chrome` to nixpkgs Chromium (`${pkgs.chromium}/bin/chromium`, or `/run/current-system/sw/bin/chromium` when installed system-wide); browsers downloaded by other tools (such as Playwright's) run only with `programs.nix-ld` enabled. Without a display (a server, an SSH session) set `serpcast.searchcast.xvfb` to nixpkgs' Xvfb (`${pkgs.xvfb}/bin/Xvfb`, `pkgs.xorg.xvfb` on older nixpkgs), or pass `"chromeArgs": ["--headless=new"]` (easier for sites to detect). Both verified.
+- **Tor.** `services.tor.client.enable = true;` gives a SOCKS proxy on `127.0.0.1:9050`: use `"egress": {"mode": "socks5", "url": "socks5://127.0.0.1:9050"}` (webveil hands serpcast `socks5h`, so DNS stays at Tor). Search and `web_fetch` (both transports) exit through Tor (`check.torproject.org/api/ip` reports `IsTor: true`) with the same fingerprint as direct.
 
 ### With a local SearXNG (the default backend)
 

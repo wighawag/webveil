@@ -27,7 +27,8 @@
 //   only header set; adding headers would break the fingerprint) and only GET is
 //   sent (serpcast's transport has no other method). Redirects (301, 302, 303,
 //   307, 308 with a Location) are followed, at most 20 (the WHATWG fetch limit),
-//   and only to http(s).
+//   and only to http(s). The hop gate and redirect rules are shared with the
+//   plain guarded fetch (security.ts), so both transports check the same way.
 // - The timeout and body size limit are serpcast's defaults (15 s, 16 MiB): no
 //   new config keys. Their failures are serpcast errors, surfaced as is.
 // - Only `serpcast.libcurlPath` is trust-checked here (trust.ts: checked where
@@ -42,7 +43,12 @@ import type {Transport, TransportOptions, TransportResponse} from 'serpcast';
 import type {Config, FetchTransport} from './config.js';
 import type {EgressFetch} from './egress.js';
 import {identityKey} from './identity.js';
-import {assertPublicUrl as realAssertPublicUrl} from './security.js';
+import {
+	assertFetchableHop,
+	assertPublicUrl as realAssertPublicUrl,
+	isRedirectStatus,
+	nextRedirectUrl,
+} from './security.js';
 import {
 	impersonationFailure,
 	serpcastProxy,
@@ -56,9 +62,7 @@ export interface SerpcastFetchDeps {
 }
 
 const TRANSPORTS: FetchTransport[] = ['plain', 'serpcast'];
-const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
-const MAX_REDIRECTS = 20;
 const transports = new Map<string, Transport>();
 
 /** The `web_fetch` transport: explicit `fetchTransport`, else by `backend`. */
@@ -134,10 +138,7 @@ export function createSerpcastFetch(
 		const session = shared.session();
 		const signal = init?.signal ?? undefined;
 		for (let hop = 0; ; hop++) {
-			const protocol = URL.canParse(url) ? new URL(url).protocol : '';
-			if (protocol !== 'http:' && protocol !== 'https:')
-				throw new Error(`webveil: refusing to fetch non-http(s) url ${url}`);
-			await assertPublicUrl(url, config);
+			await assertFetchableHop(url, config, assertPublicUrl);
 			const response = await session
 				.request(url, {kind: 'document', ...(signal && {signal})})
 				.catch((error: unknown) =>
@@ -148,13 +149,9 @@ export function createSerpcastFetch(
 					),
 				);
 			const location = response.headers.get('location');
-			if (!REDIRECTS.has(response.status) || !location)
+			if (!isRedirectStatus(response.status) || !location)
 				return toResponse(response, hop > 0);
-			if (hop === MAX_REDIRECTS)
-				throw new Error(
-					`webveil: too many redirects (more than ${MAX_REDIRECTS}) fetching ${url}`,
-				);
-			url = new URL(location, url).href;
+			url = nextRedirectUrl(location, url, hop);
 		}
 	}) as EgressFetch;
 }

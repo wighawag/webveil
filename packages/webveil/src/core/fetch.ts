@@ -122,7 +122,8 @@ export async function fetchAll(
 	// Default path: distilly Extractor over webveil's egress. Build the
 	// egress-bound fetch ONCE, wrap it with the SSRF guard, and inject THAT into
 	// distilly (never a global fetch). The guard covers distilly's rule-rewritten
-	// requests too. A configured-but-unbuildable proxy throws at build time
+	// requests too, and on direct egress every redirect hop (it follows redirects
+	// itself, security.ts). A configured-but-unbuildable proxy throws at build time
 	// (fail-loud), before any I/O. With `fetchTransport: serpcast` the injected
 	// fetch is serpcast's impersonated transport instead, which follows redirects
 	// itself and runs the SSRF guard on every hop (fetch-transport.ts).

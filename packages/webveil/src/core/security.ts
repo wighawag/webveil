@@ -135,24 +135,168 @@ export async function assertPublicUrl(
 			);
 }
 
+// ---- Redirect hops -------------------------------------------------------
+// Shared by BOTH `web_fetch` transports (the plain guarded fetch below and the
+// `fetchTransport: serpcast` adapter in fetch-transport.ts), so a redirect
+// target gets the same gate on either: http(s) only, SSRF-checked, at most
+// MAX_REDIRECTS hops.
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** At most this many redirects are followed (the WHATWG fetch limit). */
+export const MAX_REDIRECTS = 20;
+
+/** Is this status a redirect webveil follows (301, 302, 303, 307, 308)? */
+export function isRedirectStatus(status: number): boolean {
+	return REDIRECT_STATUSES.has(status);
+}
+
+/**
+ * The gate EVERY hop passes before it is sent: refuse a non-http(s) url, then
+ * run the SSRF check (`assert`, {@link assertPublicUrl} unless a test seams it).
+ */
+export async function assertFetchableHop(
+	url: string,
+	config: Config,
+	assert: (url: string, config: Config) => Promise<void> = assertPublicUrl,
+): Promise<void> {
+	const protocol = URL.canParse(url) ? new URL(url).protocol : '';
+	if (protocol !== 'http:' && protocol !== 'https:')
+		throw new Error(`webveil: refusing to fetch non-http(s) url ${url}`);
+	await assert(url, config);
+}
+
+/**
+ * The next url of a redirect (its `Location` resolved against the current url),
+ * or an error once `hop` (0 for the first response) reaches MAX_REDIRECTS.
+ */
+export function nextRedirectUrl(
+	location: string,
+	url: string,
+	hop: number,
+): string {
+	if (hop === MAX_REDIRECTS)
+		throw new Error(
+			`webveil: too many redirects (more than ${MAX_REDIRECTS}) fetching ${url}`,
+		);
+	return new URL(location, url).href;
+}
+
+/** Test seam: how a hop is SSRF-checked (defaults to {@link assertPublicUrl}). */
+export interface GuardDeps {
+	assertPublicUrl?: (url: string, config: Config) => Promise<void>;
+}
+
+/** Headers dropped when a redirect crosses origins (as undici's fetch does). */
+const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie'];
+/** Headers dropped when a redirect turns the request into a body-less GET. */
+const BODY_HEADERS = [
+	'content-type',
+	'content-length',
+	'content-encoding',
+	'content-language',
+	'content-location',
+];
+
 /**
  * Wrap an egress-bound `fetch` with the SSRF guard. The returned fetch checks
- * EVERY request URL (so it covers distilly's rule-rewritten requests too, not
- * only webveil's own GET) before delegating to the underlying egress fetch.
+ * EVERY request it sends (so it covers distilly's rule-rewritten requests too,
+ * not only webveil's own GET) before delegating to the underlying egress fetch.
  * This is what `core.fetch()` injects into distilly. See docs/adr/0001.
+ *
+ * Redirects (task plain-fetch-ssrf-check-every-redirect). On DIRECT egress the
+ * guard follows redirects ITSELF: it calls the wrapped fetch with
+ * `redirect: 'manual'` and runs {@link assertFetchableHop} on every target, so a
+ * public page redirecting to 127.0.0.1 or cloud metadata is refused before the
+ * target is requested. Recorded decisions:
+ * - The caller's `redirect` mode is honoured: `follow` (distilly's, and the
+ *   default) as above; `manual` returns the redirect response unchanged (only
+ *   the first url is checked, nothing else is sent); `error` rejects with a
+ *   TypeError on any redirect status, as fetch does.
+ * - Method/body per the fetch spec: 303 (unless GET/HEAD), and 301/302 on POST,
+ *   become a body-less GET (body headers dropped); 307/308 re-send the same
+ *   method and `init.body`. webveil only sends GET today, so a streamed or
+ *   `Request`-carried body is NOT re-sent on 307/308 (kept simple on purpose).
+ * - Cross-origin hops drop `authorization`, `proxy-authorization` and `cookie`,
+ *   as undici's own redirect following does, so legitimate chains behave as
+ *   before.
+ * - A followed response reports the last hop as `url` and `redirected: true`
+ *   (distilly resolves relative links against `url`). A response with no
+ *   redirect is returned untouched.
+ * - Under a PROXY egress (`http` | `socks5`) the guard relaxes entirely, as for
+ *   the first url (see THE RELAXATION RULE above): the request is delegated
+ *   unchanged and the egress fetch (undici) follows redirects natively. No hop
+ *   is checked, no DNS lookup happens locally. Alternative considered: follow
+ *   manually under a proxy too (one code path), rejected because it would
+ *   change proxied behaviour for no security gain (every check is a no-op).
  */
 export function guardEgressFetch(
 	fetch: EgressFetch,
 	config: Config,
+	deps: GuardDeps = {},
 ): EgressFetch {
+	const assert = deps.assertPublicUrl ?? assertPublicUrl;
+	const proxied = egressIsProxy(config);
 	return (async (input: RequestInfo | URL, init?: RequestInit) => {
-		const url =
+		if (proxied) return fetch(input as never, init as never);
+		const request =
+			typeof input === 'string' || input instanceof URL ? undefined : input;
+		let url =
 			typeof input === 'string'
 				? input
 				: input instanceof URL
 					? input.href
 					: input.url;
-		await assertPublicUrl(url, config);
-		return fetch(input as never, init as never);
+		const mode = init?.redirect ?? request?.redirect ?? 'follow';
+		let method = (init?.method ?? request?.method ?? 'GET').toUpperCase();
+		const headers = new Headers(init?.headers ?? request?.headers);
+		let body = init?.body ?? null;
+		const signal = init?.signal ?? request?.signal;
+		for (let hop = 0; ; hop++) {
+			await assertFetchableHop(url, config, assert);
+			const response: Response =
+				hop === 0
+					? await fetch(input as never, {...init, redirect: 'manual'} as never)
+					: await fetch(url, {
+							...init,
+							method,
+							headers,
+							body,
+							...(signal && {signal}),
+							redirect: 'manual',
+						});
+			if (mode === 'manual' || !isRedirectStatus(response.status))
+				return followed(response, url, hop);
+			if (mode === 'error') {
+				await response.body?.cancel().catch(() => {});
+				throw new TypeError(
+					`webveil: redirect refused (redirect mode 'error') fetching ${url}`,
+				);
+			}
+			const location = response.headers.get('location');
+			if (!location) return followed(response, url, hop);
+			await response.body?.cancel().catch(() => {});
+			const next = nextRedirectUrl(location, url, hop);
+			const status = response.status;
+			if (
+				(status === 303 && method !== 'GET' && method !== 'HEAD') ||
+				((status === 301 || status === 302) && method === 'POST')
+			) {
+				method = 'GET';
+				body = null;
+				for (const name of BODY_HEADERS) headers.delete(name);
+			}
+			if (new URL(next).origin !== new URL(url).origin)
+				for (const name of CREDENTIAL_HEADERS) headers.delete(name);
+			url = next;
+		}
 	}) as EgressFetch;
+}
+
+/** A response reached after `hop` redirects reports the last url, redirected. */
+function followed(response: Response, url: string, hop: number): Response {
+	if (hop === 0) return response;
+	Object.defineProperty(response, 'url', {value: url});
+	Object.defineProperty(response, 'redirected', {value: true});
+	return response;
 }

@@ -26,3 +26,12 @@ Under a proxy egress the guard relaxes entirely today (no local DNS, the proxy o
 ## Prompt
 
 Goal: the SSRF guard covers every request `web_fetch` makes, including redirect targets (ADR 0001). Read `core/security.ts`, `core/egress.ts`, `core/fetch.ts` and `core/fetch-transport.ts` first. FIRST, check this task against current reality. RECORD non-obvious decisions.
+
+## Decisions
+
+All of these are recorded in the JSDoc on `guardEgressFetch` in `packages/webveil/src/core/security.ts`; link that from the done record.
+1. **Proxy egress:** under `http`/`socks5` the guard hands the request through unchanged and undici follows redirects natively. I considered following redirects manually there too, for a single code path, but rejected it: every check is a no-op under a proxy, so it would only change proxied behaviour for nothing.
+2. **307/308 bodies:** only `init.body` is re-sent. A streamed body, or one carried on a `Request`, is not, which is enough while webveil only sends GET.
+3. **Cross-origin headers:** on a hop to another origin, `authorization`, `proxy-authorization` and `cookie` are dropped, as undici does, so legitimate chains behave as they did before.
+4. **`redirect: 'error'`:** rejects with a `TypeError` on any redirect status, even one without a `Location`, following the fetch spec.
+5. **Scheme check on the first url:** on direct egress it now covers the first url too, not just redirect targets, to match the serpcast adapter. Before, such urls also failed, just with a different error from the DNS lookup.

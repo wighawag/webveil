@@ -26,3 +26,14 @@ covers: []
 ## Prompt
 
 Read `core/fetch-transport.ts` and serpcast 0.3's `TransportSession` (`clearCookies`, `close`). FIRST, check this task against current reality. RECORD non-obvious decisions.
+
+## Decisions
+
+All recorded in the "Recorded decisions (task serpcast-0-3-and-fetch-connection-reuse)" comment at the top of `packages/webveil/src/core/fetch-transport.ts`.
+1. **A pool rather than one shared session.** One shared session was rejected because two concurrent fetches would share, and clear, one cookie jar.
+2. **At most 4 idle sessions per identity** (`MAX_IDLE_SESSIONS`); extras are closed when returned. The task didn't ask for a cap. It limits how many connections stay open after a burst of concurrent fetches, and I didn't make it configurable.
+3. **Idle sessions close after 10 minutes,** serpcast's own session idle default (`DEFAULT_SESSION_IDLE_MS`). There is no config key, the same as the existing timeout and size limits.
+4. **A failed fetch closes its session instead of returning it.** This covers errors, timeouts, aborts, a hop refused by the SSRF check, and too many redirects, so a broken or half-finished connection is never handed to the next fetch.
+5. **This reverses the serpcast-0-2-decoy-guard decision** (one session per fetch), per the owner's decision of 2026-09-29. I replaced that old comment with the new decisions block, which says it is a reversal.
+
+No out-of-scope issues noticed, and I made no git operations; the working tree holds only this task's changes.

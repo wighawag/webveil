@@ -12,12 +12,44 @@
 //   small keys, and a single file makes "both writes applied" a plain
 //   read-modify-write under the lock. Alternative: a file per key (names
 //   encoded), rejected as more files and more locking for no gain.
-// - Lock: an exclusive-create (`wx`) `state.lock` in the partition, held only
-//   around each read-modify-write; the write itself is a temp file renamed
-//   over `state.json`, so readers never take the lock and never see a partial
+// - Lock: a `state.lock` in the partition, held only around each
+//   read-modify-write; the write itself is a temp file renamed over
+//   `state.json`, so readers never take the lock and never see a partial
 //   file. A lock older than LOCK_STALE_MS (a crashed writer) is broken; past
 //   LOCK_WAIT_MS waiting is an error. Alternative: flock(2), rejected because
-//   Node has no portable binding without a native dependency.
+//   Node has no portable binding without a native dependency. (The lock's
+//   shape and its takeover were redone by the next task.)
+//
+// Recorded decisions (task state-lock-stale-takeover-race):
+// - The old check-then-`rm` break let two waiters that saw the same stale lock
+//   both hold it (the second `rm` deleted the lock the first had just taken).
+//   Now the lock is a DIRECTORY `state.lock` holding one empty file named by
+//   its holder's token (pid plus random). Taking it: build
+//   `state.lock.<token>.new/<token>` and `rename` it to `state.lock`, which
+//   fails while a lock is there (non-empty directory on POSIX, any directory
+//   on Windows), so a held lock is never empty. Removing it, by its holder or
+//   by a waiter breaking a stale one: `rename` the token file `<token>` out
+//   (atomic, one winner, and it only matches that exact holder), then
+//   `rmdir`, which can only remove an empty directory and so never a lock
+//   someone has freshly taken. A holder whose token is gone (its lock was
+//   broken) touches nothing on release. Staleness is the token file's mtime.
+//   An empty `state.lock` (a remover between its two steps, or one that
+//   crashed there) is simply `rmdir`ed. Only rename/rmdir/unlink semantics,
+//   the same on POSIX and Windows; no native dependency.
+// - Alternatives considered: a token inside a lock FILE, renamed aside to
+//   break it and checked afterwards, rejected because a waiter that renames a
+//   fresh lock by mistake must put it back, and that restore can itself
+//   clobber a third waiter's lock; a second "breaker" lock serializing
+//   breaks, rejected because that lock needs stale-breaking in turn.
+// - Compatibility: the name stays `state.lock`, so an older webveil (lock
+//   FILE, `wx`) and this one still exclude each other. A stale lock file left
+//   by an older webveil is broken with `unlink`, which never removes a
+//   directory, so it too cannot take out a lock taken meanwhile.
+// - A process that crashes while taking or removing a lock can leave a
+//   `state.lock.<token>.new` or `.gone` entry behind in the partition. They
+//   are inert (never read) and go with the partition on clear; not swept.
+// - `withLock` is exported for its tests only (with `LockHooks` seams to force
+//   an interleaving); it is not part of the package's public surface.
 // - Expiry is checked on every read with this store's clock; an expired entry
 //   is not returned and is pruned from the file under the lock.
 // - An unreadable (non-JSON) state file reads as empty and is overwritten on
@@ -45,7 +77,9 @@ import {
 	readFile,
 	rename,
 	rm,
+	rmdir,
 	stat,
+	unlink,
 	utimes,
 	writeFile,
 } from 'node:fs/promises';
@@ -92,33 +126,114 @@ async function ensureDir(dir: string): Promise<void> {
 	await chmod(dir, 0o700);
 }
 
-/** Run `fn` holding the partition's lock (see the decisions above). */
-async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+/** Test seams of `withLock`, to force an interleaving; nothing else sets them. */
+export interface LockHooks {
+	/** Awaited after judging the lock stale, before breaking it. */
+	onStale?: () => Promise<void>;
+	/** Called each time the lock is found held and fresh, before waiting. */
+	onWait?: () => void;
+}
+
+/** Rename errors meaning "the lock path is taken" (POSIX and Windows). */
+const TAKEN = new Set([
+	'EEXIST',
+	'ENOTEMPTY',
+	'ENOTDIR',
+	'EPERM',
+	'EACCES',
+	'EBUSY',
+]);
+const codeOf = (error: unknown) => (error as NodeJS.ErrnoException).code;
+
+/**
+ * Remove the lock directory `lock` if it holds exactly `token`: move the token
+ * out (atomic, and only possible while `token` is still the holder), then
+ * `rmdir`, which only ever removes an empty directory, never a held lock.
+ * False when `token` no longer holds the lock (nothing is touched).
+ */
+async function release(lock: string, token: string, own: string) {
+	const gone = `${lock}.${own}.gone`;
+	try {
+		await rename(join(lock, token), gone);
+	} catch (error) {
+		if (codeOf(error) === 'ENOENT') return false;
+		throw error;
+	}
+	await rm(gone, {force: true});
+	await rmdir(lock).catch(() => {}); // gone already, or a new lock in place
+	return true;
+}
+
+/**
+ * Run `fn` holding the partition's lock (see the decisions above; the takeover
+ * design is recorded there under task state-lock-stale-takeover-race).
+ */
+export async function withLock<T>(
+	dir: string,
+	fn: () => Promise<T>,
+	hooks: LockHooks = {},
+): Promise<T> {
 	const lock = join(dir, LOCK_FILE);
+	const own = `${process.pid}-${randomBytes(8).toString('hex')}`;
+	const next = `${lock}.${own}.new`;
 	const start = Date.now();
-	for (;;) {
-		await ensureDir(dir);
-		try {
-			await (await open(lock, 'wx', 0o600)).close();
-			break;
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code;
-			if (code === 'ENOENT') continue; // partition removed meanwhile
-			if (code !== 'EEXIST') throw error;
+	try {
+		for (;;) {
+			if (Date.now() - start > LOCK_WAIT_MS)
+				throw new Error(`webveil: state lock ${lock} held too long`);
+			await ensureDir(dir);
+			await mkdir(next, {recursive: true, mode: 0o700});
+			await writeFile(join(next, own), '', {mode: 0o600}); // fresh mtime
+			try {
+				await rename(next, lock);
+				break;
+			} catch (error) {
+				if (codeOf(error) === 'ENOENT') continue; // partition removed meanwhile
+				if (!TAKEN.has(codeOf(error) ?? '')) throw error;
+			}
+			const held = await readdir(lock).catch((error: unknown) => {
+				if (codeOf(error) === 'ENOTDIR') return null;
+				if (codeOf(error) === 'ENOENT') return [];
+				throw error;
+			});
+			if (held === null) {
+				// A lock file from an older webveil: `unlink` never removes a
+				// directory, so it cannot take out a lock taken meanwhile.
+				const age = await stat(lock).then(
+					(s) => Date.now() - s.mtimeMs,
+					() => 0,
+				);
+				if (age > LOCK_STALE_MS) {
+					await hooks.onStale?.();
+					await unlink(lock).catch(() => {});
+					continue;
+				}
+			} else if (held.length === 0) {
+				// Released or broken, not yet removed (or a remover crashed).
+				await rmdir(lock).catch(() => {});
+				continue;
+			} else {
+				const token = held[0]!;
+				const age = await stat(join(lock, token)).then(
+					(s) => Date.now() - s.mtimeMs,
+					() => 0,
+				);
+				if (age > LOCK_STALE_MS) {
+					await hooks.onStale?.();
+					await release(lock, token, own);
+					continue;
+				}
+			}
+			hooks.onWait?.();
+			await sleep(5 + Math.random() * 20);
 		}
-		const age = await stat(lock).then(
-			(s) => Date.now() - s.mtimeMs,
-			() => 0,
-		);
-		if (age > LOCK_STALE_MS) await rm(lock, {force: true});
-		else if (Date.now() - start > LOCK_WAIT_MS)
-			throw new Error(`webveil: state lock ${lock} held too long`);
-		else await sleep(5 + Math.random() * 20);
+	} finally {
+		await rm(next, {recursive: true, force: true});
 	}
 	try {
 		return await fn();
 	} finally {
-		await rm(lock, {force: true});
+		await release(lock, own, own);
 	}
 }
 

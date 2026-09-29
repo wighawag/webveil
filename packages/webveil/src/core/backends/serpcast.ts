@@ -34,21 +34,65 @@
 //   section resolved here, whatever `backend` is selected, so a user who
 //   switched backends can still drop the old sessions. A section that does not
 //   resolve (no `engines`) is an error pointing at `--all`.
+//
+// Recorded decisions (task searchcast-fallback-and-guard; keys: config.ts,
+// profile layout and idle clock: state.ts):
+// - A browser engine is named `searchcast:<recipe>` in `serpcast.engines`, so
+//   ONE ordered chain mixes HTTP and browser engines and the same recipe JSON
+//   can run both ways (`ddg` over HTTP, `searchcast:ddg` in the browser). A
+//   loaded recipe whose own name starts with `searchcast:` is an error (the
+//   prefix is reserved), never a silent shadow. In library mode the recipe
+//   must be a loaded declarative one (a code recipe cannot run in a browser);
+//   in endpoint mode `<recipe>` is the name on the server and is not loaded
+//   locally. Alternative considered: a separate `searchcast.engines` list,
+//   rejected because it cannot say where in the chain the browser goes.
+// - The mode is an explicit `searchcast.mode` (default `library`), so a project
+//   can switch to `endpoint` while the global config keeps its chrome path;
+//   library keys are then simply unused. Alternative considered: inferring the
+//   mode from `endpoint` being set, rejected because a global chrome path plus
+//   a project endpoint would then be ambiguous.
+// - The chrome and xvfb paths and chrome args are EXECUTABLE_KEYS, checked with
+//   the others whenever this backend searches (not only when a browser engine
+//   is listed), like `codeRecipes`: one rule for the whole section.
+// - The egress guards run only when a browser engine is listed, BEFORE
+//   searchcast is imported or an instance is built: endpoint mode needs
+//   `egress: direct`; library mode refuses a SOCKS URL with credentials. An
+//   http proxy URL with credentials is not refused: Chromium then fails
+//   closed (407), it does not leak.
+// - webveil imports `searchcast` itself (the `importSearchcast` seam) before
+//   building an instance that runs a library-mode engine, and hands it to
+//   serpcast as `searchcast.module`: a missing package is a clear error before
+//   any search, not one `transport` failure inside an exhausted chain. It is
+//   resolved from webveil's location and not declared as a peer dependency
+//   (work/notes/observations/searchcast-not-declared-as-optional-peer.md).
+// - A persistent profile is expired before the instance is (re)used: if the
+//   partition was idle past `sessionIdleMs` (serpcast's default when unset),
+//   the cached instance (and its browser) is closed first, then the profile
+//   deleted, so a long-lived MCP server is covered too, not only the CLI.
 
 import {readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
 import {
 	createSerpcast as realCreateSerpcast,
+	DEFAULT_SESSION_IDLE_MS,
+	isCodeRecipe,
 	loadCodeRecipe,
 	SerpcastError,
 } from 'serpcast';
-import type {Engine, Serpcast, SerpcastOptions} from 'serpcast';
+import type {
+	Engine,
+	SearchcastLibraryOptions,
+	SearchcastModule,
+	Serpcast,
+	SerpcastOptions,
+} from 'serpcast';
 import {loadRecipes} from 'serpcast-recipe/node';
 import {resolveConfig} from '../config.js';
 import type {
 	Config,
 	Egress,
 	ResolveOptions,
+	SearchcastConfig,
 	SerpcastConfig,
 } from '../config.js';
 import {EgressError} from '../egress.js';
@@ -56,18 +100,31 @@ import {identityKey} from '../identity.js';
 import {
 	clearState,
 	createStateStore,
+	deleteProfile,
+	isProfileIdle,
 	partitionDir,
+	profileDir,
 	stateRoot,
+	touchProfile,
 } from '../state.js';
 import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
 import type {Backend, SearchResult} from './types.js';
 
-/** Test seam: how an instance is created (default: serpcast's). */
+/** Test seams: how an instance is created, how searchcast is imported. */
 export interface SerpcastDeps {
 	createSerpcast?: (options: SerpcastOptions) => Serpcast;
+	importSearchcast?: () => Promise<SearchcastModule>;
 }
 
-const EXECUTABLE_KEYS = ['serpcast.libcurlPath', 'serpcast.codeRecipes'];
+const EXECUTABLE_KEYS = [
+	'serpcast.libcurlPath',
+	'serpcast.codeRecipes',
+	'serpcast.searchcast.chrome',
+	'serpcast.searchcast.xvfb',
+	'serpcast.searchcast.chromeArgs',
+];
+/** The engine-name prefix of a browser engine (see the decisions above). */
+const BROWSER = 'searchcast:';
 const SOCKS = ['socks5', 'socks', 'socks5h'];
 const instances = new Map<string, Serpcast>();
 
@@ -90,6 +147,35 @@ function resolvePath(config: Config, key: string, value: string): string {
 const isList = (v: unknown): v is string[] =>
 	Array.isArray(v) && v.every((x) => typeof x === 'string');
 const num = (v: unknown) => (v === undefined ? undefined : Number(v));
+const isObject = (v: unknown): v is Record<string, unknown> =>
+	typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** The `searchcast` subsection validated, its paths resolved. */
+function browserSettings(
+	config: Config,
+	value: unknown,
+): SearchcastConfig | undefined {
+	if (value === undefined) return undefined;
+	const bad = (what: string) =>
+		new Error(`serpcast: serpcast.searchcast${what}`);
+	if (!isObject(value)) throw bad(' must be an object');
+	const b = {...value} as SearchcastConfig;
+	b.mode ??= 'library';
+	if (b.mode !== 'library' && b.mode !== 'endpoint')
+		throw bad(`.mode must be 'library' or 'endpoint'`);
+	if (b.mode === 'endpoint' && (typeof b.endpoint !== 'string' || !b.endpoint))
+		throw bad('.endpoint must be set in endpoint mode (a URL or socket path)');
+	if (b.chromeArgs !== undefined && !isList(b.chromeArgs))
+		throw bad('.chromeArgs must be a list of strings');
+	if (b.persistProfile !== undefined && typeof b.persistProfile !== 'boolean')
+		throw bad('.persistProfile must be true or false');
+	for (const key of ['chrome', 'xvfb'] as const) {
+		if (b[key] === undefined) continue;
+		if (typeof b[key] !== 'string') throw bad(`.${key} must be a path`);
+		b[key] = resolvePath(config, `searchcast.${key}`, b[key]);
+	}
+	return b;
+}
 
 /** The section validated, its paths resolved (trust-checked first). */
 function settings(config: Config): SerpcastConfig {
@@ -111,12 +197,89 @@ function settings(config: Config): SerpcastConfig {
 		);
 	if (s.libcurlPath)
 		s.libcurlPath = resolvePath(config, 'libcurlPath', s.libcurlPath);
+	const browser = browserSettings(config, s.searchcast);
+	if (browser) s.searchcast = browser;
 	return s;
+}
+
+/** The browser mode in use, or undefined when no browser engine is listed. */
+function browserMode(s: SerpcastConfig): 'library' | 'endpoint' | undefined {
+	if (!s.engines!.some((name) => name.startsWith(BROWSER))) return undefined;
+	return s.searchcast?.mode ?? 'library';
+}
+
+/**
+ * Refuse a browser egress webveil cannot honour (fail loud, docs/adr/0004):
+ * an external endpoint behind a non-direct egress, or a SOCKS URL with
+ * credentials in library mode (Chromium has no SOCKS authentication).
+ */
+function assertBrowserEgress(egress: Egress, mode: string | undefined): void {
+	if (mode === 'endpoint' && egress.mode !== 'direct')
+		throw new EgressError(
+			`egress ${egress.mode}: serpcast.searchcast endpoint mode cannot be ` +
+				'proxied: webveil does not run that browser, so it would reach the ' +
+				'engines from wherever it runs, outside the egress (fake ' +
+				'anonymity, the same trap as a local SearXNG). Use library mode ' +
+				'(webveil starts searchcast with the egress as its proxy), or set ' +
+				'egress=direct and proxy the searchcast server yourself (for ' +
+				'example under anonctl, where the account is already forced).',
+		);
+	if (mode !== 'library' || egress.mode !== 'socks5') return;
+	const url = URL.canParse(egress.url) ? new URL(egress.url) : undefined;
+	if (url && (url.username || url.password))
+		throw new EgressError(
+			'egress socks5: a SOCKS proxy URL with credentials cannot be handed ' +
+				'to the searchcast browser: Chromium does not support SOCKS ' +
+				'authentication, so the credentials (and any circuit isolation ' +
+				'they select) would be dropped. Use a SOCKS URL without ' +
+				'credentials, an http egress, or endpoint mode with egress=direct.',
+		);
+}
+
+/** A `searchcast:<recipe>` engine for the configured mode. */
+function browserEngine(
+	name: string,
+	recipes: Map<string, Engine>,
+	b: SearchcastConfig = {},
+): Engine {
+	const recipe = name.slice(BROWSER.length);
+	if (!recipe) throw new Error(`serpcast: '${name}' names no recipe`);
+	if (b.mode === 'endpoint')
+		return {name, searchcast: {endpoint: b.endpoint!, recipe}};
+	const found = recipes.get(recipe);
+	if (!found || isCodeRecipe(found) || 'searchcast' in found)
+		throw new Error(
+			`serpcast: browser engine '${name}' needs a declarative recipe ` +
+				`'${recipe}' (loaded declarative recipes: ` +
+				`${
+					[...recipes.values()]
+						.filter((r) => !isCodeRecipe(r))
+						.map((r) => r.name)
+						.join(', ') || 'none'
+				})`,
+		);
+	return {name, searchcast: {recipe: found}};
+}
+
+/** Import `searchcast` (a variable specifier: an optional package, not bundled). */
+function importSearchcast(): Promise<SearchcastModule> {
+	const name = 'searchcast';
+	return import(name) as Promise<SearchcastModule>;
+}
+
+/** Fail loud on a recipe named like a browser engine (the prefix is reserved). */
+function reserved(name: string, where: string): void {
+	if (name.startsWith(BROWSER))
+		throw new Error(
+			`serpcast: ${where}: recipe name '${name}' uses the reserved ` +
+				`'${BROWSER}' prefix (browser engines are named ${BROWSER}<recipe>)`,
+		);
 }
 
 /** Every recipe by name: declarative, then code (imports, i.e. RUNS, each module). */
 async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
 	const engines = new Map<string, Engine>(loadRecipes(s.recipes ?? []));
+	for (const name of engines.keys()) reserved(name, 'declarative recipe');
 	const files = (s.codeRecipes ?? []).flatMap((p) =>
 		statSync(p).isDirectory()
 			? readdirSync(p)
@@ -127,6 +290,7 @@ async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
 	);
 	for (const file of files) {
 		const recipe = await loadCodeRecipe(file);
+		reserved(recipe.name, file);
 		if (engines.has(recipe.name))
 			throw new Error(
 				`serpcast: ${file}: duplicate recipe name '${recipe.name}'`,
@@ -192,6 +356,52 @@ function failure(error: unknown): Error {
 	});
 }
 
+/** serpcast's library-mode searchcast options (imports searchcast). */
+async function libraryOptions(
+	b: SearchcastConfig = {},
+	persist: boolean,
+	partition: string,
+	deps: SerpcastDeps,
+): Promise<SearchcastLibraryOptions> {
+	return {
+		module: await (deps.importSearchcast ?? importSearchcast)().catch(
+			(cause: unknown) =>
+				Promise.reject(
+					new Error(
+						'serpcast: a searchcast library-mode engine is listed, but the ' +
+							'optional package "searchcast" is not installed (npm install ' +
+							'searchcast); or use serpcast.searchcast endpoint mode',
+						{cause},
+					),
+				),
+		),
+		...(b.chrome && {chrome: b.chrome}),
+		...(b.xvfb && {xvfb: b.xvfb}),
+		...(b.chromeArgs && {chromeArgs: b.chromeArgs}),
+		...(persist && {profile: profileDir(partition)}),
+	};
+}
+
+/**
+ * Before a persistent profile is used: if the partition was idle past the
+ * session idle time, close the cached instance (its browser) and delete the
+ * profile; then mark the partition used.
+ */
+async function expireProfile(
+	key: string,
+	partition: string,
+	s: SerpcastConfig,
+): Promise<void> {
+	const idleMs = num(s.sessionIdleMs) ?? DEFAULT_SESSION_IDLE_MS;
+	if (await isProfileIdle(partition, idleMs)) {
+		const stale = instances.get(key);
+		instances.delete(key);
+		await stale?.close();
+		await deleteProfile(partition);
+	}
+	await touchProfile(partition);
+}
+
 /** Build the backend; everything (trust, recipes, instance) happens per search. */
 export function createSerpcastBackend(
 	config: Config,
@@ -200,8 +410,12 @@ export function createSerpcastBackend(
 	return {
 		async search(query, _http, options = {}): Promise<SearchResult[]> {
 			const s = settings(config);
+			const mode = browserMode(s);
+			assertBrowserEgress(config.egress, mode);
 			const recipes = await loadEngines(s);
 			const engines = s.engines!.map((name) => {
+				if (name.startsWith(BROWSER))
+					return browserEngine(name, recipes, s.searchcast);
 				const recipe = recipes.get(name);
 				if (recipe) return recipe;
 				throw new Error(
@@ -210,16 +424,26 @@ export function createSerpcastBackend(
 				);
 			});
 			const key = serpcastIdentityKey(config, s);
+			const partition = partitionDir(key);
+			const persist = mode === 'library' && !!s.searchcast?.persistProfile;
+			if (persist) await expireProfile(key, partition, s);
 			let instance = instances.get(key);
 			if (!instance) {
-				instance = (deps.createSerpcast ?? realCreateSerpcast)({
-					proxy: serpcastProxy(config.egress),
-					strict: true,
-					libcurlPath: s.libcurlPath,
-					sessionIdleMs: num(s.sessionIdleMs),
-					cooldownMs: num(s.cooldownMs),
-					store: createStateStore(partitionDir(key)),
-				});
+				const browser =
+					mode === 'library'
+						? await libraryOptions(s.searchcast, persist, partition, deps)
+						: undefined;
+				instance =
+					instances.get(key) ??
+					(deps.createSerpcast ?? realCreateSerpcast)({
+						proxy: serpcastProxy(config.egress),
+						strict: true,
+						libcurlPath: s.libcurlPath,
+						sessionIdleMs: num(s.sessionIdleMs),
+						cooldownMs: num(s.cooldownMs),
+						store: createStateStore(partition),
+						...(browser && {searchcast: browser}),
+					});
 				instances.set(key, instance);
 			}
 			const answer = await instance

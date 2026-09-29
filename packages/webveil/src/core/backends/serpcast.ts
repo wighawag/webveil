@@ -90,6 +90,24 @@
 // - A name is matched case-insensitively (Chromium lowercases switch names on
 //   Windows) after one or two leading dashes, up to `=`. An argument without
 //   a leading dash is positional for Chromium, not a switch, so it passes.
+//
+// Recorded decisions (task serpcast-0-2-decoy-guard; key and env form:
+// config.ts):
+// - `serpcast.decoyGuard` is handed to `createSerpcast` as is. It is part of
+//   the resolved section, so it joins the identity key (identity.ts): a
+//   different guard is a different instance and state partition. Intended and
+//   harmless (the guard changes what an engine's answer counts as, and a fresh
+//   partition only costs a new session). Alternative considered: excluding it
+//   from the key, rejected as a special case for no privacy gain.
+// - A `decoy` failure is handled like every other engine failure: it names
+//   the engine in `unresponsiveEngines`, and `failure` lists it with its kind
+//   in the exhausted error. Nothing here switches on a kind other than
+//   `impersonation` and `exhausted`; any other kind (a future one included)
+//   passes through unchanged.
+// - Connection reuse (serpcast 0.2) needs nothing here: the instance cache
+//   already keeps one serpcast per identity, so reused connections never cross
+//   identities, and `closeSerpcastInstances` (`close()`) releases them; idle
+//   connections hold no Node handle, so the one-shot CLI still exits.
 
 import {readdirSync, statSync} from 'node:fs';
 import {join} from 'node:path';
@@ -228,6 +246,10 @@ function settings(config: Config): SerpcastConfig {
 	for (const key of ['recipes', 'codeRecipes'] as const)
 		if (s[key] !== undefined && !isList(s[key]))
 			throw new Error(`serpcast: serpcast.${key} must be a list of paths`);
+	if (s.decoyGuard !== undefined && !isList(s.decoyGuard))
+		throw new Error(
+			'serpcast: serpcast.decoyGuard must be a list of engine names',
+		);
 	for (const key of ['sessionIdleMs', 'cooldownMs'] as const)
 		if (s[key] !== undefined && !(Number(s[key]) >= 0))
 			throw new Error(`serpcast: serpcast.${key} must be a number >= 0`);
@@ -501,6 +523,7 @@ export function createSerpcastBackend(
 						libcurlPath: s.libcurlPath,
 						sessionIdleMs: num(s.sessionIdleMs),
 						cooldownMs: num(s.cooldownMs),
+						...(s.decoyGuard && {decoyGuard: s.decoyGuard}),
 						store: createStateStore(partition),
 						...(browser && {searchcast: browser}),
 					});

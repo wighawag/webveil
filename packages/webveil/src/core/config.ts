@@ -54,6 +54,18 @@ export type Egress =
  * NODE_OPTIONS: Chromium flags carry no spaces). Mode, endpoint and profile
  * persistence live in files. Alternative considered: a JSON array for the args
  * (awkward to type, as for code recipes).
+ *
+ * Recorded decision (task serpcast-0-2-decoy-guard): `decoyGuard` takes engine
+ * names, passed as is to serpcast's `decoyGuard` option (the key name follows
+ * serpcast's, like the others). It is data, not executable: any layer may set
+ * it. Its env form `WEBVEIL_SERPCAST_DECOY_GUARD` is split on commas (spaces
+ * around a name trimmed): an engine name is a recipe name, which never needs a
+ * comma, whereas the path delimiter (`codeRecipes`) or whitespace
+ * (`chromeArgs`) would be surprising for a list of names. A name missing from
+ * `engines` is NOT an error (unlike `engines` itself): a global
+ * `decoyGuard: ["bing"]` must keep working in a project whose chain has no
+ * `bing`; serpcast simply never judges it. Alternative considered: failing on
+ * such a name, rejected for that layering reason.
  */
 export interface SerpcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
@@ -66,6 +78,8 @@ export interface SerpcastConfig {
 	libcurlPath?: string;
 	sessionIdleMs?: number;
 	cooldownMs?: number;
+	/** Engines whose answers serpcast checks for decoys (unrelated results). */
+	decoyGuard?: string[];
 	/** The searchcast browser fallback (engines named `searchcast:<recipe>`). */
 	searchcast?: SearchcastConfig;
 }
@@ -207,7 +221,7 @@ function parseEgressEnv(
 	return undefined;
 }
 
-/** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes, chrome args). */
+/** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes, chrome args, decoy guard). */
 function readSerpcastEnv(
 	env: Record<string, string | undefined>,
 ): SerpcastConfig {
@@ -220,6 +234,7 @@ function readSerpcastEnv(
 		WEBVEIL_SERPCAST_SEARCHCAST_CHROME: chrome,
 		WEBVEIL_SERPCAST_SEARCHCAST_XVFB: xvfb,
 		WEBVEIL_SERPCAST_SEARCHCAST_CHROME_ARGS: args,
+		WEBVEIL_SERPCAST_DECOY_GUARD: decoy,
 	} = env;
 	const browser: SearchcastConfig = {};
 	if (chrome) browser.chrome = chrome;
@@ -227,6 +242,11 @@ function readSerpcastEnv(
 	if (args?.trim()) browser.chromeArgs = args.trim().split(/\s+/);
 	if (Object.keys(browser).length > 0) section.searchcast = browser;
 	if (code) section.codeRecipes = code.split(delimiter).filter(Boolean);
+	if (decoy?.trim())
+		section.decoyGuard = decoy
+			.split(',')
+			.map((name) => name.trim())
+			.filter(Boolean);
 	if (lib) section.libcurlPath = lib;
 	if (idle) section.sessionIdleMs = Number(idle);
 	if (cooldown) section.cooldownMs = Number(cooldown);

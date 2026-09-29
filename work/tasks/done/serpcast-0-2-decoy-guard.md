@@ -34,3 +34,11 @@ Changes:
 ## Prompt
 
 FIRST, check this task against current reality (serpcast 0.2.0's README and types). RECORD non-obvious decisions.
+
+## Decisions
+
+Each is recorded where the choice is made:
+1. **Env form is comma-separated** (`config.ts`, `SerpcastConfig` JSDoc). Engine names never contain commas; the path delimiter used by `codeRecipes` and the whitespace used by `chromeArgs` would be surprising for a list of names.
+2. **A guarded name that isn't in `engines` is not an error** (same JSDoc). A global `["bing"]` must keep working in a project whose engine list has no `bing`; serpcast simply never checks it. The alternative was to fail on such a name.
+3. **The guard is part of the identity key** (`backends/serpcast.ts` header). A different guard setting means a different instance and state directory, as the task intended. I rejected excluding it because it would be a special case with no privacy gain.
+4. **Search connection reuse needs no change**, and **`web_fetch` closes its session per fetch** (`fetch-transport.ts` header). Keeping connections across fetches would link unrelated pages at the connection level, which is the same reason cookies aren't carried between them.

@@ -87,8 +87,18 @@ function writeRecipe(path: string, name: string): void {
 	});
 }
 
-/** Host -> HTTP status the fake transport answers (200 renders one hit). */
-type Behaviour = Record<string, number | 'empty'>;
+/**
+ * Host -> HTTP status the fake transport answers (200 renders one hit), or
+ * `empty`, or `decoy` (five hits unrelated to any query, as Bing serves).
+ */
+type Behaviour = Record<string, number | 'empty' | 'decoy'>;
+
+const DECOY_PAGE = [1, 2, 3, 4, 5]
+	.map(
+		(i) =>
+			`<div class="r"><a href="https://dictionary.example/why${i}">Why definition ${i}</a><p>meaning and usage</p></div>`,
+	)
+	.join('');
 
 /** A fake transport session answering per host; records every URL requested. */
 function fakeTransport(behaviour: Behaviour, requests: string[]) {
@@ -102,11 +112,13 @@ function fakeTransport(behaviour: Behaviour, requests: string[]) {
 					const html =
 						b === 'empty'
 							? '<div class="none"></div>'
-							: `<div class="r"><a href="https://${host}.example/hit">${host} hit</a><p>about ${host}</p></div>`;
+							: b === 'decoy'
+								? DECOY_PAGE
+								: `<div class="r"><a href="https://${host}.example/hit">${host} hit</a><p>about ${host}</p></div>`;
 					const body = new TextEncoder().encode(html);
 					return {
 						url,
-						status: b === 'empty' ? 200 : b,
+						status: typeof b === 'number' ? b : 200,
 						headers: new Headers({'content-type': 'text/html'}),
 						body,
 						text: () => html,
@@ -150,9 +162,10 @@ function writeProject(value: Record<string, unknown>): void {
 function searchWith(
 	create: (o: SerpcastOptions) => Serpcast,
 	env: Record<string, string> = {},
+	query = 'webveil',
 ) {
 	return search(
-		'webveil',
+		query,
 		{cwd, globalPath, env},
 		{
 			getBackend: (name, config) =>
@@ -265,6 +278,94 @@ describe('serpcast backend: search through the core', () => {
 		const fake = fakeFactory();
 		await searchWith(fake.create);
 		expect(fake.built[0]).toMatchObject({libcurlPath: lib, cooldownMs: 7});
+	});
+});
+
+describe('serpcast backend: the decoy guard (serpcast.decoyGuard)', () => {
+	const QUERY = 'debian kernel upgrade';
+
+	it('reaches createSerpcast from the project file, and is absent by default', async () => {
+		writeProject({});
+		const plain = fakeFactory();
+		await searchWith(plain.create);
+		expect(plain.built[0]).not.toHaveProperty('decoyGuard');
+		await closeSerpcastInstances();
+		writeProject({serpcast: {decoyGuard: ['alpha']}});
+		const fake = fakeFactory();
+		await searchWith(fake.create);
+		expect(fake.built[0]!.decoyGuard).toEqual(['alpha']);
+	});
+
+	it('reaches createSerpcast from the global config (data: any layer)', async () => {
+		writeJson(globalPath, {serpcast: {decoyGuard: ['beta']}});
+		writeProject({});
+		const fake = fakeFactory();
+		await searchWith(fake.create);
+		expect(fake.built[0]!.decoyGuard).toEqual(['beta']);
+	});
+
+	it('reads WEBVEIL_SERPCAST_DECOY_GUARD, comma-separated, over the files', async () => {
+		writeProject({serpcast: {decoyGuard: ['alpha']}});
+		const fake = fakeFactory();
+		await searchWith(fake.create, {
+			WEBVEIL_SERPCAST_DECOY_GUARD: 'bing, alpha,,',
+		});
+		expect(fake.built[0]!.decoyGuard).toEqual(['bing', 'alpha']);
+	});
+
+	it.each([['bing'], [['bing', 3]], [{bing: true}]])(
+		'fails loud on a value that is not a list of names: %j',
+		async (decoyGuard) => {
+			writeProject({serpcast: {decoyGuard}});
+			const fake = fakeFactory();
+			await expect(searchWith(fake.create)).rejects.toThrow(
+				/serpcast\.decoyGuard must be a list of engine names/,
+			);
+			expect(fake.built).toHaveLength(0);
+		},
+	);
+
+	it('joins the identity key: a different guard is a different identity', () => {
+		writeProject({});
+		const keyOf = (env: Record<string, string>) =>
+			serpcastIdentityKey(resolveConfig({cwd, globalPath, env}));
+		expect(keyOf({WEBVEIL_SERPCAST_DECOY_GUARD: 'alpha'})).not.toBe(keyOf({}));
+	});
+
+	it('a guarded engine answering a decoy falls through to the next and shows in unresponsiveEngines', async () => {
+		writeProject({serpcast: {decoyGuard: ['alpha']}});
+		const fake = fakeFactory({alpha: 'decoy'});
+		const results = await searchWith(fake.create, {}, QUERY);
+		expect(results).toEqual([
+			{
+				title: 'beta hit',
+				url: 'https://beta.example/hit',
+				snippet: 'about beta',
+				unresponsiveEngines: ['alpha'],
+			},
+		]);
+		// No cooldown: the next search tries the decoying engine again.
+		await searchWith(fake.create, {}, QUERY);
+		expect(fake.requests.filter((u) => u.includes('alpha'))).toHaveLength(2);
+	});
+
+	it('an unguarded engine answering the same page is returned as is', async () => {
+		writeProject({});
+		const results = await searchWith(
+			fakeFactory({alpha: 'decoy'}).create,
+			{},
+			QUERY,
+		);
+		expect(results).toHaveLength(5);
+		expect(results[0]!.unresponsiveEngines).toBeUndefined();
+	});
+
+	it('every engine failing reports the decoy with its kind', async () => {
+		writeProject({serpcast: {decoyGuard: ['alpha']}});
+		const fake = fakeFactory({alpha: 'decoy', beta: 403});
+		await expect(searchWith(fake.create, {}, QUERY)).rejects.toThrow(
+			/every engine failed: alpha \(decoy: .*\); beta \(blocked: .*\)/,
+		);
 	});
 });
 

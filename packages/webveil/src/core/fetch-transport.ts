@@ -35,8 +35,20 @@
 //   used); `serpcast.engines` and the other keys are not needed or read.
 // - The transport is cached per fetch identity (the fetch-hop egress plus the
 //   resolved library path, hashed by `identityKey`); `closeFetchTransports`
-//   (from `closeBackends`) drops the cache. serpcast's transport holds no
-//   connection or handle between requests, so there is nothing else to close.
+//   (from `closeBackends`) drops the cache. Each fetch closes its own session
+//   (below), so the cached transport holds no connection between fetches and
+//   there is nothing else to close.
+//
+// Recorded decision (task serpcast-0-2-decoy-guard): serpcast 0.2 keeps a
+// session's connections open between its requests until `session.close()`.
+// A fetch still gets one session of its own (its redirect hops reuse its
+// connections), and closes it when the fetch settles, whatever the outcome.
+// Reusing one session (or its connections) across fetches was considered and
+// rejected: a kept connection would link fetches of unrelated pages at the TLS
+// and IP layer, the same reason cookies are not carried between them, and a
+// never-closed session would leak its connections until the server drops
+// them. Search sessions are the serpcast instance's business (reused per
+// engine, per identity: backends/serpcast.ts).
 
 import {createTransport as realCreateTransport, SerpcastError} from 'serpcast';
 import type {Transport, TransportOptions, TransportResponse} from 'serpcast';
@@ -137,21 +149,26 @@ export function createSerpcastFetch(
 			);
 		const session = shared.session();
 		const signal = init?.signal ?? undefined;
-		for (let hop = 0; ; hop++) {
-			await assertFetchableHop(url, config, assertPublicUrl);
-			const response = await session
-				.request(url, {kind: 'document', ...(signal && {signal})})
-				.catch((error: unknown) =>
-					Promise.reject(
-						error instanceof SerpcastError && error.kind === 'impersonation'
-							? impersonationFailure(error)
-							: error,
-					),
-				);
-			const location = response.headers.get('location');
-			if (!isRedirectStatus(response.status) || !location)
-				return toResponse(response, hop > 0);
-			url = nextRedirectUrl(location, url, hop);
+		try {
+			for (let hop = 0; ; hop++) {
+				await assertFetchableHop(url, config, assertPublicUrl);
+				const response = await session
+					.request(url, {kind: 'document', ...(signal && {signal})})
+					.catch((error: unknown) =>
+						Promise.reject(
+							error instanceof SerpcastError && error.kind === 'impersonation'
+								? impersonationFailure(error)
+								: error,
+						),
+					);
+				const location = response.headers.get('location');
+				if (!isRedirectStatus(response.status) || !location)
+					return toResponse(response, hop > 0);
+				url = nextRedirectUrl(location, url, hop);
+			}
+		} finally {
+			// The body is already read (toResponse), so the connections can go.
+			session.close();
 		}
 	}) as EgressFetch;
 }

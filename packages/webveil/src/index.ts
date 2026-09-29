@@ -14,6 +14,7 @@
 //   - core/search.ts            : the framework-agnostic search() both frontends call
 //   - core/security.ts          : SSRF guard wrapped around the egress fetch
 //   - core/fetch.ts             : the framework-agnostic fetch() both frontends call
+//   - core/fetch-transport.ts   : web_fetch's transport (plain undici | serpcast impersonated)
 //   - core/backends/custom.ts  : the local-command escape hatch (JSON stdin/stdout)
 //   - core/backends/serpcast.ts : keyless recipes over libcurl-impersonate (egress = search egress)
 //   - core/state.ts             : serpcast's state store on disk, one partition per identity
@@ -37,6 +38,7 @@ export type {
 	Config,
 	Egress,
 	FetchSize,
+	FetchTransport,
 	PartialConfig,
 	ResolveOptions,
 	SerpcastConfig,
@@ -110,6 +112,14 @@ export type {StateStoreOptions} from './core/state.js';
 // core search (the framework-agnostic search() both frontends call)
 export {search} from './core/search.js';
 export type {SearchCoreOptions, SearchDeps} from './core/search.js';
+
+// web_fetch transport (plain undici, or serpcast's impersonated transport)
+export {
+	closeFetchTransports,
+	createSerpcastFetch,
+	resolveFetchTransport,
+} from './core/fetch-transport.js';
+export type {SerpcastFetchDeps} from './core/fetch-transport.js';
 
 // core fetch (the framework-agnostic fetch() + list-ready fetchAll internal)
 export {fetch, fetchAll} from './core/fetch.js';

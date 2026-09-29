@@ -34,3 +34,19 @@ covers: []
 ## Prompt
 
 Goal: `web_fetch` with a real browser's TLS fingerprint, same egress, same SSRF guarantees (ADR 0001, 0003, 0004). Read `core/fetch.ts`, `core/extract.ts`, `core/security.ts` and `core/backends/serpcast.ts` first, and serpcast's transport docs in its README. FIRST, check this task against current reality. RECORD non-obvious decisions.
+
+## Decisions
+
+Recorded in the module JSDoc of `packages/webveil/src/core/fetch-transport.ts`:
+1. **Key name `fetchTransport`**, to match `fetchEgress` and `fetchSize`. An unknown value is an error rather than silently `plain` (this is a new error). I considered a boolean instead, but it could not name a third transport later.
+2. **One fresh session per request distilly makes.** Cookies carry across that request's redirect hops and are then dropped; nothing is written to serpcast state, since a fetch is not a search identity.
+3. **Timeout and body size use serpcast's defaults** (15 s, 16 MiB), with no new config keys.
+4. **Only `serpcast.libcurlPath` is trust-checked for fetch**, following `trust.ts`'s rule of checking a setting where it is used.
+5. **Nothing to close on shutdown:** serpcast's transport holds no handle between requests, so `closeFetchTransports` just empties the cache.
+6. **Naming clash noted:** "fetch transport" is distinct from the backend `transport` in `baseurl.ts`; the CONTEXT.md entry says so.
+
+**Other observations filed:**
+- `adr-0004-web-fetch-consequence-superseded.md`: ADR 0004 still says `web_fetch` stays on undici. I did not amend it.
+- `readme-loc-table-stale-rows.md`: the README lists `trust.ts` at 166 lines, but it is 230. I only updated the rows for modules I touched.
+
+I did no git operations; the only untracked files are the intended ones listed above.

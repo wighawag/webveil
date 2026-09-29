@@ -1,0 +1,160 @@
+// fetch transport: which transport `web_fetch` sends its requests over, and the
+// `serpcast` one, a `fetch`-shaped adapter over serpcast's libcurl-impersonate
+// transport (Chrome's TLS/HTTP2 fingerprint, the `document` header table). It is
+// injected into distilly exactly where the plain guarded egress fetch is, so
+// distilly's rules and pure core are unchanged (docs/adr/0001).
+//
+// Same egress: the FETCH-hop egress (`fetchEgress ?? egress`, ADR 0003), mapped
+// as the serpcast backend maps its hop (`serpcastProxy`: SOCKS always
+// `socks5h`). Same SSRF guarantee: serpcast's transport follows no redirects,
+// so the adapter follows them and runs `assertPublicUrl` on EVERY hop before it
+// is sent. Strict impersonation always (ADR 0004): no fingerprint, no fetch,
+// never a fallback to `plain`.
+//
+// Recorded decisions (task web-fetch-via-serpcast-transport):
+// - The key is `fetchTransport` (`plain` | `serpcast`, env
+//   `WEBVEIL_FETCH_TRANSPORT`), named for the `fetch*` family (`fetchEgress`,
+//   `fetchSize`). Unset, it follows `backend` (serpcast -> `serpcast`, else
+//   `plain`: owner decision 2026-09-29); an explicit value always wins. Any
+//   other value is an error, not a silent `plain`. Alternative considered:
+//   a boolean `fetchImpersonate` (cannot name a later third transport).
+// - One fresh transport session per request distilly makes (so per `web_fetch`
+//   url): cookies are kept across that request's redirect hops (a site may set
+//   one on the 302) and dropped after it. Nothing persists between fetches and
+//   nothing is written to the serpcast state store: a fetch is not a search
+//   identity, and cookies carried between fetched pages would link them.
+// - The caller's request headers are ignored (the Chrome `document` table is the
+//   only header set; adding headers would break the fingerprint) and only GET is
+//   sent (serpcast's transport has no other method). Redirects (301, 302, 303,
+//   307, 308 with a Location) are followed, at most 20 (the WHATWG fetch limit),
+//   and only to http(s).
+// - The timeout and body size limit are serpcast's defaults (15 s, 16 MiB): no
+//   new config keys. Their failures are serpcast errors, surfaced as is.
+// - Only `serpcast.libcurlPath` is trust-checked here (trust.ts: checked where
+//   used); `serpcast.engines` and the other keys are not needed or read.
+// - The transport is cached per fetch identity (the fetch-hop egress plus the
+//   resolved library path, hashed by `identityKey`); `closeFetchTransports`
+//   (from `closeBackends`) drops the cache. serpcast's transport holds no
+//   connection or handle between requests, so there is nothing else to close.
+
+import {createTransport as realCreateTransport, SerpcastError} from 'serpcast';
+import type {Transport, TransportOptions, TransportResponse} from 'serpcast';
+import type {Config, FetchTransport} from './config.js';
+import type {EgressFetch} from './egress.js';
+import {identityKey} from './identity.js';
+import {assertPublicUrl as realAssertPublicUrl} from './security.js';
+import {
+	impersonationFailure,
+	serpcastProxy,
+	trustedLibcurlPath,
+} from './backends/serpcast.js';
+
+/** Test seams: how the transport is created, how a hop is SSRF-checked. */
+export interface SerpcastFetchDeps {
+	createTransport?: (options: TransportOptions) => Transport;
+	assertPublicUrl?: (url: string, config: Config) => Promise<void>;
+}
+
+const TRANSPORTS: FetchTransport[] = ['plain', 'serpcast'];
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+const NULL_BODY = new Set([101, 103, 204, 205, 304]);
+const MAX_REDIRECTS = 20;
+const transports = new Map<string, Transport>();
+
+/** The `web_fetch` transport: explicit `fetchTransport`, else by `backend`. */
+export function resolveFetchTransport(config: Config): FetchTransport {
+	const value = config.fetchTransport;
+	if (value === undefined)
+		return config.backend === 'serpcast' ? 'serpcast' : 'plain';
+	if (!TRANSPORTS.includes(value))
+		throw new Error(
+			`webveil: fetchTransport must be 'plain' or 'serpcast' (got '${String(value)}')`,
+		);
+	return value;
+}
+
+/** Drop the cached fetch transports (process shutdown; see closeBackends). */
+export async function closeFetchTransports(): Promise<void> {
+	transports.clear();
+}
+
+/** The request's url and method, from any `fetch` input form. */
+function target(input: RequestInfo | URL, init?: RequestInit) {
+	const url =
+		typeof input === 'string'
+			? input
+			: input instanceof URL
+				? input.href
+				: input.url;
+	const method =
+		init?.method ??
+		(typeof input === 'object' && 'method' in input ? input.method : 'GET');
+	return {url, method: method.toUpperCase()};
+}
+
+/** A transport response as a standard `Response` (its body is already decoded). */
+function toResponse(r: TransportResponse, redirected: boolean): Response {
+	const headers = new Headers(r.headers);
+	headers.delete('content-encoding');
+	headers.delete('content-length');
+	const body = NULL_BODY.has(r.status) ? null : (r.body as BodyInit);
+	const response = new Response(body, {status: r.status, headers});
+	Object.defineProperty(response, 'url', {value: r.url});
+	Object.defineProperty(response, 'redirected', {value: redirected});
+	return response;
+}
+
+/**
+ * Build the serpcast `fetch` for the FETCH-hop config (`fetchEgressConfig`).
+ * Trust, library path and proxy are resolved here, before any I/O (fail loud,
+ * like `createEgressFetch`); the returned fetch follows redirects itself with
+ * the SSRF check on every hop.
+ */
+export function createSerpcastFetch(
+	config: Config,
+	deps: SerpcastFetchDeps = {},
+): EgressFetch {
+	const libcurlPath = trustedLibcurlPath(config);
+	const proxy = serpcastProxy(config.egress);
+	const assertPublicUrl = deps.assertPublicUrl ?? realAssertPublicUrl;
+	const key = identityKey(config.egress, {libcurlPath});
+	let transport = transports.get(key);
+	if (!transport) {
+		const create = deps.createTransport ?? realCreateTransport;
+		transport = create({libcurlPath, proxy, strict: true});
+		transports.set(key, transport);
+	}
+	const shared = transport;
+	return (async (input: RequestInfo | URL, init?: RequestInit) => {
+		let {url, method} = target(input, init);
+		if (method !== 'GET')
+			throw new Error(
+				`webveil: fetchTransport serpcast sends GET only (got ${method} ${url})`,
+			);
+		const session = shared.session();
+		const signal = init?.signal ?? undefined;
+		for (let hop = 0; ; hop++) {
+			const protocol = URL.canParse(url) ? new URL(url).protocol : '';
+			if (protocol !== 'http:' && protocol !== 'https:')
+				throw new Error(`webveil: refusing to fetch non-http(s) url ${url}`);
+			await assertPublicUrl(url, config);
+			const response = await session
+				.request(url, {kind: 'document', ...(signal && {signal})})
+				.catch((error: unknown) =>
+					Promise.reject(
+						error instanceof SerpcastError && error.kind === 'impersonation'
+							? impersonationFailure(error)
+							: error,
+					),
+				);
+			const location = response.headers.get('location');
+			if (!REDIRECTS.has(response.status) || !location)
+				return toResponse(response, hop > 0);
+			if (hop === MAX_REDIRECTS)
+				throw new Error(
+					`webveil: too many redirects (more than ${MAX_REDIRECTS}) fetching ${url}`,
+				);
+			url = new URL(location, url).href;
+		}
+	}) as EgressFetch;
+}

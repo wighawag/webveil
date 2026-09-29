@@ -96,6 +96,7 @@ What to expect:
 - **No fingerprint, no search.** Impersonation is always strict: if libcurl-impersonate is missing or not the right library, webveil refuses to search and says how to fix it. It never sends a request with a non-browser fingerprint.
 - **Sessions persist.** Engine cookies (such as a challenge clearance) and cooldowns are kept between calls in `~/.local/state/webveil/`, one directory per identity (egress plus serpcast settings), and expire after `serpcast.sessionIdleMs` (default 10 minutes) of disuse. `webveil state clear` drops the current identity's state, `--all` every identity's. See *serpcast state on disk* under [How it works](#how-it-works-seams).
 - **Anonymity.** With this backend `egress` governs the requests that reach the search engines: see [Where does anonymity live?](#where-does-anonymity-live-read-before-turning-on-egress).
+- **`web_fetch` gets the browser fingerprint too.** With this backend `fetchTransport` defaults to `serpcast`, so `web_fetch` also goes through libcurl-impersonate (and so also needs it). Set `"fetchTransport": "plain"` to keep the plain Node transport: see [The `web_fetch` transport](#the-web_fetch-transport-fetchtransport).
 
 **Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private serpcast recipes* under [How it works](#how-it-works-seams).
 
@@ -206,6 +207,26 @@ and [`docs/adr/0003`](docs/adr/0003-per-hop-egress-backend-vs-fetch.md).
 
 With the serpcast backend the hop that reaches the public internet for SEARCH is webveil's own, so the search proxy goes on `egress`, and `fetchEgress` inherits it unless you set it. See [`docs/adr/0004`](docs/adr/0004-engine-layer-in-serpcast-webveil-injects-policy.md).
 
+### The `web_fetch` transport (`fetchTransport`)
+
+`web_fetch` downloads the page itself (distilly then turns it into markdown), and `fetchTransport` says how:
+
+| key | values | default | env |
+| --- | --- | --- | --- |
+| `fetchTransport` | `plain`: undici over the fetch-hop egress, a Node TLS fingerprint. `serpcast`: serpcast's libcurl-impersonate transport, Chrome's TLS and HTTP/2 fingerprint and the header set of a Chrome page load | `serpcast` when `backend` is `serpcast`, `plain` otherwise | `WEBVEIL_FETCH_TRANSPORT` |
+
+An explicit value (from any config file or env) always wins over the default, so `"fetchTransport": "serpcast"` works with SearXNG too, and `"plain"` keeps the Node transport with the serpcast backend. Any other value is an error. Sites that gate on the TLS fingerprint answer a Node fetch with a block or challenge page; `serpcast` gets the page a browser would, as long as the page does not need JavaScript (no script runs).
+
+With `serpcast`:
+
+- **Same egress.** Requests leave through the fetch-hop egress (`fetchEgress`, else `egress`), mapped as for the serpcast backend: `direct` is a direct connection, an `http` proxy is used as is, and a SOCKS proxy is always used as `socks5h` (host names resolved at the proxy).
+- **Same SSRF guard, on every hop.** The transport follows no redirects, so webveil follows them (at most 20, http and https only) and checks each target before sending it: on `direct` egress a redirect to a private or loopback address is refused.
+- **No fingerprint, no fetch.** Impersonation is strict, as for search: without libcurl-impersonate `web_fetch` fails with the fix in the error (`npx serpcast install-libcurl`, or `serpcast.libcurlPath`). It never falls back to `plain`. The library path is the same `serpcast.libcurlPath`, with the same trust rule (never from a project `webveil.json`); `serpcast.engines` is not needed.
+- **No cookies between fetches.** Each fetch starts a fresh session: cookies set during one fetch's redirects are sent on its later hops, then dropped. Nothing is written to the serpcast state directory: a fetch is not a search identity, and cookies carried from page to page would link the fetches.
+- GET only, and only the Chrome page-load headers are sent. The time limit (15 s) and the largest body (16 MiB) are serpcast's defaults; exceeding either is an error.
+
+A backend with its own `/extract` (`tavily-compat`) still fetches through that endpoint whatever `fetchTransport` says.
+
 ### Chained egress: Mullvad base → rotating-residential exit → site
 
 For the strongest anonymity stack, a single commercial proxy is a single point of legal
@@ -274,8 +295,10 @@ never in webveil: see
   webveil's egress-bound `fetch`; a backend's own `/extract` (Tavily-compat) may override
   it. Owns the context-friendly markdown + size presets (`s`/`m`/`l`/`f`). See
   [`docs/adr/0001`](docs/adr/0001-extractor-uses-distilly-fetch-with-injected-egress.md).
+  The injected `fetch` is the plain egress fetch, or with `fetchTransport: serpcast`
+  serpcast's impersonated transport (see [The `web_fetch` transport](#the-web_fetch-transport-fetchtransport)).
 - **security**, an SSRF guard lives in the egress fetch, so it covers distilly's
-  rule-rewritten requests too.
+  rule-rewritten requests too. The serpcast fetch transport runs it on every redirect hop.
 
 ## Anonymous egress (Mullvad / Tor)
 
@@ -526,27 +549,28 @@ a promise); `LOC` is the actual line count of the built file.
 
 | module                             |  LOC | target |
 | ---------------------------------- | ---: | -----: |
-| src/index.ts (barrel)              |  120 |      - |
+| src/index.ts (barrel)              |  130 |      - |
 | src/cli.ts (incur frontend)        |  166 |    ~80 |
 | src/core/search.ts                 |  141 |    ~90 |
-| src/core/fetch.ts                  |  150 |    ~90 |
-| src/core/config.ts                 |  275 |    ~80 |
+| src/core/fetch.ts                  |  160 |    ~90 |
+| src/core/fetch-transport.ts        |  160 |      - |
+| src/core/config.ts                 |  290 |    ~80 |
 | src/core/layers.ts (merge + prov.) |  121 |      - |
 | src/core/trust.ts (exec. settings) |  166 |      - |
 | src/core/identity.ts               |   29 |    ~30 |
 | src/core/state.ts (per-id. store)  |  249 |   ~120 |
-| src/core/egress.ts                 |  171 |    ~70 |
+| src/core/egress.ts                 |  175 |    ~70 |
 | src/core/http.ts                   |   62 |    ~60 |
 | src/core/extract.ts                |   82 |    ~60 |
 | src/core/security.ts (SSRF guard)  |  158 |      - |
 | src/core/baseurl.ts (transport)    |  104 |      - |
 | src/core/backends/types.ts         |   70 |    ~40 |
-| src/core/backends/registry.ts      |   52 |    ~60 |
+| src/core/backends/registry.ts      |   54 |    ~60 |
 | src/core/backends/searxng.ts       |  116 |    ~90 |
 | src/core/backends/tavily-compat.ts |  156 |    ~90 |
 | src/core/backends/custom.ts        |  187 |    ~70 |
-| src/core/backends/serpcast.ts      |  500 |    ~90 |
-| **subtotal**                       | 3075 |        |
+| src/core/backends/serpcast.ts      |  521 |    ~90 |
+| **subtotal**                       | 3297 |        |
 
 ### `packages/pi-webveil` (pi extension frontend)
 
@@ -554,9 +578,9 @@ a promise); `LOC` is the actual line count of the built file.
 | ------------ | --: | -----: |
 | src/index.ts | 183 |    ~90 |
 
-**Total own source: 3258 LOC** (excluding deps).
+**Total own source: 3480 LOC** (excluding deps).
 
-> Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably `backends/serpcast.ts`, which also carries the trust, browser and egress-guard policy of that backend, `config.ts`, `tavily-compat.ts`, `custom.ts` and `pi-webveil/src/index.ts`), and five built modules (the `index.ts` barrel, the `security.ts` SSRF guard, the `baseurl.ts` backend transport, and `layers.ts` and `trust.ts` behind the trust rule) have no ceiling of their own. The table above reflects the modules as actually built. For calibration, comparable pi web-search extensions: `pi-searxng-search` 350 LOC (1 backend, no egress, no fetch), `leing2021/pi-search` 1714, `pi-search-hub` 9047, `pi-web-providers` 18961. webveil delivers a 4-backend + egress + fetch + per-folder-config tool by leaning on `incur` (CLI/MCP/skills), `distilly` (extraction) and `serpcast` (the search engines of the `serpcast` backend).
+> Reality vs. target: several modules currently exceed their `CONTEXT.md` ceilings (notably `backends/serpcast.ts`, which also carries the trust, browser and egress-guard policy of that backend, `config.ts`, `tavily-compat.ts`, `custom.ts` and `pi-webveil/src/index.ts`), and six built modules (the `index.ts` barrel, the `security.ts` SSRF guard, the `baseurl.ts` backend transport, `layers.ts` and `trust.ts` behind the trust rule, and `fetch-transport.ts`, the `web_fetch` transport choice and serpcast adapter) have no ceiling of their own. The table above reflects the modules as actually built. For calibration, comparable pi web-search extensions: `pi-searxng-search` 350 LOC (1 backend, no egress, no fetch), `leing2021/pi-search` 1714, `pi-search-hub` 9047, `pi-web-providers` 18961. webveil delivers a 4-backend + egress + fetch + per-folder-config tool by leaning on `incur` (CLI/MCP/skills), `distilly` (extraction) and `serpcast` (the search engines of the `serpcast` backend).
 
 ## Develop
 

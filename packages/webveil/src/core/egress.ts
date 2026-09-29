@@ -10,6 +10,7 @@ import {Agent, type Dispatcher, ProxyAgent, fetch as undiciFetch} from 'undici';
 import {socksDispatcher} from 'fetch-socks';
 import type {Config, Egress} from './config.js';
 import {isUnixBaseUrl} from './baseurl.js';
+import {carryProvenance} from './layers.js';
 import {isLoopbackHost} from './security.js';
 
 /** Thrown when a configured egress proxy cannot be built. Never swallowed. */
@@ -80,7 +81,10 @@ export function assertEgressAllowsBaseUrl(cfg: Config): void {
  */
 export function fetchEgressConfig(cfg: Config): Config {
 	if (!cfg.fetchEgress || cfg.fetchEgress === cfg.egress) return cfg;
-	return {...cfg, egress: cfg.fetchEgress};
+	// Carry the provenance: the serpcast fetch transport trust-checks
+	// `serpcast.libcurlPath` on THIS derived config (a spread copy drops it,
+	// which would make a project-set path look code-built, i.e. trusted).
+	return carryProvenance(cfg, {...cfg, egress: cfg.fetchEgress});
 }
 
 function socksFromUrl(raw: string): Dispatcher {

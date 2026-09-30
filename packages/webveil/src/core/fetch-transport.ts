@@ -1,39 +1,39 @@
 // fetch transport: which transport `web_fetch` sends its requests over, and the
-// `serpcast` one, a `fetch`-shaped adapter over serpcast's libcurl-impersonate
+// `searchcast` one, a `fetch`-shaped adapter over searchcast's libcurl-impersonate
 // transport (Chrome's TLS/HTTP2 fingerprint, the `document` header table). It is
 // injected into distilly exactly where the plain guarded egress fetch is, so
 // distilly's rules and pure core are unchanged (docs/adr/0001).
 //
 // Same egress: the FETCH-hop egress (`fetchEgress ?? egress`, ADR 0003), mapped
-// as the serpcast backend maps its hop (`serpcastProxy`: SOCKS always
-// `socks5h`). Same SSRF guarantee: serpcast's transport follows no redirects,
+// as the searchcast backend maps its hop (`searchcastProxy`: SOCKS always
+// `socks5h`). Same SSRF guarantee: searchcast's transport follows no redirects,
 // so the adapter follows them and runs `assertPublicUrl` on EVERY hop before it
 // is sent. Strict impersonation always (ADR 0004): no fingerprint, no fetch,
 // never a fallback to `plain`.
 //
 // Recorded decisions (task web-fetch-via-serpcast-transport):
-// - The key is `fetchTransport` (`plain` | `serpcast`, env
+// - The key is `fetchTransport` (`plain` | `searchcast`, env
 //   `WEBVEIL_FETCH_TRANSPORT`), named for the `fetch*` family (`fetchEgress`,
-//   `fetchSize`). Unset, it follows `backend` (serpcast -> `serpcast`, else
+//   `fetchSize`). Unset, it follows `backend` (searchcast -> `searchcast`, else
 //   `plain`: owner decision 2026-09-29); an explicit value always wins. Any
 //   other value is an error, not a silent `plain`. Alternative considered:
 //   a boolean `fetchImpersonate` (cannot name a later third transport).
 // - Each request distilly makes (so each `web_fetch` url) starts with an empty
 //   cookie jar: cookies are kept across that request's redirect hops (a site
 //   may set one on the 302) and dropped after it. Nothing persists between
-//   fetches and nothing is written to the serpcast state store: a fetch is not
+//   fetches and nothing is written to the searchcast state store: a fetch is not
 //   a search identity, and cookies carried between fetched pages would link
 //   them.
 // - The caller's request headers are ignored (the Chrome `document` table is the
 //   only header set; adding headers would break the fingerprint) and only GET is
-//   sent (serpcast's transport has no other method). Redirects (301, 302, 303,
+//   sent (searchcast's transport has no other method). Redirects (301, 302, 303,
 //   307, 308 with a Location) are followed, at most 20 (the WHATWG fetch limit),
 //   and only to http(s). The hop gate and redirect rules are shared with the
 //   plain guarded fetch (security.ts), so both transports check the same way.
-// - The timeout and body size limit are serpcast's defaults (15 s, 16 MiB): no
-//   new config keys. Their failures are serpcast errors, surfaced as is.
-// - Only `serpcast.libcurlPath` is trust-checked here (trust.ts: checked where
-//   used); `serpcast.engines` and the other keys are not needed or read.
+// - The timeout and body size limit are searchcast's defaults (15 s, 16 MiB): no
+//   new config keys. Their failures are searchcast errors, surfaced as is.
+// - Only `searchcast.libcurlPath` is trust-checked here (trust.ts: checked where
+//   used); `searchcast.engines` and the other keys are not needed or read.
 // - The transport is cached per fetch identity (the fetch-hop egress plus the
 //   resolved library path, hashed by `identityKey`); `closeFetchTransports`
 //   (from `closeBackends`) drops the cache and closes its sessions.
@@ -47,7 +47,7 @@
 // one TLS connection, which links them at the connection level; through one
 // proxy or Tor circuit they already share an exit IP, and no cookie or other
 // state is carried (README, fetch section).
-// - A POOL of serpcast sessions per identity (`SessionPool`). A fetch takes an
+// - A POOL of searchcast sessions per identity (`SessionPool`). A fetch takes an
 //   idle session (else opens a new one), clears its cookies, runs its hops on
 //   it, clears the cookies again and returns it. A busy session is never
 //   shared, so concurrent fetches never see each other's cookies; they get
@@ -57,17 +57,17 @@
 // - At most `MAX_IDLE_SESSIONS` (4) idle sessions are kept per identity; a
 //   session returned beyond that is closed. This bounds the connections held
 //   open after a burst of concurrent fetches.
-// - An idle session is closed after `DEFAULT_SESSION_IDLE_MS` (serpcast's
+// - An idle session is closed after `DEFAULT_SESSION_IDLE_MS` (searchcast's
 //   session idle default, 10 minutes) without use, on an unref'd timer, so
-//   neither the timer nor the idle connections (serpcast schedules nothing
+//   neither the timer nor the idle connections (searchcast schedules nothing
 //   for an idle session) keep the one-shot CLI alive. No config key: the
-//   value is serpcast's, like the timeout and size limit above.
+//   value is searchcast's, like the timeout and size limit above.
 // - A fetch that fails (a transport error, a timeout, an abort, a refused
 //   hop, too many redirects) CLOSES its session instead of returning it: a
 //   connection left mid-transfer or broken is never handed to the next fetch,
 //   and a failure is rare enough that the lost reuse does not matter.
 // - `closeFetchTransports` closes every idle session at once; a session busy
-//   at that moment is closed when its fetch settles (serpcast's `close()` would
+//   at that moment is closed when its fetch settles (searchcast's `close()` would
 //   wait for it anyway) and never returns to a pool.
 
 import {
@@ -87,7 +87,7 @@ import {identityKey} from './identity.js';
 import {
 	DEFAULT_MAX_IDLE_SESSIONS,
 	fetchMaxRedirects,
-	fetchSerpcastTunables,
+	fetchSearchcastTunables,
 } from './tunables.js';
 import {
 	assertFetchableHop,
@@ -97,23 +97,23 @@ import {
 } from './security.js';
 import {
 	impersonationFailure,
-	serpcastProxy,
+	searchcastProxy,
 	trustedLibcurlPath,
-} from './backends/serpcast.js';
+} from './backends/searchcast.js';
 
 /**
  * Test seams: how the transport is created, how a hop is SSRF-checked, how
  * long an idle session is kept (default `DEFAULT_SESSION_IDLE_MS`).
  */
-export interface SerpcastFetchDeps {
+export interface SearchcastFetchDeps {
 	createTransport?: (options: TransportOptions) => Transport;
 	assertPublicUrl?: (url: string, config: Config) => Promise<void>;
 	sessionIdleMs?: number;
 }
 
-const TRANSPORTS: FetchTransport[] = ['plain', 'serpcast'];
+const TRANSPORTS: FetchTransport[] = ['plain', 'searchcast'];
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
-/** Idle sessions kept per fetch identity by default (`fetchSerpcast.maxIdleSessions`). */
+/** Idle sessions kept per fetch identity by default (`fetchSearchcast.maxIdleSessions`). */
 export const MAX_IDLE_SESSIONS = DEFAULT_MAX_IDLE_SESSIONS;
 
 /**
@@ -174,10 +174,10 @@ const pools = new Map<string, SessionPool>();
 export function resolveFetchTransport(config: Config): FetchTransport {
 	const value = config.fetchTransport;
 	if (value === undefined)
-		return config.backend === 'serpcast' ? 'serpcast' : 'plain';
+		return config.backend === 'searchcast' ? 'searchcast' : 'plain';
 	if (!TRANSPORTS.includes(value))
 		throw new Error(
-			`webveil: fetchTransport must be 'plain' or 'serpcast' (got '${String(value)}')`,
+			`webveil: fetchTransport must be 'plain' or 'searchcast' (got '${String(value)}')`,
 		);
 	return value;
 }
@@ -215,21 +215,21 @@ function toResponse(r: TransportResponse, redirected: boolean): Response {
 }
 
 /**
- * Build the serpcast `fetch` for the FETCH-hop config (`fetchEgressConfig`).
+ * Build the searchcast `fetch` for the FETCH-hop config (`fetchEgressConfig`).
  * Trust, library path and proxy are resolved here, before any I/O (fail loud,
  * like `createEgressFetch`); the returned fetch follows redirects itself with
  * the SSRF check on every hop.
  */
-export function createSerpcastFetch(
+export function createSearchcastFetch(
 	config: Config,
-	deps: SerpcastFetchDeps = {},
+	deps: SearchcastFetchDeps = {},
 ): EgressFetch {
 	const libcurlPath = trustedLibcurlPath(config);
-	const proxy = serpcastProxy(config.egress);
+	const proxy = searchcastProxy(config.egress);
 	const assertPublicUrl = deps.assertPublicUrl ?? realAssertPublicUrl;
 	const maxRedirects = fetchMaxRedirects(config);
 	const {maxIdleSessions, sessionIdleMs, ...limits} =
-		fetchSerpcastTunables(config);
+		fetchSearchcastTunables(config);
 	const idleMs = deps.sessionIdleMs ?? sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS;
 	const key = identityKey(config.egress, {
 		libcurlPath,
@@ -263,7 +263,7 @@ export function createSerpcastFetch(
 		let {url, method} = target(input, init);
 		if (method !== 'GET')
 			throw new Error(
-				`webveil: fetchTransport serpcast sends GET only (got ${method} ${url})`,
+				`webveil: fetchTransport searchcast sends GET only (got ${method} ${url})`,
 			);
 		const session = sessions.take();
 		const signal = init?.signal ?? undefined;

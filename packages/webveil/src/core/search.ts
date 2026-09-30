@@ -24,6 +24,7 @@ import {createHttp as defaultCreateHttp} from './http.js';
 import type {HttpHelperOptions} from './http.js';
 import {searchTunables} from './tunables.js';
 import {carryProvenance} from './layers.js';
+import {reportDeprecations} from './spellings.js';
 import {getBackend as defaultGetBackend} from './backends/registry.js';
 import type {Http, SearchOptions, SearchResult} from './backends/types.js';
 
@@ -56,7 +57,13 @@ export interface SearchDeps {
 }
 
 /** Per-call search options plus the config-resolution knobs (cwd/env/global). */
-export interface SearchCoreOptions extends SearchOptions, ResolveOptions {}
+export interface SearchCoreOptions extends SearchOptions, ResolveOptions {
+	/**
+	 * Receives the config's warnings (deprecated spellings, spellings.ts).
+	 * Default: each printed once per process on stderr.
+	 */
+	onWarning?: (message: string) => void;
+}
 
 /** Dedup by url (the hit's identity), preserving first-seen order. */
 function dedup(results: SearchResult[]): SearchResult[] {
@@ -97,6 +104,7 @@ export async function search(
 		env: options.env,
 		globalPath: options.globalPath,
 	});
+	reportDeprecations(config, options.onWarning);
 
 	// The default result cut (`maxResults`, 10) and the http helper timeout
 	// (`httpTimeoutMs`, 30 s) come from config (tunables.ts), validated here.

@@ -883,7 +883,7 @@ async function socksProxy(): Promise<SocksProxy> {
 /** The variables that name a library before the data directories. */
 const LIBCURL_ENV = [
 	'SEARCHCAST_LIBCURL_PATH',
-	'SERPCAST_LIBCURL_PATH',
+	'SEARCHCAST_LIBCURL_PATH',
 	'LIBCURL_PATH',
 ];
 
@@ -927,11 +927,11 @@ describe('webveil doctor', () => {
 		const file = join(root, 'set.tar.gz');
 		writeFileSync(file, archive);
 		await realInstall.installRecipes(file, {sha256: sha, log: () => {}});
-		write(globalPath, {serpcast: {libcurlPath: missingLib()}});
+		write(globalPath, {searchcast: {libcurlPath: missingLib()}});
 		write(join(project, 'webveil.json'), {
-			backend: 'serpcast',
+			backend: 'searchcast',
 			egress: {mode: 'socks5', url: 'socks5://user:secret@127.0.0.1:9050'},
-			serpcast: {recipes: ['set:my-set'], engines: ['web']},
+			searchcast: {recipes: ['set:my-set'], engines: ['web']},
 		});
 		const res = await run(['doctor'], doctorDeps());
 		// No library there: impersonation is not active, so it is unhealthy.
@@ -942,10 +942,10 @@ describe('webveil doctor', () => {
 		);
 		expect(report).toMatchObject({
 			healthy: false,
-			backend: 'serpcast',
+			backend: 'searchcast',
 			egress: 'socks5 socks5://***@127.0.0.1:9050',
 			fetchEgress: 'socks5 socks5://***@127.0.0.1:9050',
-			fetchTransport: 'serpcast',
+			fetchTransport: 'searchcast',
 			libcurl: {
 				needed: true,
 				impersonating: false,
@@ -977,8 +977,8 @@ describe('webveil doctor', () => {
 			writeFileSync(join(old, libraryName()), 'not a library');
 			write(globalPath, {});
 			write(join(project, 'webveil.json'), {
-				backend: 'serpcast',
-				serpcast: {recipes: ['set:legacy'], engines: ['web']},
+				backend: 'searchcast',
+				searchcast: {recipes: ['set:legacy'], engines: ['web']},
 			});
 			const res = await run(['doctor'], doctorDeps());
 			const report = JSON.parse(
@@ -1045,10 +1045,10 @@ describe('webveil doctor', () => {
 	);
 
 	it('names a configured set that is not installed', async () => {
-		write(globalPath, {serpcast: {libcurlPath: missingLib()}});
+		write(globalPath, {searchcast: {libcurlPath: missingLib()}});
 		write(join(project, 'webveil.json'), {
-			backend: 'serpcast',
-			serpcast: {recipes: ['set:absent'], engines: ['web']},
+			backend: 'searchcast',
+			searchcast: {recipes: ['set:absent'], engines: ['web']},
 		});
 		const res = await run(['doctor'], doctorDeps());
 		expect(res.code).toBe(1);
@@ -1059,7 +1059,7 @@ describe('webveil doctor', () => {
 	});
 
 	it('is healthy without the library when nothing uses it (searxng + plain fetch)', async () => {
-		write(globalPath, {serpcast: {libcurlPath: missingLib()}});
+		write(globalPath, {searchcast: {libcurlPath: missingLib()}});
 		write(join(project, 'webveil.json'), {backend: 'searxng'});
 		const res = await run(['doctor'], doctorDeps());
 		expect(res.code).toBe(0);
@@ -1070,6 +1070,35 @@ describe('webveil doctor', () => {
 			fetchTransport: 'plain',
 			libcurl: {needed: false, impersonating: false},
 		});
+	});
+
+	it('lists the deprecated serpcast spellings of the config, and stays healthy on them', async () => {
+		write(globalPath, {serpcast: {libcurlPath: missingLib()}});
+		write(join(project, 'webveil.json'), {backend: 'searxng'});
+		const res = await run(
+			['doctor'],
+			doctorDeps({WEBVEIL_FETCH_SERPCAST_TIMEOUT_MS: '100'}),
+		);
+		expect(res.code).toBe(0);
+		const report = JSON.parse(res.out);
+		expect(report).toMatchObject({
+			healthy: true,
+			problems: [],
+			libcurl: {library: {path: missingLib()}},
+		});
+		expect(report.deprecations).toEqual([
+			expect.stringMatching(/`serpcast`.*use `searchcast` instead/),
+			expect.stringMatching(
+				/WEBVEIL_FETCH_SERPCAST_TIMEOUT_MS \(env\).*WEBVEIL_FETCH_SEARCHCAST_TIMEOUT_MS/,
+			),
+		]);
+	});
+
+	it('has no deprecations field when the config uses none', async () => {
+		write(globalPath, {});
+		write(join(project, 'webveil.json'), {backend: 'searxng'});
+		const res = await run(['doctor'], doctorDeps());
+		expect(JSON.parse(res.out)).not.toHaveProperty('deprecations');
 	});
 });
 

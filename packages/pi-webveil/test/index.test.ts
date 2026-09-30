@@ -12,7 +12,7 @@ import {join} from 'node:path';
 import piWebveil from '../src/index.js';
 import {
 	closeBackends,
-	createSerpcastBackend,
+	createSearchcastBackend,
 	search as coreSearch,
 } from 'webveil';
 import type {SearchResult, FetchResult} from 'webveil';
@@ -28,7 +28,11 @@ interface CapturedTool {
 		params: Record<string, unknown>,
 		signal: AbortSignal | undefined,
 		onUpdate: unknown,
-		ctx: {cwd: string; signal?: AbortSignal},
+		ctx: {
+			cwd: string;
+			signal?: AbortSignal;
+			ui?: {notify(message: string, type?: string): void};
+		},
 	): Promise<{content: {type: string; text: string}[]; details: unknown}>;
 }
 
@@ -242,9 +246,9 @@ describe('pi-webveil — no live network', () => {
 	});
 });
 
-describe('pi-webveil: serpcast backend through the real core', () => {
-	it('returns results from a serpcast project config and closes at shutdown', async () => {
-		const root = mkdtempSync(join(tmpdir(), 'pi-webveil-serpcast-'));
+describe('pi-webveil: searchcast backend through the real core', () => {
+	it('returns results from a searchcast project config and closes at shutdown', async () => {
+		const root = mkdtempSync(join(tmpdir(), 'pi-webveil-searchcast-'));
 		try {
 			mkdirSync(join(root, 'recipes'));
 			writeFileSync(
@@ -258,13 +262,13 @@ describe('pi-webveil: serpcast backend through the real core', () => {
 			writeFileSync(
 				join(root, 'webveil.json'),
 				JSON.stringify({
-					backend: 'serpcast',
-					serpcast: {engines: ['e'], recipes: ['recipes']},
+					backend: 'searchcast',
+					searchcast: {engines: ['e'], recipes: ['recipes']},
 				}),
 			);
 			const created: unknown[] = [];
 			const closed: unknown[] = [];
-			const createSerpcast = (options: unknown) => {
+			const createSearchcast = (options: unknown) => {
 				created.push(options);
 				return {
 					search: async () => ({
@@ -282,7 +286,7 @@ describe('pi-webveil: serpcast backend through the real core', () => {
 					{...options, globalPath: join(root, 'global.json'), env: {}},
 					{
 						getBackend: (_name, config) =>
-							createSerpcastBackend(config, {createSerpcast}),
+							createSearchcastBackend(config, {createSearchcast}),
 					},
 				);
 			const shutdown: (() => Promise<void>)[] = [];
@@ -314,5 +318,80 @@ describe('pi-webveil: serpcast backend through the real core', () => {
 		} finally {
 			rmSync(root, {recursive: true, force: true});
 		}
+	});
+});
+
+describe('pi-webveil: deprecated serpcast spellings', () => {
+	it('surfaces each warning once (UI notification and tool text), with the real core', async () => {
+		const root = mkdtempSync(join(tmpdir(), 'pi-webveil-spellings-'));
+		try {
+			writeFileSync(
+				join(root, 'webveil.json'),
+				JSON.stringify({backend: 'serpcast', serpcast: {engines: ['e']}}),
+			);
+			const search: typeof coreSearch = (query, options) =>
+				coreSearch(
+					query,
+					{...options, globalPath: join(root, 'global.json'), env: {}},
+					{
+						getBackend: () => ({
+							search: async () => [
+								{title: 'Hit', url: 'https://example.com/hit'},
+							],
+						}),
+					},
+				);
+			const {pi, tools} = fakePi();
+			piWebveil(pi, {search});
+			const notified: [string, string | undefined][] = [];
+			const ctx = {
+				cwd: root,
+				ui: {notify: (m: string, t?: string) => void notified.push([m, t])},
+			};
+			const tool = tools.get('web_search')!;
+			const first = await tool.execute(
+				'id',
+				{query: 'q'},
+				undefined,
+				undefined,
+				ctx,
+			);
+			const text = first.content[0]!.text;
+			expect(text).toContain('https://example.com/hit');
+			expect(text).toContain('[warning] webveil: `serpcast`');
+			expect(text).toContain('use `backend: "searchcast"` instead');
+			expect(notified).toHaveLength(2);
+			expect(notified.every(([, type]) => type === 'warning')).toBe(true);
+			const second = await tool.execute(
+				'id',
+				{query: 'q'},
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(second.content[0]!.text).not.toContain('[warning]');
+			expect(notified).toHaveLength(2);
+		} finally {
+			rmSync(root, {recursive: true, force: true});
+		}
+	});
+
+	it('appends the warning to the error when the tool fails, without a UI', async () => {
+		const {pi, tools} = fakePi();
+		piWebveil(pi, {
+			fetch: (url, options) => {
+				options?.onWarning?.('webveil: a test warning');
+				return Promise.reject(new Error(`cannot fetch ${url}`));
+			},
+		});
+		const tool = tools.get('web_fetch')!;
+		const error = await tool
+			.execute('id', {url: 'https://example.com/'}, undefined, undefined, {
+				cwd: '/tmp',
+			})
+			.catch((e: Error) => e);
+		expect((error as Error).message).toBe(
+			'cannot fetch https://example.com/\n\n[warning] webveil: a test warning',
+		);
 	});
 });

@@ -264,7 +264,7 @@ describe('webveil CLI — bin entry through a symlink (isMain)', () => {
 	});
 });
 
-// Process-level close: `serveCli` releases cached backend state (the serpcast
+// Process-level close: `serveCli` releases cached backend state (the searchcast
 // instance) AFTER a one-shot command is served, never inside the handler.
 describe('webveil CLI: serveCli closes backends at process level', () => {
 	it('closes after the one-shot command has printed', async () => {
@@ -289,12 +289,12 @@ describe('webveil CLI: serveCli closes backends at process level', () => {
 		expect(close).toHaveBeenCalledTimes(1);
 	});
 
-	// The built entry, in a real process: a cached serpcast instance that holds
+	// The built entry, in a real process: a cached searchcast instance that holds
 	// a handle (like a library-mode browser) until closed. The process must
 	// exit on its own after printing, which it only can if the instance is
 	// closed at process level by `serveCli` + `closeBackends`.
 	const script = (closeArg: string) => `
-		import {createCli, createSerpcastBackend, search, serveCli} from ${JSON.stringify(
+		import {createCli, createSearchcastBackend, search, serveCli} from ${JSON.stringify(
 			new URL('../dist/index.js', import.meta.url).href,
 		)};
 		const create = () => {
@@ -305,11 +305,11 @@ describe('webveil CLI: serveCli closes backends at process level', () => {
 				close: async () => clearInterval(handle),
 			};
 		};
-		const config = {backend: 'serpcast', baseUrl: 'http://127.0.0.1:8080', egress: {mode: 'direct'}, fetchSize: 'm', serpcast: {engines: ['e'], recipes: [process.argv[1]]}};
+		const config = {backend: 'searchcast', baseUrl: 'http://127.0.0.1:8080', egress: {mode: 'direct'}, fetchSize: 'm', searchcast: {engines: ['e'], recipes: [process.argv[1]]}};
 		const cli = createCli({
 			search: (q, o) => search(q, o, {
 				resolveConfig: () => config,
-				getBackend: (_n, c) => createSerpcastBackend(c, {createSerpcast: create}),
+				getBackend: (_n, c) => createSearchcastBackend(c, {createSearchcast: create}),
 			}),
 		});
 		await serveCli(cli, ['search', 'q']${closeArg});
@@ -356,9 +356,9 @@ describe('webveil CLI: serveCli closes backends at process level', () => {
 	);
 });
 
-// The real bin with the real serpcast and no libcurl-impersonate: strict mode
+// The real bin with the real searchcast and no libcurl-impersonate: strict mode
 // refuses to search, the error carries the fix, and the process exits.
-describe('webveil CLI: serpcast backend without libcurl-impersonate', () => {
+describe('webveil CLI: searchcast backend without libcurl-impersonate', () => {
 	let dir: string;
 	afterEach(() => {
 		if (dir) rmSync(dir, {recursive: true, force: true});
@@ -378,8 +378,8 @@ describe('webveil CLI: serpcast backend without libcurl-impersonate', () => {
 		writeFileSync(
 			join(dir, 'webveil.json'),
 			JSON.stringify({
-				backend: 'serpcast',
-				serpcast: {engines: ['e'], recipes: ['recipes']},
+				backend: 'searchcast',
+				searchcast: {engines: ['e'], recipes: ['recipes']},
 			}),
 		);
 		const res = spawnSync(process.execPath, [BIN, 'search', 'q'], {
@@ -389,11 +389,53 @@ describe('webveil CLI: serpcast backend without libcurl-impersonate', () => {
 			env: {
 				...process.env,
 				XDG_CONFIG_HOME: join(dir, 'xdg'),
-				WEBVEIL_SERPCAST_LIBCURL_PATH: join(dir, 'missing.so'),
+				WEBVEIL_SEARCHCAST_LIBCURL_PATH: join(dir, 'missing.so'),
 			},
 		});
 		expect(res.status).toBe(1);
 		expect(res.stdout).toContain('impersonation is not active');
 		expect(res.stdout).toContain('webveil install-libcurl');
 	});
+});
+
+// The old `serpcast` spellings still work for one release: the real bin
+// prints each warning once on stderr (stdout stays the command's output).
+describe('webveil CLI: deprecated serpcast spellings', () => {
+	let dir: string;
+	afterEach(() => {
+		if (dir) rmSync(dir, {recursive: true, force: true});
+	});
+
+	it.skipIf(!existsSync(BIN))(
+		'warns once per spelling on stderr and still uses the setting',
+		() => {
+			dir = mkdtempSync(join(tmpdir(), 'webveil-spellings-'));
+			writeFileSync(
+				join(dir, 'webveil.json'),
+				JSON.stringify({backend: 'serpcast', serpcast: {}}),
+			);
+			const res = spawnSync(process.execPath, [BIN, 'search', 'q'], {
+				cwd: dir,
+				encoding: 'utf8',
+				timeout: 10_000,
+				env: {
+					...process.env,
+					XDG_CONFIG_HOME: join(dir, 'xdg'),
+					WEBVEIL_SERPCAST_COOLDOWN_MS: '5',
+				},
+			});
+			// The backend is searchcast: it asks for its engine chain.
+			expect(res.status).toBe(1);
+			expect(res.stdout).toContain('set searchcast.engines');
+			const lines = res.stderr
+				.split('\n')
+				.filter((l) => l.includes('deprecated'));
+			expect(lines).toEqual([
+				expect.stringContaining('use `searchcast` instead'),
+				expect.stringContaining('use `backend: "searchcast"` instead'),
+				expect.stringContaining('use WEBVEIL_SEARCHCAST_COOLDOWN_MS instead'),
+			]);
+			expect(res.stdout).not.toContain('deprecated');
+		},
+	);
 });

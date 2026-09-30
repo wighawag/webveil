@@ -16,6 +16,11 @@ import {homedir} from 'node:os';
 import {delimiter, dirname, join, parse} from 'node:path';
 import {attachProvenance, mergeLayers} from './layers.js';
 import type {Layer} from './layers.js';
+import {
+	attachDeprecations,
+	normalizeEnv,
+	normalizeFileLayer,
+} from './spellings.js';
 
 /** How outbound HTTP leaves the machine. See egress.ts. */
 export type Egress =
@@ -24,24 +29,24 @@ export type Egress =
 	| {mode: 'socks5'; url: string};
 
 /**
- * The `serpcast` backend's section (see backends/serpcast.ts). Merged key by
+ * The `searchcast` backend's section (see backends/searchcast.ts). Merged key by
  * key across layers, so a project file setting `engines` keeps the global
  * `libcurlPath`. There is deliberately no `strict` key: strict impersonation is
  * always on (docs/adr/0004).
  *
  * Recorded decision (task serpcast-backend-basic): the key names follow
- * serpcast's options (`libcurlPath`, `sessionIdleMs`, `cooldownMs`); `recipes`
+ * searchcast's options (`libcurlPath`, `sessionIdleMs`, `cooldownMs`); `recipes`
  * takes declarative recipe files or directories (serpcast-recipe's
  * `loadRecipes`), named to pair with the planned `codeRecipes`. Recipes are data,
  * so any layer may set them, but their paths resolve like executable ones
  * (config-file relative, never the cwd). Env covers the scalars only
- * (`WEBVEIL_SERPCAST_LIBCURL_PATH`, `_SESSION_IDLE_MS`, `_COOLDOWN_MS`); lists
+ * (`WEBVEIL_SEARCHCAST_LIBCURL_PATH`, `_SESSION_IDLE_MS`, `_COOLDOWN_MS`); lists
  * live in files. Alternative considered: `recipeDirs` (too narrow, files work).
  *
  * Recorded decision (task serpcast-code-recipes-trusted): `codeRecipes` takes
  * JS module files or directories (every `*.js`/`*.mjs` inside, sorted, as
  * `loadRecipes` does for `*.json`). Loading one RUNS it, so it is an executable
- * setting (trusted layers only). Its env form is `WEBVEIL_SERPCAST_CODE_RECIPES`,
+ * setting (trusted layers only). Its env form is `WEBVEIL_SEARCHCAST_CODE_RECIPES`,
  * a list split on the platform path delimiter (`:`, or `;` on Windows) like
  * PATH, each entry absolute or `~/`. It is the only list with an env form:
  * without one, env could not supply a trusted code recipe path at all.
@@ -49,49 +54,49 @@ export type Egress =
  *
  * Recorded decision (task serpcast-0-5-recipes-and-nixos-docs): `recipes` and
  * `codeRecipes` entries may also name an installed recipe set, `set:<name>` or
- * `set:<name>/<file>` (see backends/serpcast.ts). In the env list a `set:`
+ * `set:<name>/<file>` (see backends/searchcast.ts). In the env list a `set:`
  * entry stays whole although POSIX splits on `:` (`splitPathList`).
  *
  * Recorded decision (task searchcast-fallback-and-guard): the browser fallback
- * is the `searchcast` subsection (`SearchcastConfig`); its env forms cover the
- * three executable keys only: `WEBVEIL_SERPCAST_SEARCHCAST_CHROME`, `_XVFB`
+ * is the `browser` subsection (`BrowserConfig`); its env forms cover the
+ * three executable keys only: `WEBVEIL_SEARCHCAST_BROWSER_CHROME`, `_XVFB`
  * (paths, absolute or `~/`) and `_CHROME_ARGS` (split on whitespace, like
  * NODE_OPTIONS: Chromium flags carry no spaces). Mode, endpoint and profile
  * persistence live in files. Alternative considered: a JSON array for the args
  * (awkward to type, as for code recipes).
  *
  * Recorded decision (task serpcast-0-2-decoy-guard): `decoyGuard` takes engine
- * names, passed as is to serpcast's `decoyGuard` option (the key name follows
- * serpcast's, like the others). It is data, not executable: any layer may set
- * it. Its env form `WEBVEIL_SERPCAST_DECOY_GUARD` is split on commas (spaces
+ * names, passed as is to searchcast's `decoyGuard` option (the key name follows
+ * searchcast's, like the others). It is data, not executable: any layer may set
+ * it. Its env form `WEBVEIL_SEARCHCAST_DECOY_GUARD` is split on commas (spaces
  * around a name trimmed): an engine name is a recipe name, which never needs a
  * comma, whereas the path delimiter (`codeRecipes`) or whitespace
  * (`chromeArgs`) would be surprising for a list of names. A name missing from
  * `engines` is NOT an error (unlike `engines` itself): a global
  * `decoyGuard: ["bing"]` must keep working in a project whose chain has no
- * `bing`; serpcast simply never judges it. Alternative considered: failing on
+ * `bing`; searchcast simply never judges it. Alternative considered: failing on
  * such a name, rejected for that layering reason.
  *
  * Recorded decisions (task webveil-installs-and-tunables; rules and defaults:
- * tunables.ts): serpcast's tuning options pass through under their serpcast
+ * tunables.ts): searchcast's tuning options pass through under their searchcast
  * names (`timeoutMs`, `maxBodyBytes`, `reuseConnections`, `keepSessions`,
  * `idlePollMs`, `maxRequestBodyBytes`, `preflightCache`, `maxPreflightAgeS`,
- * `maxRedirects`, `decoyRule`), and `decoyGuard` also takes serpcast's object
+ * `maxRedirects`, `decoyRule`), and `decoyGuard` also takes searchcast's object
  * form `{include, exclude}`. `decoyGuard` is a WHOLE key (layers.ts): an
  * array in one layer and an object in another would otherwise merge into a
  * mix of both, so the highest layer's guard wins whole, as the array always
  * did. The browser endpoint's limits are `searchcast.timeoutMs` and
  * `searchcast.maxBodyBytes` (endpoint mode only). The state store's switches
  * are the `state` subsection (`persist`, `lockStaleMs`, `lockWaitMs`), inside
- * `serpcast` because it is serpcast's state (CONTEXT.md) and so joins the
+ * `searchcast` because it is searchcast's state (CONTEXT.md) and so joins the
  * identity key like everything else in the section. Every key has an env
- * form, `WEBVEIL_SERPCAST_<KEY>` in upper snake case (`_DECOY_RULE_TOP`,
- * `_SEARCHCAST_TIMEOUT_MS`, `_STATE_PERSIST`, ...), and
- * `WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE` (comma-separated) gives the object
+ * form, `WEBVEIL_SEARCHCAST_<KEY>` in upper snake case (`_DECOY_RULE_TOP`,
+ * `_BROWSER_TIMEOUT_MS`, `_STATE_PERSIST`, ...), and
+ * `WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE` (comma-separated) gives the object
  * form. An env switch is `true` or `false`; anything else is kept as given so
  * validation names it, never silently read as off.
  */
-export interface SerpcastConfig {
+export interface SearchcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
 	engines?: string[];
 	/** Declarative recipe files or directories (every `*.json` inside), or `set:<name>[/<file>]`. */
@@ -102,11 +107,11 @@ export interface SerpcastConfig {
 	libcurlPath?: string;
 	sessionIdleMs?: number;
 	cooldownMs?: number;
-	/** Engines whose answers serpcast checks for decoys, or `{include, exclude}`. */
+	/** Engines whose answers searchcast checks for decoys, or `{include, exclude}`. */
 	decoyGuard?: string[] | {include?: string[]; exclude?: string[]};
-	/** The decoy rule's thresholds (serpcast's `decoyRule`). */
+	/** The decoy rule's thresholds (searchcast's `decoyRule`). */
 	decoyRule?: {top?: number; maxRelevant?: number; prefix?: number};
-	/** serpcast transport and chain options, passed as is. */
+	/** searchcast transport and chain options, passed as is. */
 	timeoutMs?: number;
 	maxBodyBytes?: number;
 	reuseConnections?: boolean;
@@ -117,14 +122,14 @@ export interface SerpcastConfig {
 	maxPreflightAgeS?: number;
 	maxRedirects?: number;
 	/** The searchcast browser fallback (engines named `searchcast:<recipe>`). */
-	searchcast?: SearchcastConfig;
-	/** Where serpcast state lives (state.ts). */
+	browser?: BrowserConfig;
+	/** Where searchcast state lives (state.ts). */
 	state?: StateConfig;
 }
 
-/** The serpcast state store's switches (state.ts). */
+/** The searchcast state store's switches (state.ts). */
 export interface StateConfig {
-	/** `false`: serpcast's in-memory store, nothing written to disk. Default true. */
+	/** `false`: searchcast's in-memory store, nothing written to disk. Default true. */
 	persist?: boolean;
 	/** A lock older than this is broken (a crashed writer). Default 10 s. */
 	lockStaleMs?: number;
@@ -133,10 +138,10 @@ export interface StateConfig {
 }
 
 /**
- * How the serpcast backend reaches searchcast (backends/serpcast.ts). Key names
- * follow serpcast's `SearchcastLibraryOptions` (`chrome`, `xvfb`, `chromeArgs`).
+ * How the searchcast backend reaches searchcast (backends/searchcast.ts). Key names
+ * follow searchcast's `SearchcastLibraryOptions` (`chrome`, `xvfb`, `chromeArgs`).
  */
-export interface SearchcastConfig {
+export interface BrowserConfig {
 	/**
 	 * `library` (default): webveil starts searchcast in-process, with the egress
 	 * as the browser's proxy. `endpoint`: a `searchcast serve` the user runs.
@@ -155,14 +160,14 @@ export interface SearchcastConfig {
 	 * (deleted once idle past `sessionIdleMs`). Default: an ephemeral profile.
 	 */
 	persistProfile?: boolean;
-	/** Endpoint mode: the whole request's time limit in ms (serpcast: 30 s). */
+	/** Endpoint mode: the whole request's time limit in ms (searchcast: 30 s). */
 	timeoutMs?: number;
-	/** Endpoint mode: the largest answer accepted, in bytes (serpcast: 16 MiB). */
+	/** Endpoint mode: the largest answer accepted, in bytes (searchcast: 16 MiB). */
 	maxBodyBytes?: number;
 }
 
-/** The serpcast `web_fetch` transport's values (tunables.ts, fetch-transport.ts). */
-export interface FetchSerpcastConfig {
+/** The searchcast `web_fetch` transport's values (tunables.ts, fetch-transport.ts). */
+export interface FetchSearchcastConfig {
 	maxIdleSessions?: number;
 	sessionIdleMs?: number;
 	reuseConnections?: boolean;
@@ -172,11 +177,11 @@ export interface FetchSerpcastConfig {
 
 /**
  * How `web_fetch` sends its requests (fetch-transport.ts): `plain` is undici
- * over the egress dispatcher (a Node TLS fingerprint); `serpcast` is serpcast's
+ * over the egress dispatcher (a Node TLS fingerprint); `searchcast` is searchcast's
  * libcurl-impersonate transport (Chrome's TLS/HTTP2 fingerprint). No default in
  * DEFAULTS: when unset it follows `backend` (`resolveFetchTransport`).
  */
-export type FetchTransport = 'plain' | 'serpcast';
+export type FetchTransport = 'plain' | 'searchcast';
 
 /** Page-size budget preset for fetch (passed through to distilly). */
 export type FetchSize = 's' | 'm' | 'l' | 'f';
@@ -202,20 +207,20 @@ export interface Config {
 	fetchEgress?: Egress;
 	fetchSize: FetchSize;
 	/**
-	 * The `web_fetch` transport. OPTIONAL: unset, it is `serpcast` when
-	 * `backend` is `serpcast` and `plain` otherwise (`resolveFetchTransport`).
+	 * The `web_fetch` transport. OPTIONAL: unset, it is `searchcast` when
+	 * `backend` is `searchcast` and `plain` otherwise (`resolveFetchTransport`).
 	 */
 	fetchTransport?: FetchTransport;
 	/** Redirects `web_fetch` follows (both transports). Default 20. */
 	fetchMaxRedirects?: number;
-	/** The serpcast `web_fetch` transport's pool and limits. */
-	fetchSerpcast?: FetchSerpcastConfig;
+	/** The searchcast `web_fetch` transport's pool and limits. */
+	fetchSearchcast?: FetchSearchcastConfig;
 	/** Results a search returns when the caller passes no `maxResults`. Default 10. */
 	maxResults?: number;
 	/** The backend http helper's per-request timeout in ms. Default 30 s. */
 	httpTimeoutMs?: number;
-	/** Settings of the `serpcast` backend (unused by the other backends). */
-	serpcast?: SerpcastConfig;
+	/** Settings of the `searchcast` backend (unused by the other backends). */
+	searchcast?: SearchcastConfig;
 }
 
 /** A config file / env layer: any subset of the resolved shape. */
@@ -247,6 +252,11 @@ const DEFAULTS: Config = {
 
 const PROJECT_FILE = 'webveil.json';
 
+/** A layer read from a config file. */
+type FileLayer = Layer & {
+	source: {layer: 'project' | 'global'; path: string};
+};
+
 function readJson(path: string): Record<string, unknown> | undefined {
 	let text: string;
 	try {
@@ -258,7 +268,7 @@ function readJson(path: string): Record<string, unknown> | undefined {
 }
 
 /** The nearest `webveil.json` walking up from `cwd` (first found wins). */
-function readProjectChain(cwd: string): Layer | undefined {
+function readProjectChain(cwd: string): FileLayer | undefined {
 	let dir = cwd;
 	const {root} = parse(dir);
 	for (;;) {
@@ -271,7 +281,7 @@ function readProjectChain(cwd: string): Layer | undefined {
 }
 
 /** The global config file as a layer (empty when the file is absent). */
-function readGlobal(path: string): Layer {
+function readGlobal(path: string): FileLayer {
 	return {value: readJson(path) ?? {}, source: {layer: 'global', path}};
 }
 
@@ -292,7 +302,7 @@ function parseEgressEnv(
 
 /**
  * A PATH-like list split on the platform delimiter, keeping an installed set
- * entry (`set:<name>`, backends/serpcast.ts) whole where the delimiter is `:`:
+ * entry (`set:<name>`, backends/searchcast.ts) whole where the delimiter is `:`:
  * a lone `set` token would be a relative path, which env never accepts.
  */
 function splitPathList(value: string): string[] {
@@ -336,7 +346,7 @@ function readKeys(
 	return target;
 }
 
-const SERPCAST_ENV_KEYS: Record<string, [string, (v: string) => unknown]> = {
+const SEARCHCAST_ENV_KEYS: Record<string, [string, (v: string) => unknown]> = {
 	timeoutMs: ['TIMEOUT_MS', envNumber],
 	maxBodyBytes: ['MAX_BODY_BYTES', envNumber],
 	reuseConnections: ['REUSE_CONNECTIONS', envBoolean],
@@ -359,10 +369,10 @@ function setSection(
 	if (Object.keys(value).length > 0) section[key] = value;
 }
 
-/** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes, chrome args, decoy guard). */
-function readSerpcastEnv(env: Env): SerpcastConfig {
-	const P = 'WEBVEIL_SERPCAST_';
-	const section = readKeys(env, P, SERPCAST_ENV_KEYS) as SerpcastConfig;
+/** The `searchcast` settings from `WEBVEIL_SEARCHCAST_*` (lists: code recipes, chrome args, decoy guard). */
+function readSearchcastEnv(env: Env): SearchcastConfig {
+	const P = 'WEBVEIL_SEARCHCAST_';
+	const section = readKeys(env, P, SEARCHCAST_ENV_KEYS) as SearchcastConfig;
 	const extra = section as Record<string, unknown>;
 	setSection(
 		extra,
@@ -383,22 +393,22 @@ function readSerpcastEnv(env: Env): SerpcastConfig {
 		}),
 	);
 	const {
-		WEBVEIL_SERPCAST_LIBCURL_PATH: lib,
-		WEBVEIL_SERPCAST_CODE_RECIPES: code,
-		WEBVEIL_SERPCAST_SEARCHCAST_CHROME: chrome,
-		WEBVEIL_SERPCAST_SEARCHCAST_XVFB: xvfb,
-		WEBVEIL_SERPCAST_SEARCHCAST_CHROME_ARGS: args,
-		WEBVEIL_SERPCAST_DECOY_GUARD: decoy,
-		WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE: exclude,
+		WEBVEIL_SEARCHCAST_LIBCURL_PATH: lib,
+		WEBVEIL_SEARCHCAST_CODE_RECIPES: code,
+		WEBVEIL_SEARCHCAST_BROWSER_CHROME: chrome,
+		WEBVEIL_SEARCHCAST_BROWSER_XVFB: xvfb,
+		WEBVEIL_SEARCHCAST_BROWSER_CHROME_ARGS: args,
+		WEBVEIL_SEARCHCAST_DECOY_GUARD: decoy,
+		WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: exclude,
 	} = env;
-	const browser = readKeys(env, `${P}SEARCHCAST_`, {
+	const browser = readKeys(env, `${P}BROWSER_`, {
 		timeoutMs: ['TIMEOUT_MS', envNumber],
 		maxBodyBytes: ['MAX_BODY_BYTES', envNumber],
-	}) as SearchcastConfig;
+	}) as BrowserConfig;
 	if (chrome) browser.chrome = chrome;
 	if (xvfb) browser.xvfb = xvfb;
 	if (args?.trim()) browser.chromeArgs = args.trim().split(/\s+/);
-	if (Object.keys(browser).length > 0) section.searchcast = browser;
+	if (Object.keys(browser).length > 0) section.browser = browser;
 	if (code) section.codeRecipes = splitPathList(code);
 	if (exclude?.trim())
 		section.decoyGuard = {
@@ -418,8 +428,8 @@ function readEnv(env: Env): PartialConfig {
 	}) as PartialConfig;
 	setSection(
 		layer as Record<string, unknown>,
-		'fetchSerpcast',
-		readKeys(env, 'WEBVEIL_FETCH_SERPCAST_', {
+		'fetchSearchcast',
+		readKeys(env, 'WEBVEIL_FETCH_SEARCHCAST_', {
 			maxIdleSessions: ['MAX_IDLE_SESSIONS', envNumber],
 			sessionIdleMs: ['SESSION_IDLE_MS', envNumber],
 			reuseConnections: ['REUSE_CONNECTIONS', envBoolean],
@@ -441,8 +451,8 @@ function readEnv(env: Env): PartialConfig {
 		env.WEBVEIL_FETCH_EGRESS_URL,
 	);
 	if (fetchEgress) layer.fetchEgress = fetchEgress;
-	const serpcast = readSerpcastEnv(env);
-	if (Object.keys(serpcast).length > 0) layer.serpcast = serpcast;
+	const searchcast = readSearchcastEnv(env);
+	if (Object.keys(searchcast).length > 0) layer.searchcast = searchcast;
 	return layer;
 }
 
@@ -470,13 +480,26 @@ export function resolveConfig(options: ResolveOptions = {}): Config {
 	const globalPath =
 		options.globalPath ?? resolveGlobalPath(env, options.homeDir);
 
+	// Every layer is rewritten to the new spellings BEFORE the merge, so
+	// provenance, trust and identity only ever see one (spellings.ts).
+	const deprecations: string[] = [];
+	const file = (layer: FileLayer): Layer => {
+		const normalized = normalizeFileLayer(layer.value, layer.source.path);
+		deprecations.push(...normalized.deprecations);
+		return {...layer, value: normalized.value};
+	};
 	const project = readProjectChain(cwd);
+	const envLayer = normalizeEnv(env);
 	const layers: Layer[] = [
 		{value: {...DEFAULTS}, source: {layer: 'defaults'}},
-		readGlobal(globalPath),
-		...(project ? [project] : []),
-		{value: {...readEnv(env)}, source: {layer: 'env'}},
+		file(readGlobal(globalPath)),
+		...(project ? [file(project)] : []),
+		{value: {...readEnv(envLayer.env)}, source: {layer: 'env'}},
 	];
+	deprecations.push(...envLayer.deprecations);
 	const {value, provenance} = mergeLayers(layers);
-	return attachProvenance(value as unknown as Config, provenance);
+	return attachDeprecations(
+		attachProvenance(value as unknown as Config, provenance),
+		deprecations,
+	);
 }

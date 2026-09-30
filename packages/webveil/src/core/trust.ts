@@ -1,7 +1,7 @@
 // trust — the ONE place that decides whether an executable setting may be used.
 // Config is discovered by walking up from the cwd (docs/adr/0002), so a
 // `webveil.json` in any cloned repository is read automatically; a setting that
-// makes webveil run code (the `custom` backend command, serpcast code recipes,
+// makes webveil run code (the `custom` backend command, searchcast code recipes,
 // the libcurl path, searchcast's chrome and xvfb paths and chrome args) is
 // therefore accepted only from env or the global config (docs/adr/0004).
 //
@@ -47,10 +47,10 @@
 //   `isCommandPath`, per platform: on Windows a `/`, a `\` or a drive prefix
 //   (`C:`) makes it a path; elsewhere only `/` does, since `\` is a legal
 //   file-name character on POSIX. Callers: the custom backend's command
-//   (custom.ts). serpcast's path settings (`libcurlPath`, `recipes`,
+//   (custom.ts). searchcast's path settings (`libcurlPath`, `recipes`,
 //   `codeRecipes`, searchcast `chrome`/`xvfb`) are always paths, never bare
 //   names, so they only need `resolveExecutablePath`, which is now
-//   platform-aware too (serpcast.ts `resolvePath`).
+//   platform-aware too (searchcast.ts `resolvePath`).
 // - On Windows only a FULLY QUALIFIED path is absolute: drive + root
 //   (`C:\x`, `C:/x`) or UNC (`\\srv\share`, `//srv/share`, device paths).
 //   A root-relative path (`\tools\x.exe`, `/tools/x.exe`), which node's

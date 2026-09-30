@@ -1,4 +1,4 @@
-// state: serpcast's `StateStore` on disk, one partition per identity
+// state: searchcast's `StateStore` on disk, one partition per identity
 // (identity.ts), so the one-shot CLI keeps sessions and cooldowns between
 // calls and no state ever crosses identities (docs/adr/0004).
 //
@@ -8,7 +8,7 @@
 // hash appears in a path; store keys live inside the file, never as names.
 //
 // Recorded decisions (task identity-partitioned-state-store):
-// - One JSON file per partition, rewritten whole: serpcast keeps a handful of
+// - One JSON file per partition, rewritten whole: searchcast keeps a handful of
 //   small keys, and a single file makes "both writes applied" a plain
 //   read-modify-write under the lock. Alternative: a file per key (names
 //   encoded), rejected as more files and more locking for no gain.
@@ -69,15 +69,15 @@
 //   necessarily touching the directory entry, so it is no use-clock.
 //
 // Recorded decisions (task webveil-installs-and-tunables; keys: config.ts
-// `serpcast.state`, rules: tunables.ts):
-// - LOCK_STALE_MS and LOCK_WAIT_MS are the defaults of `serpcast.state.
+// `searchcast.state`, rules: tunables.ts):
+// - LOCK_STALE_MS and LOCK_WAIT_MS are the defaults of `searchcast.state.
 //   lockStaleMs` and `lockWaitMs`, handed to `createStateStore` (and so to
 //   `withLock`) by the backend. `webveil state clear` uses the current
 //   identity's values; `--all` has no single identity, so it uses the
 //   defaults.
-// - `serpcast.state.persist: false` is not handled here: the backend then
-//   hands serpcast its in-memory store and this module is never called for
-//   that identity (backends/serpcast.ts).
+// - `searchcast.state.persist: false` is not handled here: the backend then
+//   hands searchcast its in-memory store and this module is never called for
+//   that identity (backends/searchcast.ts).
 
 import {randomBytes} from 'node:crypto';
 import {
@@ -137,7 +137,7 @@ async function ensureDir(dir: string): Promise<void> {
 	await chmod(dir, 0o700);
 }
 
-/** The lock's timing (`serpcast.state.lockStaleMs`/`lockWaitMs`). */
+/** The lock's timing (`searchcast.state.lockStaleMs`/`lockWaitMs`). */
 export interface LockTiming {
 	/** A lock older than this is broken. Default LOCK_STALE_MS (10 s). */
 	staleMs?: number;
@@ -286,7 +286,7 @@ export interface StateStoreOptions {
 	lock?: LockTiming;
 }
 
-/** serpcast's `StateStore` over the partition directory `dir`. */
+/** searchcast's `StateStore` over the partition directory `dir`. */
 export function createStateStore(
 	dir: string,
 	options: StateStoreOptions = {},

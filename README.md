@@ -29,21 +29,87 @@ npm install -g webveil        # or, in pi: pi install npm:pi-webveil
 webveil search "hello world"
 ```
 
-That is the whole setup (Node 22 or later, on Linux x64 and arm64 with glibc, macOS x64 and arm64, and Windows x64): no service to run, no account, nothing else to install. The default backend is **`searchcast`**: webveil sends the search itself, over HTTP with a real browser's TLS fingerprint (the native library comes with webveil on those platforms), from your own IP (`direct` egress) unless you configure an [egress](#anonymous-egress-mullvad--tor). Its default engine chain is one engine, [Marginalia Search](https://marginalia-search.com), an independent web search engine whose [API](https://about.marginalia-search.com/article/api/) is meant for programs, queried by a code recipe that ships in the webveil package (`recipes/marginalia.mjs`, a copy of searchcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/searchcast/blob/main/examples/recipes/marginalia.mjs)). Know its terms:
+That is the whole setup (Node 22 or later, on Linux x64 and arm64 with glibc, macOS x64 and arm64, and Windows x64): no service to run, no account, nothing else to install. The same holds for the pi extension: `pi install npm:pi-webveil` and its `web_search` and `web_fetch` tools work at once, with the same default and the same config. The default backend is **`searchcast`**: webveil sends the search itself, over HTTP with a real browser's TLS fingerprint (the native library comes with webveil on those platforms), from your own IP (`direct` egress) unless you configure an [egress](#anonymous-egress-mullvad--tor).
 
-- **A shared key.** It uses Marginalia's `public` API key, whose rate limit is shared by everyone who uses it (the API then answers HTTP 503, which webveil reports as the engine being blocked; in tests on 2026-09-29 it was often slow or unresponsive). For regular use, ask Marginalia for a free personal key (non-commercial use) and set `MARGINALIA_API_KEY` in webveil's environment. The key is part of the request URL, so it can appear in error messages.
-- **The results licence.** Marginalia provides its results under CC-BY-NC-SA 4.0.
-- **One small independent index.** It is not a general-purpose engine: expect fewer results, and different ones, than a big engine returns.
+**The default is a floor, not the product.** It is there so that search works after one install. What you add with recipes is where webveil earns its keep: see [what recipes add](#the-default-engines-and-what-recipes-add), just below.
 
-`web_fetch` (`webveil fetch <url>`) uses the browser fingerprint too with this backend. Where the native library is missing, search and fetch fail with the fix (`webveil install-libcurl`, or `"fetchTransport": "plain"` for fetch), never a silent fallback to Node's fingerprint. `webveil doctor` checks the whole setup and makes no network request.
+### The default engines, and what recipes add
 
-When you want more, the options are:
+With no engines configured, webveil tries two engines in order, `["mwmbl", "marginalia"]`: [Mwmbl](https://mwmbl.org) first, and [Marginalia Search](https://marginalia-search.com) when Mwmbl fails. Both are small, independent, non-commercial indexes, queried through their public keyless APIs ([Mwmbl's](https://developer.mwmbl.org/), [Marginalia's](https://about.marginalia-search.com/article/api/)) by two code recipes that ship in the webveil package (`recipes/mwmbl.mjs` and `recipes/marginalia.mjs`, copies of searchcast's [`examples/recipes/`](https://github.com/wighawag/searchcast/tree/main/examples/recipes), each naming the commit it was copied from). Know their limits:
 
-- **Your own searchcast recipes**: a recipe set you install, or recipes you write, for the engines you choose. Any engines, recipes or code recipes you configure replace the default chain entirely. See [The searchcast backend](#the-searchcast-backend-recipes-and-engine-chains).
+- **Per-IP quotas.** Without a key, Mwmbl allows 1,000 requests a month at 1 request per second, counted per IP address; Marginalia's shared `public` key has one rate limit for everyone who uses it (on the evening of 2026-09-30 it answered HTTP 504 after 60 seconds to every request, which is why Mwmbl comes first). A Tor exit or VPN shares a quota with everyone else on it. Over quota an engine answers HTTP 429 or 503, which webveil reports as the engine being blocked, and the chain moves on.
+- **More quota with a key.** Ask [Mwmbl](https://developer.mwmbl.org/) for a personal key and set `MWMBL_API_KEY`, and ask [Marginalia](https://about.marginalia-search.com/article/api/) for a free personal key (non-commercial use) and set `MARGINALIA_API_KEY`, in webveil's environment. A key is part of the request URL, so it can appear in error messages.
+- **The results licence.** Both provide their results under CC BY-NC-SA 4.0.
+- **Small indexes.** Neither is a general-purpose engine: expect fewer results, and different ones, than a big engine returns. Each sees your IP (or your egress's) and your queries.
+
+**webveil is much more capable with recipes.** A recipe is a small file that turns a site's search into an engine, and the chain of engines is yours to choose:
+
+- **Any site's search as an engine.** A declarative recipe (JSON) gives the search URL and CSS selectors for the results, the "no results" page and a challenge page.
+- **Code recipes** (JavaScript modules) handle what a template cannot: a site's JavaScript result flow, a JSON API, or a challenge to answer before the results.
+- **The engine chain falls through.** An engine that is blocked, times out or no longer fits its recipe hands over to the next one, and the answer names the engines that failed first.
+- **A real browser as the last fallback.** A browser engine runs a recipe in [`@searchcast/browser`](https://github.com/wighawag/searchcast/tree/main/packages/browser), with a real browser's fingerprint and the page's JavaScript, for when the HTTP engines are blocked.
+- **One pinned command installs a recipe set:** `webveil install-recipes <url> --sha256 <hex>` (the checksum is your trust decision), then name it with `set:<name>`.
+
+The shape of a declarative recipe (placeholders; the format is documented in [`@searchcast/recipe`](https://github.com/wighawag/searchcast/tree/main/packages/recipe)):
+
+```json
+{
+	"name": "example",
+	"navigate": {"url": "https://example.test/search?q={query}"},
+	"ready": ".result a",
+	"empty": ".no-results",
+	"blocked": ["#challenge"],
+	"results": {
+		"item": ".result",
+		"fields": {
+			"title": {"selector": "a"},
+			"url": {"selector": "a", "attr": "href"},
+			"content": {"selector": ".snippet"}
+		}
+	}
+}
+```
+
+And of a code recipe (placeholders; see [searchcast's code recipes](https://github.com/wighawag/searchcast#code-recipes) and the two bundled ones for real examples):
+
+```js
+export default {
+	name: 'example-api',
+	async search(query, ctx) {
+		const data = await ctx.http.json(
+			`https://api.example.test/search?q=${encodeURIComponent(query)}`,
+			{kind: 'document'},
+		);
+		if (!Array.isArray(data?.results)) ctx.recipeError('no results array');
+		return data.results.map((r) => ({title: r.title, url: r.url}));
+	},
+};
+```
+
+Then list them in the global config, `~/.config/webveil/config.json`, most wanted first, with the browser engine last:
+
+```json
+{
+	"searchcast": {
+		"recipes": ["recipes"],
+		"codeRecipes": ["recipes/example-api.mjs"],
+		"engines": ["example-api", "example", "searchcast:example"]
+	}
+}
+```
+
+Any engines, recipes or code recipes you configure replace the default chain entirely (nothing is merged with it; to keep Mwmbl or Marginalia, copy its file next to your recipes and list it). Code recipes run with full Node access, so they are accepted only from the global config or env, never from a project `webveil.json`. The full walkthrough is [The searchcast backend](#the-searchcast-backend-recipes-and-engine-chains); `webveil doctor` shows the chain in use (its `defaultChain` notice says when it is the default one).
+
+### Other backends, and upgrading from the SearXNG default
+
+`web_fetch` (`webveil fetch <url>`) uses the browser fingerprint too with the searchcast backend. Where the native library is missing, search and fetch fail with the fix (`webveil install-libcurl`, or `"fetchTransport": "plain"` for fetch), never a silent fallback to Node's fingerprint. `webveil doctor` checks the whole setup and makes no network request.
+
+Besides searchcast recipes, the options are:
+
 - **`searxng`**: a SearXNG metasearch service you run yourself (`"backend": "searxng"`). See [With a local SearXNG](#with-a-local-searxng).
 - **`tavily-compat`** (an account or key) and **`custom`** (your own command): see [How it works](#how-it-works-seams).
 
-No option is zero-setup, account-free and full web results at once (see [`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md)). Zero setup now gives you one small independent index through a shared key, with no account (Marginalia sees your IP, or your egress's, and your queries); private recipe sets need recipes you trust, SearXNG needs a service you run, and `tavily-compat` needs an account or a key.
+No option is zero-setup, account-free and full web results at once (see [`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md)). Zero setup gives you two small independent indexes through keyless APIs with per-IP quotas, with no account (each engine sees your IP, or your egress's, and your queries); recipe sets need recipes you trust, SearXNG needs a service you run, and `tavily-compat` needs an account or a key.
 
 **Upgrading from the SearXNG default.** Up to webveil 0.10 the default backend was a local SearXNG at `http://127.0.0.1:8080`. webveil does not look for one (that would be a guess, and a request you did not ask for): set `"backend": "searxng"` in the global config (or `WEBVEIL_BACKEND=searxng`) to keep using it; `baseUrl` still defaults to `http://127.0.0.1:8080`. While the backend is the built-in default, a failed search and `webveil doctor` (its `defaultBackend` notice) remind you of this.
 
@@ -127,11 +193,11 @@ What to expect:
 - **Anonymity.** With this backend `egress` governs the requests that reach the search engines: see [Where does anonymity live?](#where-does-anonymity-live-read-before-turning-on-egress).
 - **`web_fetch` gets the browser fingerprint too.** With this backend `fetchTransport` defaults to `searchcast`, so `web_fetch` also goes through libcurl-impersonate (and so also needs it). Set `"fetchTransport": "plain"` to keep the plain Node transport: see [The `web_fetch` transport](#the-web_fetch-transport-fetchtransport).
 
-**`webveil doctor`** reports, for the current folder's config: the libcurl-impersonate library webveil would load (where it was found, usually `platform package` with the package `@searchcast/libcurl-<platform>`, else the setting or directory that named it; its version; whether impersonation is active), the backend, both egress hops (proxy credentials shown as `***`), the `web_fetch` transport, each engine of the chain with its kind and recipe file, and whether each configured `set:` is installed. When something is still read from serpcast's old data directory (`~/.local/share/serpcast`: the library or a recipe set), it adds `oldDataDir`, listing those items with the command that moves them to searchcast's; that is a notice, not a problem. It exits 1 with the list of problems when something is wrong (the library only counts when the searchcast backend or the searchcast fetch transport uses it). It makes no network request unless you add `--remote`, which asks the fingerprint echo service `https://tls.browserleaks.com/json` once, through the searchcast backend's `egress` (else the fetch hop's), and reports the JA3, JA4 and HTTP/2 values it saw.
+**`webveil doctor`** reports, for the current folder's config: the libcurl-impersonate library webveil would load (where it was found, usually `platform package` with the package `@searchcast/libcurl-<platform>`, else the setting or directory that named it; its version; whether impersonation is active), the backend, both egress hops (proxy credentials shown as `***`), the `web_fetch` transport, each engine of the chain with its kind and recipe file, and whether each configured `set:` is installed. When something is still read from serpcast's old data directory (`~/.local/share/serpcast`: the library or a recipe set), it adds `oldDataDir`, listing those items with the command that moves them to searchcast's; that is a notice, not a problem. While the default chain is in use (the searchcast backend with no engines, recipes or code recipes configured), it adds `defaultChain`, one line saying so and pointing to recipes; a notice too. It exits 1 with the list of problems when something is wrong (the library only counts when the searchcast backend or the searchcast fetch transport uses it). It makes no network request unless you add `--remote`, which asks the fingerprint echo service `https://tls.browserleaks.com/json` once, through the searchcast backend's `egress` (else the fetch hop's), and reports the JA3, JA4 and HTTP/2 values it saw.
 
 The four setup commands (`install-libcurl`, `install-recipes`, `recipes`, `doctor`) are CLI only: they are not MCP tools (`webveil --mcp` serves `search`, `fetch` and `state_clear`) and not pi tools. The installers download code webveil runs, and the checksum pin is your trust decision, not an agent's. They load searchcast's install code only when they run: `search` and `fetch` never load it.
 
-**Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private searchcast recipes* under [How it works](#how-it-works-seams). The default chain runs searchcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/searchcast/tree/main/examples/recipes), bundled in webveil, but only while you configure no chain of your own. To keep Marginalia in your own chain, copy that file next to your recipes and list it under `searchcast.codeRecipes` in the global config (a code recipe, so never from a project `webveil.json`), with `marginalia` in `engines`. Its shared `public` key is often rate limited or unresponsive (it timed out for most test queries on 2026-09-29, direct and through Tor), so ask Marginalia for a free personal key and set `MARGINALIA_API_KEY`.
+**Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private searchcast recipes* under [How it works](#how-it-works-seams). The default chain runs searchcast's [`examples/recipes/mwmbl.mjs` and `marginalia.mjs`](https://github.com/wighawag/searchcast/tree/main/examples/recipes), bundled in webveil, but only while you configure no chain of your own. To keep either in your own chain, copy its file next to your recipes and list it under `searchcast.codeRecipes` in the global config (a code recipe, so never from a project `webveil.json`), with `mwmbl` or `marginalia` in `engines`. For more quota, set `MWMBL_API_KEY` or `MARGINALIA_API_KEY` (see [The default engines](#the-default-engines-and-what-recipes-add)).
 
 #### Installing recipes
 
@@ -399,7 +465,7 @@ never in webveil: see
   metasearch), `tavily-compat` (a generic Tavily-shaped `/search` + `/extract`),
   `custom` (a local command via a JSON stdin/stdout contract), and `searchcast` (keyless
   search engines from recipes over libcurl-impersonate, no SearXNG; webveil's `egress`
-  is its search egress; the default backend, with the bundled Marginalia chain). The backend is handed a
+  is its search egress; the default backend, with the bundled Mwmbl and Marginalia chain). The backend is handed a
   proxied `http` helper so it cannot bypass egress. The searxng backend also surfaces
   engine degradation from the response's `unresponsive_engines` — partial failures
   **annotate** the results (`unresponsiveEngines`, so a degraded answer never masquerades
@@ -454,7 +520,7 @@ Every key, in the global config (`~/.config/webveil/config.json`), a project `we
 | `fetchSearchcast.maxBodyBytes` | 16777216 (16 MiB) | `WEBVEIL_FETCH_SEARCHCAST_MAX_BODY_BYTES` | The largest page the searchcast fetch transport accepts. |
 | `maxResults` | 10 | `WEBVEIL_MAX_RESULTS` | Results a search returns when the caller passes none (a caller's `maxResults` wins). |
 | `httpTimeoutMs` | 30000 | `WEBVEIL_HTTP_TIMEOUT_MS` | The per-request timeout of webveil's requests to a backend (`searxng`, `tavily-compat`). |
-| `searchcast.engines` | the default chain `["marginalia"]` (bundled) while `engines`, `recipes` and `codeRecipes` are all unset; else required | none | The engine chain, in order. |
+| `searchcast.engines` | the default chain `["mwmbl", "marginalia"]` (bundled) while `engines`, `recipes` and `codeRecipes` are all unset; else required | none | The engine chain, in order. |
 | `searchcast.recipes` | none | none | Declarative recipe files or directories, or `set:<name>[/<file>]`. |
 | `searchcast.codeRecipes` | none | `WEBVEIL_SEARCHCAST_CODE_RECIPES` | Code recipe modules or directories, or `set:...` (**executable**). |
 | `searchcast.libcurlPath` | searchcast's lookup (`SEARCHCAST_LIBCURL_PATH`, the data directory, then the platform package) | `WEBVEIL_SEARCHCAST_LIBCURL_PATH` | The libcurl-impersonate library (**executable**). |

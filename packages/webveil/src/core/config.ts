@@ -248,7 +248,8 @@ export interface ResolveOptions {
  * searchcast-backend; owner-approved Marginalia chain):
  * - The default `backend` is `searchcast` (it was `searxng`), still on
  *   `direct` egress. Its engine chain, when the user sets none, is the
- *   bundled Marginalia code recipe, filled in by the backend, not here
+ *   bundled code recipes (Mwmbl then Marginalia since task
+ *   default-chain-mwmbl), filled in by the backend, not here
  *   (backends/searchcast.ts explains why: a key-by-key merge would mix a
  *   user's chain with the default one).
  * - `baseUrl` keeps its old default `http://127.0.0.1:8080`: searchcast does
@@ -271,7 +272,7 @@ const DEFAULTS: Config = {
 /** What a user who relied on the old implicit SearXNG default needs to know. */
 export const DEFAULT_BACKEND_NOTE =
 	'the default backend changed in webveil 0.11: it is now searchcast with a ' +
-	'bundled Marginalia engine chain (it was a local SearXNG at ' +
+	'bundled engine chain (it was a local SearXNG at ' +
 	'http://127.0.0.1:8080); set "backend": "searxng" (or ' +
 	'WEBVEIL_BACKEND=searxng) to restore the previous default';
 

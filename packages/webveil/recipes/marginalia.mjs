@@ -14,12 +14,12 @@
 // The key is part of the URL, so it appears in searchcast's error messages
 // (they name the URL): keep that in mind when you log failures.
 //
-// Bundled with webveil as the default engine chain (`["marginalia"]`, used when
-// no engines, recipes or code recipes are configured; owner-approved on
-// 2026-09-29 and 2026-09-30). Source: a copy of searchcast's
-// examples/recipes/marginalia.mjs at commit
-// 8f93d42e70a8b46c10fe57144408a6bd9dfc659c
-// (https://github.com/wighawag/searchcast/blob/8f93d42e70a8b46c10fe57144408a6bd9dfc659c/examples/recipes/marginalia.mjs).
+// Bundled with webveil as the second engine of the default chain
+// (`["mwmbl", "marginalia"]`, used when no engines, recipes or code recipes
+// are configured; owner-approved on 2026-09-29 and 2026-09-30). Source: a copy
+// of searchcast's examples/recipes/marginalia.mjs at commit
+// 7b0dbde7daf7b50cf99f6b7846b75e34db18602f
+// (https://github.com/wighawag/searchcast/blob/7b0dbde7daf7b50cf99f6b7846b75e34db18602f/examples/recipes/marginalia.mjs).
 // It is trusted because it ships in the webveil package, not because of any
 // config layer: a project webveil.json still cannot add code recipes.
 

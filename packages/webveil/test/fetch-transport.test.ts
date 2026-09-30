@@ -1,6 +1,6 @@
-// web_fetch's transport choice (`fetchTransport`) and the serpcast transport
+// web_fetch's transport choice (`fetchTransport`) and the searchcast transport
 // adapter, driven through the core fetch() with REAL distilly and real config
-// files over a FAKE serpcast transport: no native library and no network. The
+// files over a FAKE searchcast transport: no native library and no network. The
 // SSRF guard is the real one: direct-egress targets are literal public IPs, so
 // no DNS lookup happens either.
 
@@ -26,7 +26,7 @@ import {fetch} from '../src/core/fetch.js';
 import type {FetchDeps} from '../src/core/fetch.js';
 import {
 	closeFetchTransports,
-	createSerpcastFetch,
+	createSearchcastFetch,
 	MAX_IDLE_SESSIONS,
 	resolveFetchTransport,
 } from '../src/core/fetch-transport.js';
@@ -76,7 +76,7 @@ interface Answer {
 }
 
 /**
- * A fake serpcast transport answering per url; records options, requests and
+ * A fake searchcast transport answering per url; records options, requests and
  * closed sessions. Each session has its own cookie jar: a `set-cookie` answer
  * header adds to it, and `cookieRequests` records the cookies each request was
  * sent with. An answer with `gate` waits for it before answering.
@@ -140,7 +140,7 @@ function fakeTransport(
 
 type Fake = ReturnType<typeof fakeTransport>;
 
-/** core fetch() over real config files, the serpcast adapter on the fake. */
+/** core fetch() over real config files, the searchcast adapter on the fake. */
 function fetchWith(
 	fake: Fake,
 	env: Record<string, string> = {},
@@ -151,8 +151,8 @@ function fetchWith(
 		url,
 		{cwd: project, globalPath, env},
 		{
-			createSerpcastFetch: (config) =>
-				createSerpcastFetch(config, {createTransport: fake.create}),
+			createSearchcastFetch: (config) =>
+				createSearchcastFetch(config, {createTransport: fake.create}),
 			...extra,
 		},
 	);
@@ -169,8 +169,10 @@ function cfg(overrides: Partial<Config> = {}): Config {
 }
 
 describe('fetchTransport: resolution', () => {
-	it('defaults to serpcast with the serpcast backend, plain otherwise', () => {
-		expect(resolveFetchTransport(cfg({backend: 'serpcast'}))).toBe('serpcast');
+	it('defaults to searchcast with the searchcast backend, plain otherwise', () => {
+		expect(resolveFetchTransport(cfg({backend: 'searchcast'}))).toBe(
+			'searchcast',
+		);
 		for (const backend of ['searxng', 'tavily-compat', 'custom'])
 			expect(resolveFetchTransport(cfg({backend}))).toBe('plain');
 	});
@@ -178,49 +180,49 @@ describe('fetchTransport: resolution', () => {
 	it('an explicit value always wins over the backend default', () => {
 		expect(
 			resolveFetchTransport(
-				cfg({backend: 'serpcast', fetchTransport: 'plain'}),
+				cfg({backend: 'searchcast', fetchTransport: 'plain'}),
 			),
 		).toBe('plain');
-		expect(resolveFetchTransport(cfg({fetchTransport: 'serpcast'}))).toBe(
-			'serpcast',
+		expect(resolveFetchTransport(cfg({fetchTransport: 'searchcast'}))).toBe(
+			'searchcast',
 		);
 	});
 
 	it('reads the key from files and WEBVEIL_FETCH_TRANSPORT (env wins)', () => {
 		writeJson(join(project, 'webveil.json'), {
-			backend: 'serpcast',
+			backend: 'searchcast',
 			fetchTransport: 'plain',
 		});
 		const opts = {cwd: project, globalPath};
 		expect(resolveFetchTransport(resolveConfig({...opts, env: {}}))).toBe(
 			'plain',
 		);
-		const env = {WEBVEIL_FETCH_TRANSPORT: 'serpcast'};
+		const env = {WEBVEIL_FETCH_TRANSPORT: 'searchcast'};
 		expect(resolveFetchTransport(resolveConfig({...opts, env}))).toBe(
-			'serpcast',
+			'searchcast',
 		);
 	});
 
 	it('refuses an unknown value (never a silent plain)', () => {
 		expect(() =>
 			resolveFetchTransport(cfg({fetchTransport: 'curl' as never})),
-		).toThrow(/fetchTransport must be 'plain' or 'serpcast'/);
+		).toThrow(/fetchTransport must be 'plain' or 'searchcast'/);
 	});
 });
 
-describe('fetchTransport serpcast: distilly over the impersonated transport', () => {
-	it('is the default with the serpcast backend (no engines needed), GET document', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
-		const fake = fakeTransport({[PAGE]: {html: '<h1>Hello serpcast</h1>'}});
+describe('fetchTransport searchcast: distilly over the impersonated transport', () => {
+	it('is the default with the searchcast backend (no engines needed), GET document', async () => {
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
+		const fake = fakeTransport({[PAGE]: {html: '<h1>Hello searchcast</h1>'}});
 		const result = await fetchWith(fake);
-		expect(result.markdown).toContain('Hello serpcast');
+		expect(result.markdown).toContain('Hello searchcast');
 		expect(fake.requests).toEqual([{url: PAGE, kind: 'document', session: 1}]);
 		expect(fake.built[0]).toMatchObject({strict: true});
 		expect(fake.built[0]!.proxy).toBeUndefined();
 	});
 
 	it('works with another backend when set explicitly, and plain never runs', async () => {
-		writeJson(join(project, 'webveil.json'), {fetchTransport: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {fetchTransport: 'searchcast'});
 		const createEgressFetch = vi.fn();
 		const fake = fakeTransport();
 		await fetchWith(fake, {}, PAGE, {
@@ -232,7 +234,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 
 	it('maps the FETCH-hop egress: fetchEgress socks5 -> socks5h, over egress', async () => {
 		writeJson(join(project, 'webveil.json'), {
-			backend: 'serpcast',
+			backend: 'searchcast',
 			egress: {mode: 'http', url: 'http://proxy.example:3128'},
 			fetchEgress: {mode: 'socks5', url: 'socks5://127.0.0.1:9050'},
 		});
@@ -243,7 +245,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 
 	it('passes an http egress through as is', async () => {
 		writeJson(join(project, 'webveil.json'), {
-			backend: 'serpcast',
+			backend: 'searchcast',
 			egress: {mode: 'http', url: 'http://proxy.example:3128'},
 		});
 		const fake = fakeTransport();
@@ -252,7 +254,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 
 	it('follows redirects (relative too) in one session, and reports the final url', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const second = 'https://93.184.215.14/moved';
 		const final = 'https://1.1.1.1/final';
 		const fake = fakeTransport({
@@ -260,7 +262,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 			[second]: {status: 302, headers: {location: final}},
 			[final]: {html: '<h1>Arrived</h1>'},
 		});
-		const adapter = createSerpcastFetch(
+		const adapter = createSearchcastFetch(
 			resolveConfig({cwd: project, globalPath, env: {}}),
 			{
 				createTransport: fake.create,
@@ -281,7 +283,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 
 	it('runs the SSRF check on every hop: a redirect to a private address is refused before it is sent', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport({
 			[PAGE]: {
 				status: 302,
@@ -295,7 +297,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 
 	it('refuses a private first hop on direct egress, before any request', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport();
 		await expect(fetchWith(fake, {}, 'http://127.0.0.1:8080/')).rejects.toThrow(
 			SsrfError,
@@ -304,7 +306,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 
 	it('stops after 20 redirects', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport({
 			[PAGE]: {status: 307, headers: {location: PAGE}},
 		});
@@ -313,7 +315,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 
 	it('refuses a redirect to a non-http(s) url', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport({
 			[PAGE]: {status: 302, headers: {location: 'file:///etc/passwd'}},
 		});
@@ -323,14 +325,16 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 
 	it('sends GET only, and ignores the caller headers', async () => {
 		const fake = fakeTransport();
-		const adapter = createSerpcastFetch(cfg(), {createTransport: fake.create});
+		const adapter = createSearchcastFetch(cfg(), {
+			createTransport: fake.create,
+		});
 		await expect(adapter(PAGE, {method: 'POST'})).rejects.toThrow(/GET only/);
 		await adapter(new Request(PAGE, {headers: {'x-leak': 'me'}}));
 		expect(fake.requests).toEqual([{url: PAGE, kind: 'document', session: 1}]);
 	});
 
 	it('surfaces a size or timeout failure as an error', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const big = new SearchcastError(
 			'transport',
 			'response is larger than 16777216 bytes',
@@ -346,7 +350,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 
 	it('a non-2xx final status is distilly error (as on the plain path)', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport({[PAGE]: {status: 403}});
 		await expect(fetchWith(fake)).rejects.toThrow(/status 403/);
 	});
@@ -362,10 +366,10 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 			{},
 			{
 				resolveConfig: () =>
-					cfg({backend: 'tavily-compat', fetchTransport: 'serpcast'}),
+					cfg({backend: 'tavily-compat', fetchTransport: 'searchcast'}),
 				getBackend: () => backend,
-				createSerpcastFetch: (c) =>
-					createSerpcastFetch(c, {createTransport: fake.create}),
+				createSearchcastFetch: (c) =>
+					createSearchcastFetch(c, {createTransport: fake.create}),
 			},
 		);
 		expect(result.markdown).toBe('from backend');
@@ -373,22 +377,22 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 	});
 });
 
-describe('fetchTransport serpcast: impersonation', () => {
+describe('fetchTransport searchcast: impersonation', () => {
 	it('fails loud with the fix when libcurl-impersonate is missing, never falling back to plain', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const plain = vi.fn() as unknown as EgressFetch;
 		const error = await fetch(
 			PAGE,
 			{
 				cwd: project,
 				globalPath,
-				env: {WEBVEIL_SERPCAST_LIBCURL_PATH: join(root, 'missing.so')},
+				env: {WEBVEIL_SEARCHCAST_LIBCURL_PATH: join(root, 'missing.so')},
 			},
 			{
 				createEgressFetch: () => plain,
-				// The REAL serpcast transport: its strict check fails before I/O.
-				createSerpcastFetch: (c) =>
-					createSerpcastFetch(c, {createTransport: realCreateTransport}),
+				// The REAL searchcast transport: its strict check fails before I/O.
+				createSearchcastFetch: (c) =>
+					createSearchcastFetch(c, {createTransport: realCreateTransport}),
 			},
 		).catch((e: Error) => e);
 		expect(error).toBeInstanceOf(Error);
@@ -398,25 +402,25 @@ describe('fetchTransport serpcast: impersonation', () => {
 	});
 });
 
-describe('fetchTransport serpcast: the libcurl path is an executable setting', () => {
+describe('fetchTransport searchcast: the libcurl path is an executable setting', () => {
 	it('is refused from a project webveil.json, naming the file', async () => {
 		writeJson(join(project, 'webveil.json'), {
-			backend: 'serpcast',
-			serpcast: {libcurlPath: '/opt/libcurl-impersonate.so'},
+			backend: 'searchcast',
+			searchcast: {libcurlPath: '/opt/libcurl-impersonate.so'},
 		});
 		const fake = fakeTransport();
 		const error = await fetchWith(fake).catch((e: Error) => e);
 		expect(error).toBeInstanceOf(TrustError);
 		expect(error.message).toContain(join(project, 'webveil.json'));
-		expect(error.message).toContain('serpcast.libcurlPath');
+		expect(error.message).toContain('searchcast.libcurlPath');
 		expect(fake.built).toHaveLength(0);
 	});
 
 	it('is still refused on the derived (fetchEgress) config', async () => {
 		writeJson(join(project, 'webveil.json'), {
-			backend: 'serpcast',
+			backend: 'searchcast',
 			fetchEgress: {mode: 'socks5', url: 'socks5://127.0.0.1:9050'},
-			serpcast: {libcurlPath: '/opt/libcurl-impersonate.so'},
+			searchcast: {libcurlPath: '/opt/libcurl-impersonate.so'},
 		});
 		const fake = fakeTransport();
 		await expect(fetchWith(fake)).rejects.toThrow(TrustError);
@@ -424,8 +428,8 @@ describe('fetchTransport serpcast: the libcurl path is an executable setting', (
 	});
 
 	it('is used from the global config, resolved relative to that file', async () => {
-		writeJson(globalPath, {serpcast: {libcurlPath: 'lib/libcurl.so'}});
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(globalPath, {searchcast: {libcurlPath: 'lib/libcurl.so'}});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport();
 		await fetchWith(fake);
 		expect(fake.built[0]!.libcurlPath).toBe(
@@ -434,19 +438,19 @@ describe('fetchTransport serpcast: the libcurl path is an executable setting', (
 	});
 
 	it('is used from env only when absolute (never the cwd)', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport();
-		await fetchWith(fake, {WEBVEIL_SERPCAST_LIBCURL_PATH: '/abs/libcurl.so'});
+		await fetchWith(fake, {WEBVEIL_SEARCHCAST_LIBCURL_PATH: '/abs/libcurl.so'});
 		expect(fake.built[0]!.libcurlPath).toBe('/abs/libcurl.so');
 		await expect(
-			fetchWith(fake, {WEBVEIL_SERPCAST_LIBCURL_PATH: 'rel.so'}),
+			fetchWith(fake, {WEBVEIL_SEARCHCAST_LIBCURL_PATH: 'rel.so'}),
 		).rejects.toThrow(TrustError);
 	});
 });
 
-describe('fetchTransport serpcast: transport reuse', () => {
+describe('fetchTransport searchcast: transport reuse', () => {
 	it('caches one transport per fetch identity, dropped by closeBackends', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport();
 		await fetchWith(fake);
 		await fetchWith(fake);
@@ -462,7 +466,7 @@ describe('fetchTransport serpcast: transport reuse', () => {
 	});
 });
 
-describe('fetchTransport serpcast: connection reuse, never cookies', () => {
+describe('fetchTransport searchcast: connection reuse, never cookies', () => {
 	const OTHER = 'https://1.1.1.1/other';
 	const TOR = {
 		WEBVEIL_FETCH_EGRESS: 'socks5',
@@ -470,7 +474,7 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 	};
 
 	it('two sequential fetches of one identity reuse one session; another egress never shares it', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const fake = fakeTransport();
 		await fetchWith(fake);
 		await fetchWith(fake, {}, OTHER);
@@ -484,7 +488,7 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 	});
 
 	it('each fetch starts with no cookies, even after the previous one received some; hops of one fetch share them', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		const moved = 'https://93.184.215.14/moved';
 		const fake = fakeTransport({
 			[PAGE]: {
@@ -503,7 +507,7 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 	});
 
 	it('two concurrent fetches get different sessions and never see each other cookies', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		let open!: () => void;
 		const gate = new Promise<void>((resolve) => (open = resolve));
 		const fake = fakeTransport({
@@ -532,7 +536,7 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 		vi.useFakeTimers();
 		try {
 			const fake = fakeTransport();
-			const adapter = createSerpcastFetch(cfg(), {
+			const adapter = createSearchcastFetch(cfg(), {
 				createTransport: fake.create,
 				sessionIdleMs: 1000,
 			});
@@ -551,11 +555,11 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 		}
 	});
 
-	it('uses serpcast session idle default, on a timer that never keeps the process alive', async () => {
+	it('uses searchcast session idle default, on a timer that never keeps the process alive', async () => {
 		const spy = vi.spyOn(globalThis, 'setTimeout');
 		try {
 			const fake = fakeTransport();
-			await createSerpcastFetch(cfg(), {createTransport: fake.create})(PAGE);
+			await createSearchcastFetch(cfg(), {createTransport: fake.create})(PAGE);
 			const call = spy.mock.results.findIndex(
 				(_, i) => spy.mock.calls[i]![1] === DEFAULT_SESSION_IDLE_MS,
 			);
@@ -568,7 +572,7 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 	});
 
 	it('closeBackends closes the idle sessions; a session busy then closes when its fetch settles', async () => {
-		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
+		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
 		let open!: () => void;
 		const gate = new Promise<void>((resolve) => (open = resolve));
 		const fake = fakeTransport({[OTHER]: {gate}});
@@ -587,7 +591,9 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 		let open!: () => void;
 		const gate = new Promise<void>((resolve) => (open = resolve));
 		const fake = fakeTransport({[PAGE]: {gate}});
-		const adapter = createSerpcastFetch(cfg(), {createTransport: fake.create});
+		const adapter = createSearchcastFetch(cfg(), {
+			createTransport: fake.create,
+		});
 		const all = Array.from({length: MAX_IDLE_SESSIONS + 2}, () =>
 			adapter(PAGE),
 		);
@@ -598,9 +604,9 @@ describe('fetchTransport serpcast: connection reuse, never cookies', () => {
 });
 
 describe('fetchTransport plain', () => {
-	it('keeps the undici path with the serpcast backend when set to plain', async () => {
+	it('keeps the undici path with the searchcast backend when set to plain', async () => {
 		writeJson(join(project, 'webveil.json'), {
-			backend: 'serpcast',
+			backend: 'searchcast',
 			fetchTransport: 'plain',
 		});
 		const fake = fakeTransport();

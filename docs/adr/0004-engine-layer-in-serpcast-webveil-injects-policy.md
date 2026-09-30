@@ -1,5 +1,7 @@
 # The engine layer lives in serpcast; webveil injects egress, per-identity state and trust
 
+> Superseded in naming only by [ADR 0005](0005-serpcast-renamed-searchcast.md): read "serpcast" here as searchcast (the library, the backend and its config section); the decision itself stands.
+
 ## Status
 
 accepted

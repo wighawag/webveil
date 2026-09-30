@@ -1,4 +1,4 @@
-// The on-disk state store (core/state.ts): serpcast's StateStore contract,
+// The on-disk state store (core/state.ts): searchcast's StateStore contract,
 // expiry on read, one partition per identity, 0600/0700, atomic writes under a
 // lock across processes, and clearing. XDG_STATE_HOME is a temp dir for every
 // test file (test/setup-state.ts), which also asserts the real one untouched.
@@ -63,7 +63,7 @@ describe('state root and partitions', () => {
 	});
 });
 
-describe('createStateStore: the serpcast StateStore contract', () => {
+describe('createStateStore: the searchcast StateStore contract', () => {
 	it('stores JSON values by key, copies in and out, keys never in a path', async () => {
 		const store = createStateStore(partitionDir(A, root));
 		expect(await store.get('engine/x/session')).toBeUndefined();

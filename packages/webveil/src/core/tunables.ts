@@ -11,21 +11,21 @@
 //   30 s) govern every backend; `fetchMaxRedirects` (20) governs BOTH
 //   `web_fetch` transports, so it joins the flat `fetch*` family
 //   (`fetchEgress`, `fetchSize`, `fetchTransport`).
-// - The serpcast fetch transport's own values are a section,
-//   `fetchSerpcast` (`maxIdleSessions` 4, `sessionIdleMs` 10 min,
+// - The searchcast fetch transport's own values are a section,
+//   `fetchSearchcast` (`maxIdleSessions` 4, `sessionIdleMs` 10 min,
 //   `reuseConnections` on, `timeoutMs` 15 s, `maxBodyBytes` 16 MiB). A section
-//   because they apply only when `fetchTransport` is `serpcast`: flat
+//   because they apply only when `fetchTransport` is `searchcast`: flat
 //   `fetchTimeoutMs` would read as a limit of the plain transport too, which
-//   has none. NOT under `serpcast`, because the whole `serpcast` section is
+//   has none. NOT under `searchcast`, because the whole `searchcast` section is
 //   the search identity key (identity.ts): a fetch setting must not move the
-//   search state partition. Alternative considered: `serpcast.fetch.*`.
-// - The serpcast backend's pass-throughs keep serpcast's option names under
-//   `serpcast` (as `sessionIdleMs`/`cooldownMs` already did), so serpcast's
-//   README documents them; validated here with the same rules serpcast uses
+//   search state partition. Alternative considered: `searchcast.fetch.*`.
+// - The searchcast backend's pass-throughs keep searchcast's option names under
+//   `searchcast` (as `sessionIdleMs`/`cooldownMs` already did), so searchcast's
+//   README documents them; validated here with the same rules searchcast uses
 //   (it would throw a RangeError anyway, but only when an instance is built,
 //   and the endpoint's two values would only fail each search as a `recipe`
 //   engine failure, not loud).
-// - `serpcast.sessionIdleMs` must now be positive: serpcast 0.6 refuses 0 at
+// - `searchcast.sessionIdleMs` must now be positive: serpcast 0.6 refuses 0 at
 //   instance creation, so webveil's old `>= 0` check let a value through that
 //   could never work.
 
@@ -70,7 +70,7 @@ export const DEFAULT_MAX_RESULTS = 10;
 export const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 /** At most this many redirects are followed (the WHATWG fetch limit). */
 export const DEFAULT_MAX_REDIRECTS = 20;
-/** Idle serpcast fetch sessions kept per fetch identity. */
+/** Idle searchcast fetch sessions kept per fetch identity. */
 export const DEFAULT_MAX_IDLE_SESSIONS = 4;
 
 /** The backend http helper's timeout (`httpTimeoutMs`). */
@@ -101,8 +101,8 @@ export function fetchMaxRedirects(config: Config): number {
 	);
 }
 
-/** Every `serpcast.*` pass-through that is a plain number, with its rule. */
-const SERPCAST_NUMBERS: Record<string, NumberRule> = {
+/** Every `searchcast.*` pass-through that is a plain number, with its rule. */
+const SEARCHCAST_NUMBERS: Record<string, NumberRule> = {
 	timeoutMs: {integer: true},
 	maxBodyBytes: {integer: true},
 	idlePollMs: {},
@@ -112,7 +112,7 @@ const SERPCAST_NUMBERS: Record<string, NumberRule> = {
 	sessionIdleMs: {},
 	cooldownMs: {zero: true},
 };
-const SERPCAST_BOOLEANS = [
+const SEARCHCAST_BOOLEANS = [
 	'reuseConnections',
 	'keepSessions',
 	'preflightCache',
@@ -125,27 +125,29 @@ const isNames = (v: unknown) =>
 	Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 /**
- * Validate the tuning keys of the `serpcast` section (`section` is
- * `config.serpcast`): its numbers, switches, `decoyRule`, `decoyGuard` in
+ * Validate the tuning keys of the `searchcast` section (`section` is
+ * `config.searchcast`): its numbers, switches, `decoyRule`, `decoyGuard` in
  * either form, the endpoint's two limits and the `state` subsection.
  */
-export function checkSerpcastTunables(section: Record<string, unknown>): void {
-	for (const [key, rule] of Object.entries(SERPCAST_NUMBERS))
-		checkNumber(`serpcast.${key}`, section[key], rule);
-	for (const key of SERPCAST_BOOLEANS)
-		checkBoolean(`serpcast.${key}`, section[key]);
+export function checkSearchcastTunables(
+	section: Record<string, unknown>,
+): void {
+	for (const [key, rule] of Object.entries(SEARCHCAST_NUMBERS))
+		checkNumber(`searchcast.${key}`, section[key], rule);
+	for (const key of SEARCHCAST_BOOLEANS)
+		checkBoolean(`searchcast.${key}`, section[key]);
 	const rule = section.decoyRule;
 	if (rule !== undefined) {
 		if (!isObject(rule))
-			throw new Error('webveil: serpcast.decoyRule must be an object');
+			throw new Error('webveil: searchcast.decoyRule must be an object');
 		for (const key of Object.keys(rule))
 			if (!DECOY_RULE_KEYS.includes(key))
 				throw new Error(
-					`webveil: serpcast.decoyRule.${key} is not a decoy rule key ` +
+					`webveil: searchcast.decoyRule.${key} is not a decoy rule key ` +
 						`(${DECOY_RULE_KEYS.join(', ')})`,
 				);
 		for (const key of DECOY_RULE_KEYS)
-			checkNumber(`serpcast.decoyRule.${key}`, rule[key], {integer: true});
+			checkNumber(`searchcast.decoyRule.${key}`, rule[key], {integer: true});
 	}
 	const guard = section.decoyGuard;
 	const guardOk =
@@ -157,28 +159,28 @@ export function checkSerpcastTunables(section: Record<string, unknown>): void {
 			(guard.exclude === undefined || isNames(guard.exclude)));
 	if (!guardOk)
 		throw new Error(
-			'webveil: serpcast.decoyGuard must be a list of engine names or ' +
+			'webveil: searchcast.decoyGuard must be a list of engine names or ' +
 				'{"include": [...], "exclude": [...]}',
 		);
-	const browser = section.searchcast;
+	const browser = section.browser;
 	if (isObject(browser))
 		for (const key of ['timeoutMs', 'maxBodyBytes'])
-			checkNumber(`serpcast.searchcast.${key}`, browser[key], {integer: true});
+			checkNumber(`searchcast.browser.${key}`, browser[key], {integer: true});
 	const state = section.state;
 	if (state === undefined) return;
 	if (!isObject(state))
-		throw new Error('webveil: serpcast.state must be an object');
-	checkBoolean('serpcast.state.persist', state.persist);
+		throw new Error('webveil: searchcast.state must be an object');
+	checkBoolean('searchcast.state.persist', state.persist);
 	for (const key of ['lockStaleMs', 'lockWaitMs'])
-		checkNumber(`serpcast.state.${key}`, state[key], {integer: true});
+		checkNumber(`searchcast.state.${key}`, state[key], {integer: true});
 }
 
-/** The serpcast fetch transport's values (`fetchSerpcast`), validated and defaulted. */
-export function fetchSerpcastTunables(config: Config) {
-	const section: unknown = config.fetchSerpcast ?? {};
+/** The searchcast fetch transport's values (`fetchSearchcast`), validated and defaulted. */
+export function fetchSearchcastTunables(config: Config) {
+	const section: unknown = config.fetchSearchcast ?? {};
 	if (!isObject(section))
-		throw new Error('webveil: fetchSerpcast must be an object');
-	const key = (name: string) => `fetchSerpcast.${name}`;
+		throw new Error('webveil: fetchSearchcast must be an object');
+	const key = (name: string) => `fetchSearchcast.${name}`;
 	return {
 		maxIdleSessions:
 			checkNumber(key('maxIdleSessions'), section.maxIdleSessions, {

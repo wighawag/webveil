@@ -39,6 +39,8 @@ export interface PiWebveilDeps {
 interface ToolCtx {
 	cwd: string;
 	signal?: AbortSignal;
+	/** pi's UI, when there is one: config warnings are notified there too. */
+	ui?: {notify?(message: string, type?: 'info' | 'warning' | 'error'): void};
 }
 
 /** A single text-content tool result, matching pi's `AgentToolResult` shape. */
@@ -128,6 +130,58 @@ function textResult(text: string, details: unknown): ToolResult {
 }
 
 /**
+ * Config warnings (webveil's deprecated `serpcast` spellings), each surfaced
+ * ONCE per extension runtime: notified in pi's UI when there is one, and
+ * appended to the text of the tool result that met it, so a run without a UI
+ * (print or RPC mode) still shows it.
+ *
+ * Recorded decision (task rename-serpcast-spellings): both, not only the UI
+ * notification, since `ctx.ui` may be absent or a no-op; the warning is in
+ * the tool text once, so the model can relay it, and never again. The core's
+ * default (stderr) is not used: it would write into pi's terminal UI.
+ * Alternative considered: stderr (garbles the TUI) or the UI only (lost
+ * without one).
+ */
+function warningSink(shown: Set<string>) {
+	const fresh: string[] = [];
+	/** The fresh warnings as text lines (now shown), notified in the UI. */
+	const take = (ctx: ToolCtx): string | undefined => {
+		const messages = fresh.filter((m) => !shown.has(m));
+		fresh.length = 0;
+		if (messages.length === 0) return undefined;
+		for (const message of messages) {
+			shown.add(message);
+			ctx.ui?.notify?.(message, 'warning');
+		}
+		return messages.map((m) => `[warning] ${m}`).join('\n');
+	};
+	return {
+		onWarning(message: string) {
+			if (!shown.has(message)) fresh.push(message);
+		},
+		/** Run the tool; its result (or its error) carries the fresh warnings. */
+		async surface(
+			ctx: ToolCtx,
+			run: () => Promise<ToolResult>,
+		): Promise<ToolResult> {
+			let result: ToolResult;
+			try {
+				result = await run();
+			} catch (error) {
+				const note = take(ctx);
+				if (note && error instanceof Error)
+					error.message = `${error.message}\n\n${note}`;
+				throw error;
+			}
+			const note = take(ctx);
+			if (!note) return result;
+			const text = result.content.map((c) => c.text).join('\n');
+			return textResult(`${text}\n\n${note}`, result.details);
+		},
+	};
+}
+
+/**
  * Register `web_search` and `web_fetch`, both routing to the webveil core in
  * process with per-folder config resolved from `ctx.cwd`. The factory takes
  * injectable core deps so a test asserts the routing with fakes (no network).
@@ -136,8 +190,9 @@ export default function piWebveil(pi: PiLike, deps: PiWebveilDeps = {}): void {
 	const search = deps.search ?? coreSearch;
 	const fetch = deps.fetch ?? coreFetch;
 	const closeBackends = deps.closeBackends ?? coreCloseBackends;
+	const shownWarnings = new Set<string>();
 
-	// The core caches long-lived backend state across calls (the serpcast
+	// The core caches long-lived backend state across calls (the searchcast
 	// instance, so cooldowns and sessions survive between searches); release it
 	// when pi tears the extension runtime down, so nothing is left running.
 	// Recorded decision (task serpcast-backend-basic): close on EVERY
@@ -156,12 +211,16 @@ export default function piWebveil(pi: PiLike, deps: PiWebveilDeps = {}): void {
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const query = String(params.query ?? '');
 			const max = params.max_results;
-			const results = await search(query, {
-				cwd: ctx.cwd,
-				signal: signal ?? ctx.signal,
-				maxResults: typeof max === 'number' ? max : undefined,
+			const warnings = warningSink(shownWarnings);
+			return warnings.surface(ctx, async () => {
+				const results = await search(query, {
+					cwd: ctx.cwd,
+					signal: signal ?? ctx.signal,
+					maxResults: typeof max === 'number' ? max : undefined,
+					onWarning: warnings.onWarning,
+				});
+				return textResult(renderSearch(results), {results});
 			});
-			return textResult(renderSearch(results), {results});
 		},
 	});
 
@@ -173,11 +232,15 @@ export default function piWebveil(pi: PiLike, deps: PiWebveilDeps = {}): void {
 		parameters: FETCH_PARAMS,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const url = String(params.url ?? '');
-			const page = await fetch(url, {
-				cwd: ctx.cwd,
-				signal: signal ?? ctx.signal,
+			const warnings = warningSink(shownWarnings);
+			return warnings.surface(ctx, async () => {
+				const page = await fetch(url, {
+					cwd: ctx.cwd,
+					signal: signal ?? ctx.signal,
+					onWarning: warnings.onWarning,
+				});
+				return textResult(renderFetch(page), {page});
 			});
-			return textResult(renderFetch(page), {page});
 		},
 	});
 }

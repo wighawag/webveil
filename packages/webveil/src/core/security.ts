@@ -138,7 +138,7 @@ export async function assertPublicUrl(
 
 // ---- Redirect hops -------------------------------------------------------
 // Shared by BOTH `web_fetch` transports (the plain guarded fetch below and the
-// `fetchTransport: serpcast` adapter in fetch-transport.ts), so a redirect
+// `fetchTransport: searchcast` adapter in fetch-transport.ts), so a redirect
 // target gets the same gate on either: http(s) only, SSRF-checked, at most
 // `fetchMaxRedirects` hops (default MAX_REDIRECTS, tunables.ts).
 

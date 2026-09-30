@@ -42,9 +42,9 @@ export class EgressError extends Error {
  * classification), not a parallel check.
  */
 export function assertEgressAllowsBaseUrl(cfg: Config): void {
-	// serpcast has no baseUrl hop: its egress IS the search egress (ADR 0004),
+	// searchcast has no baseUrl hop: its egress IS the search egress (ADR 0004),
 	// so the (default, loopback) baseUrl it ignores must not trip this guard.
-	if (cfg.egress.mode === 'direct' || cfg.backend === 'serpcast') return;
+	if (cfg.egress.mode === 'direct' || cfg.backend === 'searchcast') return;
 	if (isUnixBaseUrl(cfg.baseUrl))
 		throw new EgressError(
 			`egress ${cfg.egress.mode}: a unix: (local socket) baseUrl cannot be ` +
@@ -81,8 +81,8 @@ export function assertEgressAllowsBaseUrl(cfg: Config): void {
  */
 export function fetchEgressConfig(cfg: Config): Config {
 	if (!cfg.fetchEgress || cfg.fetchEgress === cfg.egress) return cfg;
-	// Carry the provenance: the serpcast fetch transport trust-checks
-	// `serpcast.libcurlPath` on THIS derived config (a spread copy drops it,
+	// Carry the provenance: the searchcast fetch transport trust-checks
+	// `searchcast.libcurlPath` on THIS derived config (a spread copy drops it,
 	// which would make a project-set path look code-built, i.e. trusted).
 	return carryProvenance(cfg, {...cfg, egress: cfg.fetchEgress});
 }

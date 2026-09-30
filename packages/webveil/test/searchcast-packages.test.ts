@@ -43,7 +43,7 @@ describe('webveil depends on searchcast, not serpcast', () => {
 		expect(found).toEqual([]);
 		// ...and the check would see one: the real imports are found.
 		const backend = readFileSync(
-			join(pkgDir, 'src', 'core', 'backends', 'serpcast.ts'),
+			join(pkgDir, 'src', 'core', 'backends', 'searchcast.ts'),
 			'utf8',
 		);
 		expect(specifiers(backend)).toContain('searchcast');

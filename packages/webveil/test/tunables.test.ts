@@ -1,9 +1,9 @@
 // Every tuning value as config (task webveil-installs-and-tunables): each key
 // is read from the global file, the project file and env; a bad value fails
 // loud naming the key; unset, the old default holds; set, it reaches the
-// place it governs (createSerpcast, an endpoint engine, the state store, the
-// serpcast fetch transport and its pool, the redirect guard, the http helper,
-// the search cut). No network: fakes stand in for serpcast and the backends.
+// place it governs (createSearchcast, an endpoint engine, the state store, the
+// searchcast fetch transport and its pool, the redirect guard, the http helper,
+// the search cut). No network: fakes stand in for searchcast and the backends.
 
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {
@@ -28,17 +28,17 @@ import type {
 import {resolveConfig} from '../src/core/config.js';
 import type {Config} from '../src/core/config.js';
 import {
-	closeSerpcastInstances,
-	createSerpcastBackend,
-	serpcastIdentityKey,
-} from '../src/core/backends/serpcast.js';
+	closeSearchcastInstances,
+	createSearchcastBackend,
+	searchcastIdentityKey,
+} from '../src/core/backends/searchcast.js';
 import {getBackend} from '../src/core/backends/registry.js';
 import type {SearchResult} from '../src/core/backends/types.js';
 import {search} from '../src/core/search.js';
 import {fetch} from '../src/core/fetch.js';
 import {
 	closeFetchTransports,
-	createSerpcastFetch,
+	createSearchcastFetch,
 } from '../src/core/fetch-transport.js';
 import {createHttp} from '../src/core/http.js';
 import {guardEgressFetch} from '../src/core/security.js';
@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-	await closeSerpcastInstances();
+	await closeSearchcastInstances();
 	await closeFetchTransports();
 	rmSync(root, {recursive: true, force: true});
 	expect(existsSync(realGlobal)).toBe(realGlobalExisted);
@@ -106,97 +106,122 @@ const KEYS: [string, unknown, string, string][] = [
 	['httpTimeoutMs', 1234, 'WEBVEIL_HTTP_TIMEOUT_MS', '1234'],
 	['fetchMaxRedirects', 2, 'WEBVEIL_FETCH_MAX_REDIRECTS', '2'],
 	[
-		'fetchSerpcast.maxIdleSessions',
+		'fetchSearchcast.maxIdleSessions',
 		1,
-		'WEBVEIL_FETCH_SERPCAST_MAX_IDLE_SESSIONS',
+		'WEBVEIL_FETCH_SEARCHCAST_MAX_IDLE_SESSIONS',
 		'1',
 	],
 	[
-		'fetchSerpcast.sessionIdleMs',
+		'fetchSearchcast.sessionIdleMs',
 		5000,
-		'WEBVEIL_FETCH_SERPCAST_SESSION_IDLE_MS',
+		'WEBVEIL_FETCH_SEARCHCAST_SESSION_IDLE_MS',
 		'5000',
 	],
 	[
-		'fetchSerpcast.reuseConnections',
+		'fetchSearchcast.reuseConnections',
 		false,
-		'WEBVEIL_FETCH_SERPCAST_REUSE_CONNECTIONS',
+		'WEBVEIL_FETCH_SEARCHCAST_REUSE_CONNECTIONS',
 		'false',
 	],
 	[
-		'fetchSerpcast.timeoutMs',
+		'fetchSearchcast.timeoutMs',
 		4000,
-		'WEBVEIL_FETCH_SERPCAST_TIMEOUT_MS',
+		'WEBVEIL_FETCH_SEARCHCAST_TIMEOUT_MS',
 		'4000',
 	],
 	[
-		'fetchSerpcast.maxBodyBytes',
+		'fetchSearchcast.maxBodyBytes',
 		2048,
-		'WEBVEIL_FETCH_SERPCAST_MAX_BODY_BYTES',
+		'WEBVEIL_FETCH_SEARCHCAST_MAX_BODY_BYTES',
 		'2048',
 	],
-	['serpcast.timeoutMs', 4000, 'WEBVEIL_SERPCAST_TIMEOUT_MS', '4000'],
-	['serpcast.maxBodyBytes', 2048, 'WEBVEIL_SERPCAST_MAX_BODY_BYTES', '2048'],
+	['searchcast.timeoutMs', 4000, 'WEBVEIL_SEARCHCAST_TIMEOUT_MS', '4000'],
 	[
-		'serpcast.reuseConnections',
+		'searchcast.maxBodyBytes',
+		2048,
+		'WEBVEIL_SEARCHCAST_MAX_BODY_BYTES',
+		'2048',
+	],
+	[
+		'searchcast.reuseConnections',
 		false,
-		'WEBVEIL_SERPCAST_REUSE_CONNECTIONS',
+		'WEBVEIL_SEARCHCAST_REUSE_CONNECTIONS',
 		'false',
 	],
-	['serpcast.keepSessions', false, 'WEBVEIL_SERPCAST_KEEP_SESSIONS', 'false'],
-	['serpcast.idlePollMs', 2, 'WEBVEIL_SERPCAST_IDLE_POLL_MS', '2'],
 	[
-		'serpcast.maxRequestBodyBytes',
+		'searchcast.keepSessions',
+		false,
+		'WEBVEIL_SEARCHCAST_KEEP_SESSIONS',
+		'false',
+	],
+	['searchcast.idlePollMs', 2, 'WEBVEIL_SEARCHCAST_IDLE_POLL_MS', '2'],
+	[
+		'searchcast.maxRequestBodyBytes',
 		4096,
-		'WEBVEIL_SERPCAST_MAX_REQUEST_BODY_BYTES',
+		'WEBVEIL_SEARCHCAST_MAX_REQUEST_BODY_BYTES',
 		'4096',
 	],
 	[
-		'serpcast.preflightCache',
+		'searchcast.preflightCache',
 		false,
-		'WEBVEIL_SERPCAST_PREFLIGHT_CACHE',
+		'WEBVEIL_SEARCHCAST_PREFLIGHT_CACHE',
 		'false',
 	],
 	[
-		'serpcast.maxPreflightAgeS',
+		'searchcast.maxPreflightAgeS',
 		60,
-		'WEBVEIL_SERPCAST_MAX_PREFLIGHT_AGE_S',
+		'WEBVEIL_SEARCHCAST_MAX_PREFLIGHT_AGE_S',
 		'60',
 	],
-	['serpcast.maxRedirects', 3, 'WEBVEIL_SERPCAST_MAX_REDIRECTS', '3'],
-	['serpcast.sessionIdleMs', 1000, 'WEBVEIL_SERPCAST_SESSION_IDLE_MS', '1000'],
-	['serpcast.cooldownMs', 0, 'WEBVEIL_SERPCAST_COOLDOWN_MS', '0'],
-	['serpcast.decoyRule.top', 4, 'WEBVEIL_SERPCAST_DECOY_RULE_TOP', '4'],
+	['searchcast.maxRedirects', 3, 'WEBVEIL_SEARCHCAST_MAX_REDIRECTS', '3'],
 	[
-		'serpcast.decoyRule.maxRelevant',
+		'searchcast.sessionIdleMs',
+		1000,
+		'WEBVEIL_SEARCHCAST_SESSION_IDLE_MS',
+		'1000',
+	],
+	['searchcast.cooldownMs', 0, 'WEBVEIL_SEARCHCAST_COOLDOWN_MS', '0'],
+	['searchcast.decoyRule.top', 4, 'WEBVEIL_SEARCHCAST_DECOY_RULE_TOP', '4'],
+	[
+		'searchcast.decoyRule.maxRelevant',
 		2,
-		'WEBVEIL_SERPCAST_DECOY_RULE_MAX_RELEVANT',
+		'WEBVEIL_SEARCHCAST_DECOY_RULE_MAX_RELEVANT',
 		'2',
 	],
-	['serpcast.decoyRule.prefix', 4, 'WEBVEIL_SERPCAST_DECOY_RULE_PREFIX', '4'],
 	[
-		'serpcast.searchcast.timeoutMs',
+		'searchcast.decoyRule.prefix',
+		4,
+		'WEBVEIL_SEARCHCAST_DECOY_RULE_PREFIX',
+		'4',
+	],
+	[
+		'searchcast.browser.timeoutMs',
 		9000,
-		'WEBVEIL_SERPCAST_SEARCHCAST_TIMEOUT_MS',
+		'WEBVEIL_SEARCHCAST_BROWSER_TIMEOUT_MS',
 		'9000',
 	],
 	[
-		'serpcast.searchcast.maxBodyBytes',
+		'searchcast.browser.maxBodyBytes',
 		2048,
-		'WEBVEIL_SERPCAST_SEARCHCAST_MAX_BODY_BYTES',
+		'WEBVEIL_SEARCHCAST_BROWSER_MAX_BODY_BYTES',
 		'2048',
 	],
-	['serpcast.state.persist', false, 'WEBVEIL_SERPCAST_STATE_PERSIST', 'false'],
 	[
-		'serpcast.state.lockStaleMs',
+		'searchcast.state.persist',
+		false,
+		'WEBVEIL_SEARCHCAST_STATE_PERSIST',
+		'false',
+	],
+	[
+		'searchcast.state.lockStaleMs',
 		500,
-		'WEBVEIL_SERPCAST_STATE_LOCK_STALE_MS',
+		'WEBVEIL_SEARCHCAST_STATE_LOCK_STALE_MS',
 		'500',
 	],
 	[
-		'serpcast.state.lockWaitMs',
+		'searchcast.state.lockWaitMs',
 		800,
-		'WEBVEIL_SERPCAST_STATE_LOCK_WAIT_MS',
+		'WEBVEIL_SEARCHCAST_STATE_LOCK_WAIT_MS',
 		'800',
 	],
 ];
@@ -217,11 +242,13 @@ describe('every tuning key is read from global, project and env', () => {
 		});
 
 	it('an env switch other than true/false and an env number that is not one fail loud', async () => {
-		writeJson(join(project, 'webveil.json'), serpcastProject({}));
+		writeJson(join(project, 'webveil.json'), searchcastProject({}));
 		await expect(
-			searchWith(fakeFactory().create, {WEBVEIL_SERPCAST_KEEP_SESSIONS: 'yes'}),
+			searchWith(fakeFactory().create, {
+				WEBVEIL_SEARCHCAST_KEEP_SESSIONS: 'yes',
+			}),
 		).rejects.toThrow(
-			/serpcast\.keepSessions must be true or false \(got 'yes'\)/,
+			/searchcast\.keepSessions must be true or false \(got 'yes'\)/,
 		);
 		await expect(
 			searchWith(fakeFactory().create, {WEBVEIL_MAX_RESULTS: 'ten'}),
@@ -229,38 +256,38 @@ describe('every tuning key is read from global, project and env', () => {
 	});
 });
 
-describe('serpcast.decoyGuard: list or {include, exclude}, replaced whole', () => {
+describe('searchcast.decoyGuard: list or {include, exclude}, replaced whole', () => {
 	const resolve = (env: Record<string, string> = {}) =>
 		resolveConfig({cwd: project, globalPath, env});
 
 	it('a project object replaces a global list whole (no mix of the two)', () => {
-		writeJson(globalPath, {serpcast: {decoyGuard: ['bing']}});
+		writeJson(globalPath, {searchcast: {decoyGuard: ['bing']}});
 		writeJson(join(project, 'webveil.json'), {
-			serpcast: {decoyGuard: {exclude: ['alpha']}},
+			searchcast: {decoyGuard: {exclude: ['alpha']}},
 		});
-		expect(resolve().serpcast!.decoyGuard).toEqual({exclude: ['alpha']});
+		expect(resolve().searchcast!.decoyGuard).toEqual({exclude: ['alpha']});
 	});
 
-	it('env: WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE gives the object form', () => {
+	it('env: WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE gives the object form', () => {
 		expect(
 			resolve({
-				WEBVEIL_SERPCAST_DECOY_GUARD: 'bing',
-				WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE: 'alpha, beta',
-			}).serpcast!.decoyGuard,
+				WEBVEIL_SEARCHCAST_DECOY_GUARD: 'bing',
+				WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: 'alpha, beta',
+			}).searchcast!.decoyGuard,
 		).toEqual({include: ['bing'], exclude: ['alpha', 'beta']});
 		expect(
-			resolve({WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE: 'alpha'}).serpcast!
+			resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: 'alpha'}).searchcast!
 				.decoyGuard,
 		).toEqual({exclude: ['alpha']});
 		expect(
-			resolve({WEBVEIL_SERPCAST_DECOY_GUARD: 'bing'}).serpcast!.decoyGuard,
+			resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD: 'bing'}).searchcast!.decoyGuard,
 		).toEqual(['bing']);
 	});
 });
 
 // ---- 2. validation, at the place each key is used -------------------------
 
-/** A createSerpcast recording its options; answers one hit per search. */
+/** A createSearchcast recording its options; answers one hit per search. */
 function fakeFactory() {
 	const built: SearchcastOptions[] = [];
 	const chains: Engine[][] = [];
@@ -282,14 +309,14 @@ function fakeFactory() {
 	return {create, built, chains};
 }
 
-function serpcastProject(extra: Record<string, unknown>) {
+function searchcastProject(extra: Record<string, unknown>) {
 	return {
-		backend: 'serpcast',
+		backend: 'searchcast',
 		...extra,
-		serpcast: {
+		searchcast: {
 			engines: ['alpha'],
 			recipes: ['recipes'],
-			...(extra.serpcast as object),
+			...(extra.searchcast as object),
 		},
 	};
 }
@@ -304,8 +331,8 @@ function searchWith(
 		{cwd: project, globalPath, env, maxResults},
 		{
 			getBackend: (name, config) =>
-				name === 'serpcast'
-					? createSerpcastBackend(config, {createSerpcast: create})
+				name === 'searchcast'
+					? createSearchcastBackend(config, {createSearchcast: create})
 					: getBackend(name, config),
 		},
 	);
@@ -314,54 +341,66 @@ function searchWith(
 const BAD_SEARCH: [string, unknown, RegExp][] = [
 	['maxResults', 0, /maxResults must be a positive integer/],
 	['httpTimeoutMs', -1, /httpTimeoutMs must be a positive integer/],
-	['serpcast.timeoutMs', 1.5, /serpcast\.timeoutMs must be a positive integer/],
-	['serpcast.maxBodyBytes', 0, /serpcast\.maxBodyBytes/],
 	[
-		'serpcast.reuseConnections',
+		'searchcast.timeoutMs',
+		1.5,
+		/searchcast\.timeoutMs must be a positive integer/,
+	],
+	['searchcast.maxBodyBytes', 0, /searchcast\.maxBodyBytes/],
+	[
+		'searchcast.reuseConnections',
 		'no',
-		/serpcast\.reuseConnections must be true or false/,
+		/searchcast\.reuseConnections must be true or false/,
 	],
-	['serpcast.keepSessions', 1, /serpcast\.keepSessions/],
-	['serpcast.idlePollMs', 0, /serpcast\.idlePollMs must be a positive number/],
-	['serpcast.maxRequestBodyBytes', -5, /serpcast\.maxRequestBodyBytes/],
-	['serpcast.preflightCache', 'yes', /serpcast\.preflightCache/],
-	['serpcast.maxPreflightAgeS', 0, /serpcast\.maxPreflightAgeS/],
+	['searchcast.keepSessions', 1, /searchcast\.keepSessions/],
 	[
-		'serpcast.maxRedirects',
-		-1,
-		/serpcast\.maxRedirects must be an integer >= 0/,
-	],
-	[
-		'serpcast.sessionIdleMs',
+		'searchcast.idlePollMs',
 		0,
-		/serpcast\.sessionIdleMs must be a positive number/,
+		/searchcast\.idlePollMs must be a positive number/,
 	],
-	['serpcast.cooldownMs', -1, /serpcast\.cooldownMs must be a number >= 0/],
-	['serpcast.decoyRule', 5, /serpcast\.decoyRule must be an object/],
-	['serpcast.decoyRule.top', 0, /serpcast\.decoyRule\.top/],
-	['serpcast.decoyRule.maxRelevant', 1.5, /serpcast\.decoyRule\.maxRelevant/],
-	['serpcast.decoyRule.prefix', 'x', /serpcast\.decoyRule\.prefix/],
+	['searchcast.maxRequestBodyBytes', -5, /searchcast\.maxRequestBodyBytes/],
+	['searchcast.preflightCache', 'yes', /searchcast\.preflightCache/],
+	['searchcast.maxPreflightAgeS', 0, /searchcast\.maxPreflightAgeS/],
 	[
-		'serpcast.decoyRule.other',
-		1,
-		/serpcast\.decoyRule\.other is not a decoy rule key/,
-	],
-	['serpcast.decoyGuard', {include: 'bing'}, /serpcast\.decoyGuard must be/],
-	['serpcast.decoyGuard', {only: ['bing']}, /serpcast\.decoyGuard must be/],
-	['serpcast.searchcast.timeoutMs', 0, /serpcast\.searchcast\.timeoutMs/],
-	[
-		'serpcast.searchcast.maxBodyBytes',
+		'searchcast.maxRedirects',
 		-1,
-		/serpcast\.searchcast\.maxBodyBytes/,
+		/searchcast\.maxRedirects must be an integer >= 0/,
 	],
-	['serpcast.state', true, /serpcast\.state must be an object/],
 	[
-		'serpcast.state.persist',
-		'off',
-		/serpcast\.state\.persist must be true or false/,
+		'searchcast.sessionIdleMs',
+		0,
+		/searchcast\.sessionIdleMs must be a positive number/,
 	],
-	['serpcast.state.lockStaleMs', 0, /serpcast\.state\.lockStaleMs/],
-	['serpcast.state.lockWaitMs', 1.5, /serpcast\.state\.lockWaitMs/],
+	['searchcast.cooldownMs', -1, /searchcast\.cooldownMs must be a number >= 0/],
+	['searchcast.decoyRule', 5, /searchcast\.decoyRule must be an object/],
+	['searchcast.decoyRule.top', 0, /searchcast\.decoyRule\.top/],
+	[
+		'searchcast.decoyRule.maxRelevant',
+		1.5,
+		/searchcast\.decoyRule\.maxRelevant/,
+	],
+	['searchcast.decoyRule.prefix', 'x', /searchcast\.decoyRule\.prefix/],
+	[
+		'searchcast.decoyRule.other',
+		1,
+		/searchcast\.decoyRule\.other is not a decoy rule key/,
+	],
+	[
+		'searchcast.decoyGuard',
+		{include: 'bing'},
+		/searchcast\.decoyGuard must be/,
+	],
+	['searchcast.decoyGuard', {only: ['bing']}, /searchcast\.decoyGuard must be/],
+	['searchcast.browser.timeoutMs', 0, /searchcast\.browser\.timeoutMs/],
+	['searchcast.browser.maxBodyBytes', -1, /searchcast\.browser\.maxBodyBytes/],
+	['searchcast.state', true, /searchcast\.state must be an object/],
+	[
+		'searchcast.state.persist',
+		'off',
+		/searchcast\.state\.persist must be true or false/,
+	],
+	['searchcast.state.lockStaleMs', 0, /searchcast\.state\.lockStaleMs/],
+	['searchcast.state.lockWaitMs', 1.5, /searchcast\.state\.lockWaitMs/],
 ];
 
 describe('a bad value fails loud, naming the key (search)', () => {
@@ -370,10 +409,10 @@ describe('a bad value fails loud, naming the key (search)', () => {
 			const fake = fakeFactory();
 			const [top, ...rest] = path.split('.');
 			const extra =
-				top === 'serpcast'
-					? {serpcast: nested(rest.join('.'), value)}
+				top === 'searchcast'
+					? {searchcast: nested(rest.join('.'), value)}
 					: nested(path, value);
-			writeJson(join(project, 'webveil.json'), serpcastProject(extra));
+			writeJson(join(project, 'webveil.json'), searchcastProject(extra));
 			await expect(searchWith(fake.create)).rejects.toThrow(error);
 			expect(fake.built).toHaveLength(0); // before any instance
 		});
@@ -381,7 +420,7 @@ describe('a bad value fails loud, naming the key (search)', () => {
 
 // ---- 3. unset: the old default; set: it takes effect ----------------------
 
-describe('serpcast pass-throughs reach createSerpcast', () => {
+describe('searchcast pass-throughs reach createSearchcast', () => {
 	const SET = {
 		timeoutMs: 4000,
 		maxBodyBytes: 2048,
@@ -396,8 +435,8 @@ describe('serpcast pass-throughs reach createSerpcast', () => {
 		decoyGuard: {include: ['alpha'], exclude: ['beta']},
 	};
 
-	it('unset: none is passed, so serpcast keeps its defaults', async () => {
-		writeJson(join(project, 'webveil.json'), serpcastProject({}));
+	it('unset: none is passed, so searchcast keeps its defaults', async () => {
+		writeJson(join(project, 'webveil.json'), searchcastProject({}));
 		const fake = fakeFactory();
 		await searchWith(fake.create);
 		for (const key of Object.keys(SET))
@@ -405,7 +444,10 @@ describe('serpcast pass-throughs reach createSerpcast', () => {
 	});
 
 	it('set: each is handed over as is', async () => {
-		writeJson(join(project, 'webveil.json'), serpcastProject({serpcast: SET}));
+		writeJson(
+			join(project, 'webveil.json'),
+			searchcastProject({searchcast: SET}),
+		);
 		const fake = fakeFactory();
 		await searchWith(fake.create);
 		expect(fake.built[0]).toMatchObject(SET);
@@ -416,7 +458,7 @@ describe('serpcast pass-throughs reach createSerpcast', () => {
 		const engines = ['alpha', 'searchcast:web'];
 		writeJson(
 			join(project, 'webveil.json'),
-			serpcastProject({serpcast: {engines, searchcast: endpoint}}),
+			searchcastProject({searchcast: {engines, browser: endpoint}}),
 		);
 		let fake = fakeFactory();
 		await searchWith(fake.create);
@@ -424,13 +466,13 @@ describe('serpcast pass-throughs reach createSerpcast', () => {
 			name: 'searchcast:web',
 			searchcast: {endpoint: 'http://127.0.0.1:1', recipe: 'web'},
 		});
-		await closeSerpcastInstances();
+		await closeSearchcastInstances();
 		writeJson(
 			join(project, 'webveil.json'),
-			serpcastProject({
-				serpcast: {
+			searchcastProject({
+				searchcast: {
 					engines,
-					searchcast: {...endpoint, timeoutMs: 9000, maxBodyBytes: 2048},
+					browser: {...endpoint, timeoutMs: 9000, maxBodyBytes: 2048},
 				},
 			}),
 		);
@@ -442,13 +484,13 @@ describe('serpcast pass-throughs reach createSerpcast', () => {
 	});
 
 	it('every set key joins the identity key; unset keys leave it unchanged', () => {
-		const key = (serpcast: object) =>
-			serpcastIdentityKey({
-				backend: 'serpcast',
+		const key = (searchcast: object) =>
+			searchcastIdentityKey({
+				backend: 'searchcast',
 				baseUrl: 'http://127.0.0.1:8080',
 				egress: {mode: 'direct'},
 				fetchSize: 'm',
-				serpcast: {engines: ['alpha'], ...serpcast},
+				searchcast: {engines: ['alpha'], ...searchcast},
 			});
 		const base = key({});
 		expect(key({timeoutMs: undefined})).toBe(base);
@@ -457,15 +499,15 @@ describe('serpcast pass-throughs reach createSerpcast', () => {
 	});
 });
 
-describe('serpcast.state: persistence and the lock times', () => {
+describe('searchcast.state: persistence and the lock times', () => {
 	async function builtStore(state?: object) {
 		writeJson(
 			join(project, 'webveil.json'),
-			serpcastProject({serpcast: state ? {state} : {}}),
+			searchcastProject({searchcast: state ? {state} : {}}),
 		);
 		const fake = fakeFactory();
 		await searchWith(fake.create);
-		const key = serpcastIdentityKey(
+		const key = searchcastIdentityKey(
 			resolveConfig({cwd: project, globalPath, env: {}}),
 		);
 		return {store: fake.built[0]!.store!, dir: partitionDir(key)};
@@ -475,7 +517,7 @@ describe('serpcast.state: persistence and the lock times', () => {
 		const disk = await builtStore();
 		await disk.store.set('k', 1);
 		expect(existsSync(join(disk.dir, 'state.json'))).toBe(true);
-		await closeSerpcastInstances();
+		await closeSearchcastInstances();
 		const memory = await builtStore({persist: false});
 		await memory.store.set('k', 1);
 		expect(await memory.store.get('k')).toBe(1);
@@ -485,12 +527,12 @@ describe('serpcast.state: persistence and the lock times', () => {
 	it('persist: false with a persistent browser profile is an error', async () => {
 		writeJson(
 			join(project, 'webveil.json'),
-			serpcastProject({
-				serpcast: {state: {persist: false}, searchcast: {persistProfile: true}},
+			searchcastProject({
+				searchcast: {state: {persist: false}, browser: {persistProfile: true}},
 			}),
 		);
 		await expect(searchWith(fakeFactory().create)).rejects.toThrow(
-			/persistProfile.*serpcast\.state\.persist is false/,
+			/persistProfile.*searchcast\.state\.persist is false/,
 		);
 	});
 
@@ -528,9 +570,12 @@ describe('serpcast.state: persistence and the lock times', () => {
 
 describe('search: maxResults and httpTimeoutMs', () => {
 	it('the default cut is 10, maxResults changes it, the call option still wins', async () => {
-		writeJson(join(project, 'webveil.json'), serpcastProject({}));
+		writeJson(join(project, 'webveil.json'), searchcastProject({}));
 		expect(await searchWith(fakeFactory().create)).toHaveLength(10);
-		writeJson(join(project, 'webveil.json'), serpcastProject({maxResults: 3}));
+		writeJson(
+			join(project, 'webveil.json'),
+			searchcastProject({maxResults: 3}),
+		);
 		expect(await searchWith(fakeFactory().create)).toHaveLength(3);
 		expect(await searchWith(fakeFactory().create, {}, 5)).toHaveLength(5);
 		expect(
@@ -582,7 +627,7 @@ describe('search: maxResults and httpTimeoutMs', () => {
 	});
 });
 
-// ---- the serpcast fetch transport and the redirect limit -------------------
+// ---- the searchcast fetch transport and the redirect limit -------------------
 
 const PAGE = 'https://93.184.215.14/page';
 
@@ -641,12 +686,13 @@ function cfg(overrides: Partial<Config> = {}): Config {
 
 const noSsrf = {assertPublicUrl: async () => {}};
 
-describe('fetchSerpcast: the serpcast fetch transport and its pool', () => {
-	it('unset: serpcast defaults (no limits passed), 4 idle sessions kept', async () => {
+describe('fetchSearchcast: the searchcast fetch transport and its pool', () => {
+	it('unset: searchcast defaults (no limits passed), 4 idle sessions kept', async () => {
 		const fake = fakeTransport();
-		await createSerpcastFetch(cfg(), {createTransport: fake.create, ...noSsrf})(
-			PAGE,
-		);
+		await createSearchcastFetch(cfg(), {
+			createTransport: fake.create,
+			...noSsrf,
+		})(PAGE);
 		for (const key of ['timeoutMs', 'maxBodyBytes', 'reuseConnections'])
 			expect(fake.built[0]).not.toHaveProperty(key);
 		expect(fake.closed).toEqual([]); // kept idle
@@ -654,13 +700,13 @@ describe('fetchSerpcast: the serpcast fetch transport and its pool', () => {
 
 	it('set: the limits reach the transport, maxIdleSessions 0 keeps none', async () => {
 		const fake = fakeTransport();
-		const fetchSerpcast = {
+		const fetchSearchcast = {
 			timeoutMs: 4000,
 			maxBodyBytes: 2048,
 			reuseConnections: false,
 			maxIdleSessions: 0,
 		};
-		await createSerpcastFetch(cfg({fetchSerpcast}), {
+		await createSearchcastFetch(cfg({fetchSearchcast}), {
 			createTransport: fake.create,
 			...noSsrf,
 		})(PAGE);
@@ -676,8 +722,8 @@ describe('fetchSerpcast: the serpcast fetch transport and its pool', () => {
 		vi.useFakeTimers();
 		try {
 			const fake = fakeTransport();
-			const adapter = createSerpcastFetch(
-				cfg({fetchSerpcast: {sessionIdleMs: 1000}}),
+			const adapter = createSearchcastFetch(
+				cfg({fetchSearchcast: {sessionIdleMs: 1000}}),
 				{createTransport: fake.create, ...noSsrf},
 			);
 			await adapter(PAGE);
@@ -693,9 +739,9 @@ describe('fetchSerpcast: the serpcast fetch transport and its pool', () => {
 	it('a folder with other values gets its own pool', async () => {
 		const fake = fakeTransport();
 		const deps = {createTransport: fake.create, ...noSsrf};
-		await createSerpcastFetch(cfg(), deps)(PAGE);
-		await createSerpcastFetch(
-			cfg({fetchSerpcast: {timeoutMs: 4000}}),
+		await createSearchcastFetch(cfg(), deps)(PAGE);
+		await createSearchcastFetch(
+			cfg({fetchSearchcast: {timeoutMs: 4000}}),
 			deps,
 		)(PAGE);
 		expect(fake.built).toHaveLength(2);
@@ -703,20 +749,20 @@ describe('fetchSerpcast: the serpcast fetch transport and its pool', () => {
 
 	it('a bad value fails loud before any transport is built', () => {
 		const fake = fakeTransport();
-		for (const [fetchSerpcast, error] of [
-			[{maxIdleSessions: -1}, /fetchSerpcast\.maxIdleSessions/],
-			[{sessionIdleMs: 0}, /fetchSerpcast\.sessionIdleMs/],
-			[{reuseConnections: 'no'}, /fetchSerpcast\.reuseConnections/],
-			[{timeoutMs: 1.5}, /fetchSerpcast\.timeoutMs/],
-			[{maxBodyBytes: 0}, /fetchSerpcast\.maxBodyBytes/],
+		for (const [fetchSearchcast, error] of [
+			[{maxIdleSessions: -1}, /fetchSearchcast\.maxIdleSessions/],
+			[{sessionIdleMs: 0}, /fetchSearchcast\.sessionIdleMs/],
+			[{reuseConnections: 'no'}, /fetchSearchcast\.reuseConnections/],
+			[{timeoutMs: 1.5}, /fetchSearchcast\.timeoutMs/],
+			[{maxBodyBytes: 0}, /fetchSearchcast\.maxBodyBytes/],
 		] as const)
 			expect(() =>
-				createSerpcastFetch(cfg({fetchSerpcast} as never), {
+				createSearchcastFetch(cfg({fetchSearchcast} as never), {
 					createTransport: fake.create,
 				}),
 			).toThrow(error);
 		expect(() =>
-			createSerpcastFetch(cfg({fetchMaxRedirects: -1}), {
+			createSearchcastFetch(cfg({fetchMaxRedirects: -1}), {
 				createTransport: fake.create,
 			}),
 		).toThrow(/fetchMaxRedirects must be an integer >= 0/);
@@ -725,16 +771,16 @@ describe('fetchSerpcast: the serpcast fetch transport and its pool', () => {
 });
 
 describe('fetchMaxRedirects: both transports', () => {
-	it('serpcast transport: 20 by default, the configured limit when set', async () => {
+	it('searchcast transport: 20 by default, the configured limit when set', async () => {
 		const fake = fakeTransport(true);
 		const deps = {createTransport: fake.create, ...noSsrf};
-		await expect(createSerpcastFetch(cfg(), deps)(PAGE)).rejects.toThrow(
+		await expect(createSearchcastFetch(cfg(), deps)(PAGE)).rejects.toThrow(
 			/more than 20/,
 		);
 		expect(fake.requests).toHaveLength(21);
 		fake.requests.length = 0;
 		await expect(
-			createSerpcastFetch(cfg({fetchMaxRedirects: 2}), deps)(PAGE),
+			createSearchcastFetch(cfg({fetchMaxRedirects: 2}), deps)(PAGE),
 		).rejects.toThrow(/more than 2\b/);
 		expect(fake.requests).toHaveLength(3);
 	});

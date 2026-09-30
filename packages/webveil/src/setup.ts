@@ -34,7 +34,7 @@
 //   considered: the backend hop only (a local SearXNG with a proxied
 //   `web_fetch` would then download directly without a word).
 // - The suggested `--proxy` value is the hop's proxy mapped as webveil hands
-//   it to serpcast (`serpcastProxy`: SOCKS as `socks5h://`), egress first,
+//   it to searchcast (`searchcastProxy`: SOCKS as `socks5h://`), egress first,
 //   then a different fetchEgress; with its credentials REDACTED (`***`), since
 //   the message may land in a terminal log or a paste. The user puts them back.
 //   Alternative considered: printing the credentials so it is truly
@@ -45,7 +45,7 @@
 // - `--proxy` with `--direct` is a usage error (exit 2) whatever the egress
 //   and whatever the source. A local file for `install-recipes` makes no
 //   request, so no route is required there (`--direct` is accepted and
-//   ignored; `--proxy` stays serpcast's own error for a file).
+//   ignored; `--proxy` stays searchcast's own error for a file).
 // - Exit code 2 with error codes `ROUTE_REQUIRED` and `CONFLICTING_OPTIONS`,
 //   the convention for a usage error; the other failures keep exit 1.
 //   `doctor --remote` is unchanged: it already goes through the egress.
@@ -53,7 +53,7 @@
 // Recorded decisions (task install-egress-flag, owner request 2026-09-30):
 // `--egress` is a third explicit route: download through the egress webveil
 // already has configured, resolved as `search` resolves it (cwd, project,
-// global, env) and mapped as for serpcast (`serpcastProxy`: SOCKS as
+// global, env) and mapped as for searchcast (`searchcastProxy`: SOCKS as
 // `socks5h://`, `http` as is), credentials USED but never printed (progress
 // and errors show the redacted form). It stays explicit: the refusal above
 // still happens without a flag, and now offers `--egress` first (the likely
@@ -70,8 +70,8 @@
 //   download uses no library, so that rule does not apply here.
 // - Every hop direct: `--egress` is a plain direct download, announced on the
 //   progress sink, not an error (the user asked for "whatever my egress is").
-// - Not buildable (`downloadProxy`): an egress URL `serpcastProxy` rejects, or
-//   an `https://` http proxy (serpcast accepts it for search, but its
+// - Not buildable (`downloadProxy`): an egress URL `searchcastProxy` rejects, or
+//   an `https://` http proxy (searchcast accepts it for search, but its
 //   downloader takes only http://, socks5:// and socks5h://), fails loud
 //   before any request with an `EgressError` (exit 1, like a `search` whose
 //   egress cannot be built), never a silent fallback to direct.
@@ -80,22 +80,22 @@
 //   like `--direct`, and the config is not resolved.
 //
 // - No `--dir` for `install-recipes`: webveil resolves `set:<name>` in
-//   serpcast's recipes directory only (backends/serpcast.ts), so a set
-//   installed elsewhere could not be named. The plain serpcast CLI still has
+//   searchcast's recipes directory only (backends/searchcast.ts), so a set
+//   installed elsewhere could not be named. The plain searchcast CLI still has
 //   it for other uses.
 // - `recipes` is a single command listing the installed sets (the task's
-//   spelling), not serpcast's `recipes list` group.
-// - `doctor`: serpcast's report for the library webveil would load (its
-//   trusted `serpcast.libcurlPath`, else serpcast's own lookup), plus
+//   spelling), not searchcast's `recipes list` group.
+// - `doctor`: searchcast's report for the library webveil would load (its
+//   trusted `searchcast.libcurlPath`, else searchcast's own lookup), plus
 //   webveil's view of the current folder's config: backend, both egress hops
 //   (credentials redacted), the fetch transport, the engine chain resolved to
 //   recipe files, and each configured `set:` entry. It is healthy when
 //   impersonation is active (only required when the backend or the fetch
-//   transport is serpcast, the only users of the library) and nothing in
-//   webveil's view failed. `--remote` asks serpcast's echo service once,
-//   through the serpcast backend's `egress` when that is the backend, else
+//   transport is searchcast, the only users of the library) and nothing in
+//   webveil's view failed. `--remote` asks searchcast's echo service once,
+//   through the searchcast backend's `egress` when that is the backend, else
 //   through the fetch hop's egress (the hop that uses the library then).
-// - Progress lines go to stderr as serpcast's CLI prints them; the result is
+// - Progress lines go to stderr as searchcast's CLI prints them; the result is
 //   the command's output (TOON or JSON, as for every webveil command).
 //
 // Recorded decisions (task move-to-searchcast-packages, serpcast renamed
@@ -115,7 +115,14 @@
 //   `used`: false when a set of the same name in the new directory shadows
 //   it), mirroring `searchcast recipes list`; absent when there are none.
 // - A `set:` entry in `doctor` is resolved with `recipeSetDir` (new directory,
-//   then old), as a search resolves it (backends/serpcast.ts).
+//   then old), as a search resolves it (backends/searchcast.ts).
+//
+// Recorded decisions (task rename-serpcast-spellings; spellings.ts):
+// - `doctor` lists the deprecated `serpcast` spellings of this folder's
+//   config as a top-level `deprecations` field and does not print them: like
+//   `oldDataDir`, a notice, not a problem (the old spellings still work for
+//   one release), so doctor stays healthy. The install commands print them on
+//   their progress sink (`log`) when they resolve the config.
 
 import {join} from 'node:path';
 import type {DoctorReport, OldDataDirHits, RecipeSet} from 'searchcast/install';
@@ -123,12 +130,13 @@ import {resolveConfig as realResolveConfig} from './core/config.js';
 import type {Config, Egress, ResolveOptions} from './core/config.js';
 import {EgressError, fetchEgressConfig} from './core/egress.js';
 import {resolveFetchTransport} from './core/fetch-transport.js';
+import {configDeprecations, reportDeprecations} from './core/spellings.js';
 import {
-	describeSerpcastEngines,
-	serpcastProxy,
+	describeSearchcastEngines,
+	searchcastProxy,
 	trustedLibcurlPath,
-} from './core/backends/serpcast.js';
-import type {EngineDescription} from './core/backends/serpcast.js';
+} from './core/backends/searchcast.js';
+import type {EngineDescription} from './core/backends/searchcast.js';
 
 /** searchcast's install API (the `searchcast/install` entry). */
 export type InstallApi = typeof import('searchcast/install');
@@ -173,7 +181,7 @@ export class UsageError extends Error {
 function suggestedProxy(egress: Egress): string {
 	let proxy: string;
 	try {
-		proxy = serpcastProxy(egress) ?? '';
+		proxy = searchcastProxy(egress) ?? '';
 	} catch {
 		proxy = egress.mode === 'direct' ? '' : (egress.url ?? '');
 	}
@@ -210,13 +218,13 @@ function proxiedHops(config: Config) {
 }
 
 /**
- * A hop's proxy as serpcast's downloader takes it (credentials kept), or an
+ * A hop's proxy as searchcast's downloader takes it (credentials kept), or an
  * `EgressError` (credentials redacted) when it cannot be built.
  */
 function downloadProxy(name: string, egress: Egress): string {
 	let proxy: string | undefined;
 	try {
-		proxy = serpcastProxy(egress);
+		proxy = searchcastProxy(egress);
 	} catch {
 		throw new EgressError(
 			`${name} ${egress.mode}: invalid proxy url ` +
@@ -237,7 +245,7 @@ function downloadProxy(name: string, egress: Egress): string {
 /** A hop's mapped proxy for comparison, or its raw url when unbuildable. */
 function mappedOrRaw(egress: Egress): string {
 	try {
-		return serpcastProxy(egress) ?? '';
+		return searchcastProxy(egress) ?? '';
 	} catch {
 		return egress.mode === 'direct' ? '' : (egress.url ?? '');
 	}
@@ -322,7 +330,11 @@ function route(command: string, options: RouteOptions, deps: SetupDeps) {
 	return downloadRoute(
 		command,
 		options,
-		() => (deps.resolveConfig ?? realResolveConfig)(),
+		() => {
+			const config = (deps.resolveConfig ?? realResolveConfig)();
+			reportDeprecations(config, deps.log);
+			return config;
+		},
 		deps.log ?? stderr,
 	);
 }
@@ -351,7 +363,7 @@ export async function installRecipes(
 	deps: SetupDeps = {},
 ) {
 	// A local file makes no request: no route to require (`--direct` and
-	// `--egress` are ignored, `--proxy` stays serpcast's own error for a file),
+	// `--egress` are ignored, `--proxy` stays searchcast's own error for a file),
 	// but conflicting flags are still refused.
 	const proxy = isDownload(source)
 		? route('install-recipes', options, deps)
@@ -418,8 +430,8 @@ const describeEgress = (egress: Egress) =>
 /** The configured `set:` entries of `recipes` and `codeRecipes`, name only. */
 function setEntries(config: Config): string[] {
 	const entries = [
-		...(config.serpcast?.recipes ?? []),
-		...(config.serpcast?.codeRecipes ?? []),
+		...(config.searchcast?.recipes ?? []),
+		...(config.searchcast?.codeRecipes ?? []),
 	];
 	return [
 		...new Set(
@@ -442,6 +454,11 @@ export interface DoctorResult {
 	 * sets), with the command that moves it; absent when nothing is.
 	 */
 	oldDataDir?: OldDataDirHits;
+	/**
+	 * The deprecated `serpcast` spellings this folder's config uses, each
+	 * naming its new spelling; absent when there are none. Not a problem.
+	 */
+	deprecations?: string[];
 	engines?: EngineDescription[];
 	sets?: {entry: string; installed: boolean; dir: string}[];
 }
@@ -459,7 +476,7 @@ async function attempt<T>(
 	}
 }
 
-/** `webveil doctor`: serpcast's report plus webveil's view of this folder. */
+/** `webveil doctor`: searchcast's report plus webveil's view of this folder. */
 export async function doctor(
 	options: {remote?: boolean} & ResolveOptions,
 	deps: SetupDeps = {},
@@ -479,13 +496,15 @@ export async function doctor(
 		fetchEgress: describeEgress(fetchConfig.egress),
 		...(transport && {fetchTransport: transport}),
 	};
-	const serpcastBackend = config.backend === 'serpcast';
-	const needed = serpcastBackend || transport === 'serpcast';
+	const deprecations = configDeprecations(config);
+	if (deprecations.length > 0) result.deprecations = deprecations;
+	const searchcastBackend = config.backend === 'searchcast';
+	const needed = searchcastBackend || transport === 'searchcast';
 	const libcurlPath = await attempt(problems, () => ({
 		path: trustedLibcurlPath(config),
 	}));
 	const proxy = await attempt(problems, () =>
-		serpcastProxy(serpcastBackend ? config.egress : fetchConfig.egress),
+		searchcastProxy(searchcastBackend ? config.egress : fetchConfig.egress),
 	);
 	if (libcurlPath) {
 		const {oldDataDir: _old, ...report} = await api.doctor({
@@ -500,13 +519,13 @@ export async function doctor(
 					? `${report.problem} (with webveil: reinstall it with optional ` +
 							'dependencies, which bring @searchcast/libcurl-<platform> on ' +
 							'supported platforms; else `webveil install-libcurl`, or ' +
-							'serpcast.libcurlPath in the global config)'
+							'searchcast.libcurlPath in the global config)'
 					: `remote check failed: ${report.remote?.error ?? 'unknown'}`,
 			);
 	}
 	const old = api.oldDataDirHits();
 	if (old) result.oldDataDir = old;
-	if (serpcastBackend) {
+	if (searchcastBackend) {
 		const dir = api.recipesDir();
 		result.sets = setEntries(config).map((entry) => {
 			const name = entry.slice('set:'.length).split('/')[0]!;
@@ -522,7 +541,7 @@ export async function doctor(
 		// report it again.
 		if (result.sets.every((set) => set.installed))
 			result.engines = await attempt(problems, () =>
-				describeSerpcastEngines(config),
+				describeSearchcastEngines(config),
 			);
 	}
 	result.healthy = problems.length === 0;

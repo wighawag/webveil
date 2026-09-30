@@ -98,13 +98,13 @@ const unusedHttp = {} as Http;
 describe('deep merge of config sections', () => {
 	it('keeps the global keys of a section the project only partly sets; arrays replace whole', () => {
 		writeJson(globalFile, {
-			serpcast: {engines: ['a', 'b'], timeoutMs: 5, nested: {x: 1, y: 2}},
+			searchcast: {engines: ['a', 'b'], timeoutMs: 5, nested: {x: 1, y: 2}},
 		});
 		writeJson(join(cwd, 'webveil.json'), {
-			serpcast: {engines: ['c'], nested: {y: 3}},
+			searchcast: {engines: ['c'], nested: {y: 3}},
 		});
 		const cfg = resolveHere() as unknown as Record<string, unknown>;
-		expect(cfg.serpcast).toEqual({
+		expect(cfg.searchcast).toEqual({
 			engines: ['c'],
 			timeoutMs: 5,
 			nested: {x: 1, y: 3},
@@ -142,10 +142,10 @@ describe('deep merge of config sections', () => {
 
 describe('provenance', () => {
 	it('records a source for every resolved leaf, with the file path for file layers', () => {
-		writeJson(globalFile, {fetchSize: 'l', serpcast: {engines: ['a']}});
+		writeJson(globalFile, {fetchSize: 'l', searchcast: {engines: ['a']}});
 		writeJson(join(cwd, 'webveil.json'), {
 			backend: 'custom',
-			serpcast: {timeoutMs: 1},
+			searchcast: {timeoutMs: 1},
 		});
 		const provenance = configProvenance(
 			resolveHere({WEBVEIL_BASE_URL: '/bin/true'}),
@@ -155,8 +155,11 @@ describe('provenance', () => {
 			baseUrl: {layer: 'env'},
 			egress: {layer: 'defaults'},
 			fetchSize: {layer: 'global', path: globalFile},
-			'serpcast.engines': {layer: 'global', path: globalFile},
-			'serpcast.timeoutMs': {layer: 'project', path: join(cwd, 'webveil.json')},
+			'searchcast.engines': {layer: 'global', path: globalFile},
+			'searchcast.timeoutMs': {
+				layer: 'project',
+				path: join(cwd, 'webveil.json'),
+			},
 		});
 	});
 
@@ -227,9 +230,9 @@ describe('trust check on the custom command', () => {
 	});
 
 	it('refuses a nested leaf under an executable section path', () => {
-		writeJson(join(cwd, 'webveil.json'), {serpcast: {code: {dir: '/x'}}});
-		expect(() => assertTrusted(resolveHere(), ['serpcast.code'])).toThrow(
-			/serpcast\.code\.dir/,
+		writeJson(join(cwd, 'webveil.json'), {searchcast: {code: {dir: '/x'}}});
+		expect(() => assertTrusted(resolveHere(), ['searchcast.code'])).toThrow(
+			/searchcast\.code\.dir/,
 		);
 	});
 });

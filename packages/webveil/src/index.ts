@@ -3,6 +3,7 @@
 // This is the public surface. The framework-agnostic core lives under src/core:
 //   - core/config.ts            : config seam (per-folder webveil.json + global + env)
 //   - core/layers.ts            : key-by-key layer merge + per-key provenance
+//   - core/spellings.ts         : the old serpcast spellings, rewritten per layer with a warning
 //   - core/trust.ts             : executable settings refused from a project webveil.json
 //   - core/egress.ts            : egress seam (direct | http | socks5/Tor) — dispatcher + egress fetch
 //   - core/http.ts              : the proxied `http` helper handed to backends
@@ -14,10 +15,10 @@
 //   - core/search.ts            : the framework-agnostic search() both frontends call
 //   - core/security.ts          : SSRF guard wrapped around the egress fetch
 //   - core/fetch.ts             : the framework-agnostic fetch() both frontends call
-//   - core/fetch-transport.ts   : web_fetch's transport (plain undici | serpcast impersonated)
+//   - core/fetch-transport.ts   : web_fetch's transport (plain undici | searchcast impersonated)
 //   - core/backends/custom.ts  : the local-command escape hatch (JSON stdin/stdout)
-//   - core/backends/serpcast.ts : keyless recipes over libcurl-impersonate (egress = search egress)
-//   - core/state.ts             : serpcast's state store on disk, one partition per identity
+//   - core/backends/searchcast.ts : keyless recipes over libcurl-impersonate (egress = search egress)
+//   - core/state.ts             : searchcast's state store on disk, one partition per identity
 //   - core/tunables.ts          : every tuning value's rule and default (validated where used)
 //   - cli.ts                    : the incur CLI + MCP frontend (the `webveil` bin)
 //   - setup.ts                  : the CLI-only setup commands (install-libcurl, install-recipes,
@@ -28,6 +29,9 @@
 // config seam
 export {resolveConfig} from './core/config.js';
 export {configProvenance} from './core/layers.js';
+
+// deprecated serpcast spellings (accepted for one release, with a warning)
+export {configDeprecations, reportDeprecations} from './core/spellings.js';
 export type {ConfigSource, Provenance} from './core/layers.js';
 
 // trust (executable settings only from env or the global config; ADR 0004)
@@ -43,10 +47,10 @@ export type {
 	FetchSize,
 	FetchTransport,
 	PartialConfig,
-	FetchSerpcastConfig,
+	FetchSearchcastConfig,
 	ResolveOptions,
+	BrowserConfig,
 	SearchcastConfig,
-	SerpcastConfig,
 	StateConfig,
 } from './core/config.js';
 
@@ -99,14 +103,14 @@ export {createTavilyCompatBackend} from './core/backends/tavily-compat.js';
 export {createCustomBackend} from './core/backends/custom.js';
 export type {SpawnFn} from './core/backends/custom.js';
 export {
-	clearSerpcastState,
-	createSerpcastBackend,
-	serpcastIdentityKey,
-	serpcastProxy,
-} from './core/backends/serpcast.js';
-export type {SerpcastDeps} from './core/backends/serpcast.js';
+	clearSearchcastState,
+	createSearchcastBackend,
+	searchcastIdentityKey,
+	searchcastProxy,
+} from './core/backends/searchcast.js';
+export type {SearchcastDeps} from './core/backends/searchcast.js';
 
-// per-identity state (serpcast sessions and cooldowns on disk; ADR 0004)
+// per-identity state (searchcast sessions and cooldowns on disk; ADR 0004)
 export {
 	clearState,
 	createStateStore,
@@ -119,13 +123,13 @@ export type {StateStoreOptions} from './core/state.js';
 export {search} from './core/search.js';
 export type {SearchCoreOptions, SearchDeps} from './core/search.js';
 
-// web_fetch transport (plain undici, or serpcast's impersonated transport)
+// web_fetch transport (plain undici, or searchcast's impersonated transport)
 export {
 	closeFetchTransports,
-	createSerpcastFetch,
+	createSearchcastFetch,
 	resolveFetchTransport,
 } from './core/fetch-transport.js';
-export type {SerpcastFetchDeps} from './core/fetch-transport.js';
+export type {SearchcastFetchDeps} from './core/fetch-transport.js';
 
 // core fetch (the framework-agnostic fetch() + list-ready fetchAll internal)
 export {fetch, fetchAll} from './core/fetch.js';

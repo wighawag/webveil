@@ -20,13 +20,14 @@ import {guardEgressFetch as defaultGuardEgressFetch} from './security.js';
 import {createHttp as defaultCreateHttp} from './http.js';
 import type {HttpHelperOptions} from './http.js';
 import {httpTimeoutMs} from './tunables.js';
+import {reportDeprecations} from './spellings.js';
 import {
 	buildDispatcher as defaultBuildDispatcher,
 	fetchEgressConfig as defaultFetchEgressConfig,
 } from './egress.js';
 import type {Dispatcher} from './egress.js';
 import {
-	createSerpcastFetch as defaultCreateSerpcastFetch,
+	createSearchcastFetch as defaultCreateSearchcastFetch,
 	resolveFetchTransport,
 } from './fetch-transport.js';
 import {extract as defaultExtract} from './extract.js';
@@ -56,8 +57,8 @@ export interface FetchDeps {
 	) => Http;
 	createEgressFetch?: (config: Config) => EgressFetch;
 	guardEgressFetch?: (fetch: EgressFetch, config: Config) => EgressFetch;
-	/** Builds the `fetchTransport: serpcast` fetch (per-hop SSRF inside). */
-	createSerpcastFetch?: (config: Config) => EgressFetch;
+	/** Builds the `fetchTransport: searchcast` fetch (per-hop SSRF inside). */
+	createSearchcastFetch?: (config: Config) => EgressFetch;
 	/** Resolve the FETCH-hop egress config (`fetchEgress ?? egress`). */
 	fetchEgressConfig?: (config: Config) => Config;
 	extract?: (
@@ -69,7 +70,13 @@ export interface FetchDeps {
 }
 
 /** Per-call fetch options plus the config-resolution knobs (cwd/env/global). */
-export interface FetchCoreOptions extends FetchOptions, ResolveOptions {}
+export interface FetchCoreOptions extends FetchOptions, ResolveOptions {
+	/**
+	 * Receives the config's warnings (deprecated spellings, spellings.ts).
+	 * Default: each printed once per process on stderr.
+	 */
+	onWarning?: (message: string) => void;
+}
 
 /**
  * Fetch a LIST of urls to clean, size-bounded markdown, in order. This is the
@@ -93,14 +100,15 @@ export async function fetchAll(
 	const guardEgressFetch = deps.guardEgressFetch ?? defaultGuardEgressFetch;
 	const fetchEgressConfig = deps.fetchEgressConfig ?? defaultFetchEgressConfig;
 	const extract = deps.extract ?? defaultExtract;
-	const createSerpcastFetch =
-		deps.createSerpcastFetch ?? defaultCreateSerpcastFetch;
+	const createSearchcastFetch =
+		deps.createSearchcastFetch ?? defaultCreateSearchcastFetch;
 
 	const config = resolveConfig({
 		cwd: options.cwd,
 		env: options.env,
 		globalPath: options.globalPath,
 	});
+	reportDeprecations(config, options.onWarning);
 
 	// web_fetch uses the FETCH-hop egress (`fetchEgress ?? egress`), independent of
 	// the backend hop. So a LOCAL backend on a direct backend hop can coexist with
@@ -131,12 +139,12 @@ export async function fetchAll(
 	// distilly (never a global fetch). The guard covers distilly's rule-rewritten
 	// requests too, and on direct egress every redirect hop (it follows redirects
 	// itself, security.ts). A configured-but-unbuildable proxy throws at build time
-	// (fail-loud), before any I/O. With `fetchTransport: serpcast` the injected
-	// fetch is serpcast's impersonated transport instead, which follows redirects
+	// (fail-loud), before any I/O. With `fetchTransport: searchcast` the injected
+	// fetch is searchcast's impersonated transport instead, which follows redirects
 	// itself and runs the SSRF guard on every hop (fetch-transport.ts).
 	const guardedFetch =
-		resolveFetchTransport(config) === 'serpcast'
-			? createSerpcastFetch(fetchConfig)
+		resolveFetchTransport(config) === 'searchcast'
+			? createSearchcastFetch(fetchConfig)
 			: guardEgressFetch(createEgressFetch(fetchConfig), fetchConfig);
 	const extractDeps: ExtractDeps = {createEgressFetch: () => guardedFetch};
 	return runAll(urls, (url) =>

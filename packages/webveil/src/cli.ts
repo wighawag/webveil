@@ -26,7 +26,7 @@ import {Cli, z} from 'incur';
 import {search as coreSearch} from './core/search.js';
 import {fetch as coreFetch} from './core/fetch.js';
 import {closeBackends} from './core/backends/registry.js';
-import {clearSerpcastState} from './core/backends/serpcast.js';
+import {clearSearchcastState} from './core/backends/searchcast.js';
 import {
 	UsageError,
 	doctor,
@@ -43,7 +43,7 @@ import type {SetupDeps} from './setup.js';
 export interface CliDeps {
 	search?: typeof coreSearch;
 	fetch?: typeof coreFetch;
-	clearState?: typeof clearSerpcastState;
+	clearState?: typeof clearSearchcastState;
 	/** Seams of the setup commands (install API, progress sink, config). */
 	setup?: SetupDeps;
 }
@@ -105,17 +105,18 @@ const SIZES = ['s', 'm', 'l', 'f'] as const;
 export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 	const search = deps.search ?? coreSearch;
 	const fetch = deps.fetch ?? coreFetch;
-	const clearState = deps.clearState ?? clearSerpcastState;
+	const clearState = deps.clearState ?? clearSearchcastState;
 
 	// Recorded decision (task identity-partitioned-state-store): `state clear`
 	// is a `state` group (room for later state verbs) and, like every command,
 	// also an MCP tool: clearing only drops sessions, so an agent may do it.
 	// Alternative: a CLI-only flag on `search`, rejected as mixing two jobs.
 	const state = Cli.create('state', {
-		description: 'Persisted serpcast state (sessions, cooldowns) per identity.',
+		description:
+			'Persisted searchcast state (sessions, cooldowns) per identity.',
 	}).command('clear', {
 		description:
-			"Clear the current identity's state (this folder's egress and serpcast config), or every identity with --all.",
+			"Clear the current identity's state (this folder's egress and searchcast config), or every identity with --all.",
 		options: z.object({
 			all: z.boolean().optional().describe('Clear every identity'),
 		}),
@@ -297,7 +298,7 @@ function isMain(): boolean {
 /**
  * Serve `argv` and release what backends keep across searches at PROCESS
  * level, never inside a command handler (under `--mcp` that would defeat the
- * serpcast instance cache). A one-shot command closes once served, so the
+ * searchcast instance cache). A one-shot command closes once served, so the
  * process exits on its own; the MCP server closes when its stdin ends or it
  * is signalled. incur exits the process itself on a failed command.
  */

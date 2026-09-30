@@ -1,5 +1,5 @@
 // identity: the key naming one search identity, so per-identity state (the
-// cached serpcast instance today, its on-disk state store later) never
+// cached searchcast instance today, its on-disk state store later) never
 // crosses identities (docs/adr/0004).
 //
 // Recorded decision (task serpcast-backend-basic): the key is the sha256 of a

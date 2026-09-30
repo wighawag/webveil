@@ -1,5 +1,12 @@
 # pi-webveil
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [1a7dc0a]
+  - webveil@0.9.0
+
 ## 0.5.4
 
 ### Patch Changes

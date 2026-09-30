@@ -71,6 +71,25 @@ export type Egress =
  * `decoyGuard: ["bing"]` must keep working in a project whose chain has no
  * `bing`; serpcast simply never judges it. Alternative considered: failing on
  * such a name, rejected for that layering reason.
+ *
+ * Recorded decisions (task webveil-installs-and-tunables; rules and defaults:
+ * tunables.ts): serpcast's tuning options pass through under their serpcast
+ * names (`timeoutMs`, `maxBodyBytes`, `reuseConnections`, `keepSessions`,
+ * `idlePollMs`, `maxRequestBodyBytes`, `preflightCache`, `maxPreflightAgeS`,
+ * `maxRedirects`, `decoyRule`), and `decoyGuard` also takes serpcast's object
+ * form `{include, exclude}`. `decoyGuard` is a WHOLE key (layers.ts): an
+ * array in one layer and an object in another would otherwise merge into a
+ * mix of both, so the highest layer's guard wins whole, as the array always
+ * did. The browser endpoint's limits are `searchcast.timeoutMs` and
+ * `searchcast.maxBodyBytes` (endpoint mode only). The state store's switches
+ * are the `state` subsection (`persist`, `lockStaleMs`, `lockWaitMs`), inside
+ * `serpcast` because it is serpcast's state (CONTEXT.md) and so joins the
+ * identity key like everything else in the section. Every key has an env
+ * form, `WEBVEIL_SERPCAST_<KEY>` in upper snake case (`_DECOY_RULE_TOP`,
+ * `_SEARCHCAST_TIMEOUT_MS`, `_STATE_PERSIST`, ...), and
+ * `WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE` (comma-separated) gives the object
+ * form. An env switch is `true` or `false`; anything else is kept as given so
+ * validation names it, never silently read as off.
  */
 export interface SerpcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
@@ -83,10 +102,34 @@ export interface SerpcastConfig {
 	libcurlPath?: string;
 	sessionIdleMs?: number;
 	cooldownMs?: number;
-	/** Engines whose answers serpcast checks for decoys (unrelated results). */
-	decoyGuard?: string[];
+	/** Engines whose answers serpcast checks for decoys, or `{include, exclude}`. */
+	decoyGuard?: string[] | {include?: string[]; exclude?: string[]};
+	/** The decoy rule's thresholds (serpcast's `decoyRule`). */
+	decoyRule?: {top?: number; maxRelevant?: number; prefix?: number};
+	/** serpcast transport and chain options, passed as is. */
+	timeoutMs?: number;
+	maxBodyBytes?: number;
+	reuseConnections?: boolean;
+	keepSessions?: boolean;
+	idlePollMs?: number;
+	maxRequestBodyBytes?: number;
+	preflightCache?: boolean;
+	maxPreflightAgeS?: number;
+	maxRedirects?: number;
 	/** The searchcast browser fallback (engines named `searchcast:<recipe>`). */
 	searchcast?: SearchcastConfig;
+	/** Where serpcast state lives (state.ts). */
+	state?: StateConfig;
+}
+
+/** The serpcast state store's switches (state.ts). */
+export interface StateConfig {
+	/** `false`: serpcast's in-memory store, nothing written to disk. Default true. */
+	persist?: boolean;
+	/** A lock older than this is broken (a crashed writer). Default 10 s. */
+	lockStaleMs?: number;
+	/** Waiting longer than this for the lock is an error. Default 30 s. */
+	lockWaitMs?: number;
 }
 
 /**
@@ -112,6 +155,19 @@ export interface SearchcastConfig {
 	 * (deleted once idle past `sessionIdleMs`). Default: an ephemeral profile.
 	 */
 	persistProfile?: boolean;
+	/** Endpoint mode: the whole request's time limit in ms (serpcast: 30 s). */
+	timeoutMs?: number;
+	/** Endpoint mode: the largest answer accepted, in bytes (serpcast: 16 MiB). */
+	maxBodyBytes?: number;
+}
+
+/** The serpcast `web_fetch` transport's values (tunables.ts, fetch-transport.ts). */
+export interface FetchSerpcastConfig {
+	maxIdleSessions?: number;
+	sessionIdleMs?: number;
+	reuseConnections?: boolean;
+	timeoutMs?: number;
+	maxBodyBytes?: number;
 }
 
 /**
@@ -150,6 +206,14 @@ export interface Config {
 	 * `backend` is `serpcast` and `plain` otherwise (`resolveFetchTransport`).
 	 */
 	fetchTransport?: FetchTransport;
+	/** Redirects `web_fetch` follows (both transports). Default 20. */
+	fetchMaxRedirects?: number;
+	/** The serpcast `web_fetch` transport's pool and limits. */
+	fetchSerpcast?: FetchSerpcastConfig;
+	/** Results a search returns when the caller passes no `maxResults`. Default 10. */
+	maxResults?: number;
+	/** The backend http helper's per-request timeout in ms. Default 30 s. */
+	httpTimeoutMs?: number;
 	/** Settings of the `serpcast` backend (unused by the other backends). */
 	serpcast?: SerpcastConfig;
 }
@@ -241,40 +305,128 @@ function splitPathList(value: string): string[] {
 	return list.filter(Boolean);
 }
 
+type Env = Record<string, string | undefined>;
+
+/** An env number (NaN for garbage, so validation fails loud). */
+const envNumber = (value: string) => Number(value);
+/** An env switch: `true`/`false`, else the raw text (validation names it). */
+const envBoolean = (value: string) =>
+	value === 'true' ? true : value === 'false' ? false : value;
+/** A comma-separated list of names, spaces around each trimmed. */
+const envNames = (value: string) =>
+	value
+		.split(',')
+		.map((name) => name.trim())
+		.filter(Boolean);
+
+/**
+ * Copy each set env variable `<prefix><SUFFIX>` into `target[key]`, parsed:
+ * `keys` maps a key to `[SUFFIX, parse]`. Unset or empty variables are skipped.
+ */
+function readKeys(
+	env: Env,
+	prefix: string,
+	keys: Record<string, [string, (value: string) => unknown]>,
+): Record<string, unknown> {
+	const target: Record<string, unknown> = {};
+	for (const [key, [suffix, parse]] of Object.entries(keys)) {
+		const value = env[prefix + suffix];
+		if (value) target[key] = parse(value);
+	}
+	return target;
+}
+
+const SERPCAST_ENV_KEYS: Record<string, [string, (v: string) => unknown]> = {
+	timeoutMs: ['TIMEOUT_MS', envNumber],
+	maxBodyBytes: ['MAX_BODY_BYTES', envNumber],
+	reuseConnections: ['REUSE_CONNECTIONS', envBoolean],
+	keepSessions: ['KEEP_SESSIONS', envBoolean],
+	idlePollMs: ['IDLE_POLL_MS', envNumber],
+	maxRequestBodyBytes: ['MAX_REQUEST_BODY_BYTES', envNumber],
+	preflightCache: ['PREFLIGHT_CACHE', envBoolean],
+	maxPreflightAgeS: ['MAX_PREFLIGHT_AGE_S', envNumber],
+	maxRedirects: ['MAX_REDIRECTS', envNumber],
+	sessionIdleMs: ['SESSION_IDLE_MS', envNumber],
+	cooldownMs: ['COOLDOWN_MS', envNumber],
+};
+
+/** Set `section[key]` to `value` unless it is an empty object. */
+function setSection(
+	section: Record<string, unknown>,
+	key: string,
+	value: Record<string, unknown>,
+): void {
+	if (Object.keys(value).length > 0) section[key] = value;
+}
+
 /** The `serpcast` settings from `WEBVEIL_SERPCAST_*` (lists: code recipes, chrome args, decoy guard). */
-function readSerpcastEnv(
-	env: Record<string, string | undefined>,
-): SerpcastConfig {
-	const section: SerpcastConfig = {};
+function readSerpcastEnv(env: Env): SerpcastConfig {
+	const P = 'WEBVEIL_SERPCAST_';
+	const section = readKeys(env, P, SERPCAST_ENV_KEYS) as SerpcastConfig;
+	const extra = section as Record<string, unknown>;
+	setSection(
+		extra,
+		'decoyRule',
+		readKeys(env, `${P}DECOY_RULE_`, {
+			top: ['TOP', envNumber],
+			maxRelevant: ['MAX_RELEVANT', envNumber],
+			prefix: ['PREFIX', envNumber],
+		}),
+	);
+	setSection(
+		extra,
+		'state',
+		readKeys(env, `${P}STATE_`, {
+			persist: ['PERSIST', envBoolean],
+			lockStaleMs: ['LOCK_STALE_MS', envNumber],
+			lockWaitMs: ['LOCK_WAIT_MS', envNumber],
+		}),
+	);
 	const {
 		WEBVEIL_SERPCAST_LIBCURL_PATH: lib,
-		WEBVEIL_SERPCAST_SESSION_IDLE_MS: idle,
-		WEBVEIL_SERPCAST_COOLDOWN_MS: cooldown,
 		WEBVEIL_SERPCAST_CODE_RECIPES: code,
 		WEBVEIL_SERPCAST_SEARCHCAST_CHROME: chrome,
 		WEBVEIL_SERPCAST_SEARCHCAST_XVFB: xvfb,
 		WEBVEIL_SERPCAST_SEARCHCAST_CHROME_ARGS: args,
 		WEBVEIL_SERPCAST_DECOY_GUARD: decoy,
+		WEBVEIL_SERPCAST_DECOY_GUARD_EXCLUDE: exclude,
 	} = env;
-	const browser: SearchcastConfig = {};
+	const browser = readKeys(env, `${P}SEARCHCAST_`, {
+		timeoutMs: ['TIMEOUT_MS', envNumber],
+		maxBodyBytes: ['MAX_BODY_BYTES', envNumber],
+	}) as SearchcastConfig;
 	if (chrome) browser.chrome = chrome;
 	if (xvfb) browser.xvfb = xvfb;
 	if (args?.trim()) browser.chromeArgs = args.trim().split(/\s+/);
 	if (Object.keys(browser).length > 0) section.searchcast = browser;
 	if (code) section.codeRecipes = splitPathList(code);
-	if (decoy?.trim())
-		section.decoyGuard = decoy
-			.split(',')
-			.map((name) => name.trim())
-			.filter(Boolean);
+	if (exclude?.trim())
+		section.decoyGuard = {
+			...(decoy?.trim() ? {include: envNames(decoy)} : {}),
+			exclude: envNames(exclude),
+		};
+	else if (decoy?.trim()) section.decoyGuard = envNames(decoy);
 	if (lib) section.libcurlPath = lib;
-	if (idle) section.sessionIdleMs = Number(idle);
-	if (cooldown) section.cooldownMs = Number(cooldown);
 	return section;
 }
 
-function readEnv(env: Record<string, string | undefined>): PartialConfig {
-	const layer: PartialConfig = {};
+function readEnv(env: Env): PartialConfig {
+	const layer = readKeys(env, 'WEBVEIL_', {
+		maxResults: ['MAX_RESULTS', envNumber],
+		httpTimeoutMs: ['HTTP_TIMEOUT_MS', envNumber],
+		fetchMaxRedirects: ['FETCH_MAX_REDIRECTS', envNumber],
+	}) as PartialConfig;
+	setSection(
+		layer as Record<string, unknown>,
+		'fetchSerpcast',
+		readKeys(env, 'WEBVEIL_FETCH_SERPCAST_', {
+			maxIdleSessions: ['MAX_IDLE_SESSIONS', envNumber],
+			sessionIdleMs: ['SESSION_IDLE_MS', envNumber],
+			reuseConnections: ['REUSE_CONNECTIONS', envBoolean],
+			timeoutMs: ['TIMEOUT_MS', envNumber],
+			maxBodyBytes: ['MAX_BODY_BYTES', envNumber],
+		}),
+	);
 	if (env.WEBVEIL_BACKEND) layer.backend = env.WEBVEIL_BACKEND;
 	if (env.WEBVEIL_BASE_URL) layer.baseUrl = env.WEBVEIL_BASE_URL;
 	if (env.WEBVEIL_API_KEY) layer.apiKey = env.WEBVEIL_API_KEY;

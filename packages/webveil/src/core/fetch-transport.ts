@@ -85,6 +85,11 @@ import type {Config, FetchTransport} from './config.js';
 import type {EgressFetch} from './egress.js';
 import {identityKey} from './identity.js';
 import {
+	DEFAULT_MAX_IDLE_SESSIONS,
+	fetchMaxRedirects,
+	fetchSerpcastTunables,
+} from './tunables.js';
+import {
 	assertFetchableHop,
 	assertPublicUrl as realAssertPublicUrl,
 	isRedirectStatus,
@@ -108,8 +113,8 @@ export interface SerpcastFetchDeps {
 
 const TRANSPORTS: FetchTransport[] = ['plain', 'serpcast'];
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
-/** Idle sessions kept per fetch identity (see the recorded decisions). */
-export const MAX_IDLE_SESSIONS = 4;
+/** Idle sessions kept per fetch identity by default (`fetchSerpcast.maxIdleSessions`). */
+export const MAX_IDLE_SESSIONS = DEFAULT_MAX_IDLE_SESSIONS;
 
 /**
  * The sessions of one fetch identity: idle ones wait here (each with its
@@ -122,6 +127,7 @@ class SessionPool {
 	constructor(
 		private transport: Transport,
 		private idleMs: number,
+		private maxIdle: number,
 	) {}
 
 	/** An idle session (else a new one), with an empty cookie jar. */
@@ -136,7 +142,7 @@ class SessionPool {
 	/** Back to the pool, cookies cleared; closed if unusable or not wanted. */
 	release(session: TransportSession, reusable: boolean): void {
 		session.clearCookies();
-		if (!reusable || this.closed || this.idle.length >= MAX_IDLE_SESSIONS) {
+		if (!reusable || this.closed || this.idle.length >= this.maxIdle) {
 			session.close();
 			return;
 		}
@@ -221,13 +227,34 @@ export function createSerpcastFetch(
 	const libcurlPath = trustedLibcurlPath(config);
 	const proxy = serpcastProxy(config.egress);
 	const assertPublicUrl = deps.assertPublicUrl ?? realAssertPublicUrl;
-	const key = identityKey(config.egress, {libcurlPath});
+	const maxRedirects = fetchMaxRedirects(config);
+	const {maxIdleSessions, sessionIdleMs, ...limits} =
+		fetchSerpcastTunables(config);
+	const idleMs = deps.sessionIdleMs ?? sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS;
+	const key = identityKey(config.egress, {
+		libcurlPath,
+		...limits,
+		maxIdleSessions,
+		idleMs,
+	});
 	let pool = pools.get(key);
 	if (!pool) {
 		const create = deps.createTransport ?? realCreateTransport;
 		pool = new SessionPool(
-			create({libcurlPath, proxy, strict: true}),
-			deps.sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS,
+			create({
+				libcurlPath,
+				proxy,
+				strict: true,
+				...(limits.timeoutMs !== undefined && {timeoutMs: limits.timeoutMs}),
+				...(limits.maxBodyBytes !== undefined && {
+					maxBodyBytes: limits.maxBodyBytes,
+				}),
+				...(limits.reuseConnections !== undefined && {
+					reuseConnections: limits.reuseConnections,
+				}),
+			}),
+			idleMs,
+			maxIdleSessions,
 		);
 		pools.set(key, pool);
 	}
@@ -258,7 +285,7 @@ export function createSerpcastFetch(
 					reusable = true;
 					return toResponse(response, hop > 0);
 				}
-				url = nextRedirectUrl(location, url, hop);
+				url = nextRedirectUrl(location, url, hop, maxRedirects);
 			}
 		} finally {
 			// The body is already read (toResponse): the session is free again.

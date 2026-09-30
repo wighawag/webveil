@@ -394,6 +394,6 @@ describe('webveil CLI: serpcast backend without libcurl-impersonate', () => {
 		});
 		expect(res.status).toBe(1);
 		expect(res.stdout).toContain('impersonation is not active');
-		expect(res.stdout).toContain('npx serpcast install-libcurl');
+		expect(res.stdout).toContain('webveil install-libcurl');
 	});
 });

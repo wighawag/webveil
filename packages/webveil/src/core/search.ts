@@ -21,17 +21,11 @@ import type {Dispatcher} from './egress.js';
 import {resolveBackendTransport as defaultResolveBackendTransport} from './baseurl.js';
 import type {BackendTransport} from './baseurl.js';
 import {createHttp as defaultCreateHttp} from './http.js';
+import type {HttpHelperOptions} from './http.js';
+import {searchTunables} from './tunables.js';
 import {carryProvenance} from './layers.js';
 import {getBackend as defaultGetBackend} from './backends/registry.js';
 import type {Http, SearchOptions, SearchResult} from './backends/types.js';
-
-/**
- * Default cap on returned results when the caller does not pass `maxResults`.
- * Keeps an agent's context small by default; a caller can raise/lower it per
- * call. (Recorded decision: there is no configured default, so the core sets
- * one; see the task's Decisions block.)
- */
-const DEFAULT_MAX_RESULTS = 10;
 
 /**
  * Collaborators, seamed so the core is testable WITHOUT real config files,
@@ -45,7 +39,10 @@ export interface SearchDeps {
 	buildDispatcher?: (config: Config) => Dispatcher | undefined;
 	assertEgressAllowsBaseUrl?: (config: Config) => void;
 	resolveBackendTransport?: (baseUrl: string) => BackendTransport;
-	createHttp?: (dispatcher: Dispatcher | undefined) => Http;
+	createHttp?: (
+		dispatcher: Dispatcher | undefined,
+		helper?: HttpHelperOptions,
+	) => Http;
 	getBackend?: (
 		name: string,
 		config: Config,
@@ -101,6 +98,10 @@ export async function search(
 		globalPath: options.globalPath,
 	});
 
+	// The default result cut (`maxResults`, 10) and the http helper timeout
+	// (`httpTimeoutMs`, 30 s) come from config (tunables.ts), validated here.
+	const tunables = searchTunables(config);
+
 	// Fail loud on the false-confidence combo (a local `unix:` socket baseUrl
 	// behind a proxy egress) BEFORE any transport is built.
 	assertEgressAllowsBaseUrl(config);
@@ -116,7 +117,7 @@ export async function search(
 	// here, before any network access (never an un-proxied request). For a socket
 	// baseUrl the per-hop socket dispatcher overrides the (direct/undefined) one.
 	const dispatcher = transport.dispatcher ?? buildDispatcher(config);
-	const http = createHttp(dispatcher);
+	const http = createHttp(dispatcher, {timeoutMs: tunables.httpTimeoutMs});
 
 	// The backend stays transport-unaware: it receives a config whose baseUrl is
 	// always a real `http(s):` base (the `unix:` form is rewritten away here).
@@ -136,6 +137,6 @@ export async function search(
 		if (transport.dispatcher) void transport.dispatcher.close();
 	}
 
-	const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
+	const maxResults = options.maxResults ?? tunables.maxResults;
 	return dedup(raw).slice(0, maxResults);
 }

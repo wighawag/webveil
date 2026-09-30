@@ -135,10 +135,39 @@
 //   serpcast guards them itself, and `decoyGuard` stays an addition.
 // - The `WEBVEIL_SERPCAST_CODE_RECIPES` split (config.ts) keeps `set:<name>`
 //   whole where the path delimiter is `:`.
+//
+// Recorded decisions (task webveil-installs-and-tunables; keys: config.ts,
+// rules: tunables.ts):
+// - serpcast's tuning options (`timeoutMs`, `maxBodyBytes`,
+//   `reuseConnections`, `keepSessions`, `idlePollMs`, `maxRequestBodyBytes`,
+//   `preflightCache`, `maxPreflightAgeS`, `maxRedirects`, `decoyRule`, and
+//   `decoyGuard` in either form) are handed to `createSerpcast` as is, only
+//   when set, so an unset key is serpcast's default. The endpoint's
+//   `searchcast.timeoutMs`/`maxBodyBytes` go on each endpoint engine.
+// - Identity key: NO key is kept out. The key names both the cached instance
+//   and the state partition (decisions above: one hash, so they cannot drift
+//   apart), and every one of these keys is an instance option, so a key left
+//   out would let a folder reuse an instance built with another folder's
+//   values. The price: changing a pure limit (a timeout) starts a fresh
+//   partition, i.e. new engine sessions, which only costs a new session.
+//   Unset keys are not in the key, so existing partitions keep their names.
+// - `serpcast.state.persist: false` gives the instance serpcast's in-memory
+//   store (`createMemoryStore`): nothing under `$XDG_STATE_HOME`, sessions
+//   last as long as the process. Combined with `searchcast.persistProfile:
+//   true` (a profile ON DISK in the partition) it is an error, not a silent
+//   choice of one of the two.
+// - The fix messages name webveil's own commands (`webveil install-libcurl`,
+//   `webveil install-recipes`, `webveil recipes`): webveil is the only thing
+//   a user installs (cli.ts).
+// - `describeSerpcastEngines` (for `webveil doctor`) resolves the chain as a
+//   search does, recipe loading included: listing a code recipe's engine name
+//   means importing (running) it, as every search does; the trust check runs
+//   first, as for a search.
 
 import {existsSync, readdirSync, statSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {
+	createMemoryStore,
 	createSerpcast as realCreateSerpcast,
 	DEFAULT_SESSION_IDLE_MS,
 	isCodeRecipe,
@@ -153,7 +182,8 @@ import type {
 	Serpcast,
 	SerpcastOptions,
 } from 'serpcast';
-import {loadRecipes} from 'serpcast-recipe/node';
+import {RecipeError} from 'serpcast-recipe';
+import {loadRecipeFile} from 'serpcast-recipe/node';
 import {resolveConfig} from '../config.js';
 import type {
 	Config,
@@ -174,6 +204,7 @@ import {
 	stateRoot,
 	touchProfile,
 } from '../state.js';
+import {checkSerpcastTunables} from '../tunables.js';
 import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
 import type {Backend, SearchResult} from './types.js';
 
@@ -241,9 +272,9 @@ function installedSetPath(value: string): string | undefined {
 	if (!existsSync(dir))
 		throw new Error(
 			`serpcast: recipe set '${parts[0]}' is not installed in ` +
-				`${recipesDir()} (install it with \`npx serpcast install-recipes ` +
-				'<archive> --sha256 <hex>`; `npx serpcast recipes list` shows the ' +
-				'installed sets)',
+				`${recipesDir()} (install it with \`webveil install-recipes ` +
+				'<archive> --sha256 <hex>`; `webveil recipes` shows the installed ' +
+				'sets)',
 		);
 	return parts[1] ? join(dir, parts[1]) : dir;
 }
@@ -259,25 +290,31 @@ function resolveRecipePath(config: Config, key: string, value: string): string {
 }
 
 /**
- * A `recipes` entry as serpcast-recipe's `loadRecipes` paths: an installed set
- * directory (directly under `recipesDir()`, or holding serpcast's
- * `.source.json`) as its recipe files, without hidden files (`.source.json`)
- * and the set's `manifest.json`, which are not recipes.
+ * A `recipes` entry as its recipe files: a file as is, a directory as every
+ * `*.json` inside, sorted (serpcast-recipe's `loadRecipes` rule); an
+ * installed set directory (directly under `recipesDir()`, or holding
+ * serpcast's `.source.json`) without hidden files (`.source.json`) and the
+ * set's `manifest.json`, which are not recipes.
  */
 function declarativePaths(path: string): string[] {
+	if (!statSync(path).isDirectory()) return [path];
 	const isSet =
 		dirname(path) === recipesDir() || existsSync(join(path, SOURCE_FILE));
-	if (!isSet || !statSync(path).isDirectory()) return [path];
 	return readdirSync(path)
 		.sort()
-		.filter((f) => f.endsWith('.json') && !f.startsWith('.'))
-		.filter((f) => f !== 'manifest.json')
+		.filter((f) => f.endsWith('.json'))
+		.filter((f) => !isSet || (!f.startsWith('.') && f !== 'manifest.json'))
 		.map((f) => join(path, f));
 }
 
 const isList = (v: unknown): v is string[] =>
 	Array.isArray(v) && v.every((x) => typeof x === 'string');
 const num = (v: unknown) => (v === undefined ? undefined : Number(v));
+/** `{[key]: value}` when `value` is set, else nothing (spread into options). */
+const pick = <T extends object>(from: T, keys: (keyof T)[]): Partial<T> =>
+	Object.fromEntries(
+		keys.filter((k) => from[k] !== undefined).map((k) => [k, from[k]]),
+	) as Partial<T>;
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -310,6 +347,11 @@ function browserSettings(
 	}
 	if (b.persistProfile !== undefined && typeof b.persistProfile !== 'boolean')
 		throw bad('.persistProfile must be true or false');
+	if (b.persistProfile && config.serpcast?.state?.persist === false)
+		throw bad(
+			'.persistProfile keeps the browser profile on disk, but ' +
+				'serpcast.state.persist is false (nothing on disk): set one of them',
+		);
 	for (const key of ['chrome', 'xvfb'] as const) {
 		if (b[key] === undefined) continue;
 		if (typeof b[key] !== 'string') throw bad(`.${key} must be a path`);
@@ -327,13 +369,7 @@ function settings(config: Config): SerpcastConfig {
 	for (const key of ['recipes', 'codeRecipes'] as const)
 		if (s[key] !== undefined && !isList(s[key]))
 			throw new Error(`serpcast: serpcast.${key} must be a list of paths`);
-	if (s.decoyGuard !== undefined && !isList(s.decoyGuard))
-		throw new Error(
-			'serpcast: serpcast.decoyGuard must be a list of engine names',
-		);
-	for (const key of ['sessionIdleMs', 'cooldownMs'] as const)
-		if (s[key] !== undefined && !(Number(s[key]) >= 0))
-			throw new Error(`serpcast: serpcast.${key} must be a number >= 0`);
+	checkSerpcastTunables(s as Record<string, unknown>);
 	if (s.recipes)
 		s.recipes = s.recipes.map((p) => resolveRecipePath(config, 'recipes', p));
 	if (s.codeRecipes)
@@ -390,7 +426,14 @@ function browserEngine(
 	const recipe = name.slice(BROWSER.length);
 	if (!recipe) throw new Error(`serpcast: '${name}' names no recipe`);
 	if (b.mode === 'endpoint')
-		return {name, searchcast: {endpoint: b.endpoint!, recipe}};
+		return {
+			name,
+			searchcast: {
+				endpoint: b.endpoint!,
+				recipe,
+				...pick(b, ['timeoutMs', 'maxBodyBytes']),
+			},
+		};
 	const found = recipes.get(recipe);
 	if (!found || isCodeRecipe(found) || 'searchcast' in found)
 		throw new Error(
@@ -421,13 +464,24 @@ function reserved(name: string, where: string): void {
 		);
 }
 
-/** Every recipe by name: declarative, then code (imports, i.e. RUNS, each module). */
-async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
-	const engines = new Map<string, Engine>(
-		loadRecipes((s.recipes ?? []).flatMap(declarativePaths)),
-	);
+/**
+ * Every recipe by name: declarative, then code (imports, i.e. RUNS, each
+ * module). `files` (when given) receives each recipe's file.
+ */
+async function loadEngines(
+	s: SerpcastConfig,
+	files = new Map<string, string>(),
+): Promise<Map<string, Engine>> {
+	const engines = new Map<string, Engine>();
+	for (const file of (s.recipes ?? []).flatMap(declarativePaths)) {
+		const recipe = loadRecipeFile(file);
+		if (engines.has(recipe.name))
+			throw new RecipeError(`${file}: duplicate recipe name "${recipe.name}"`);
+		engines.set(recipe.name, recipe);
+		files.set(recipe.name, file);
+	}
 	for (const name of engines.keys()) reserved(name, 'declarative recipe');
-	const files = (s.codeRecipes ?? []).flatMap((p) =>
+	const modules = (s.codeRecipes ?? []).flatMap((p) =>
 		statSync(p).isDirectory()
 			? readdirSync(p)
 					.sort()
@@ -435,7 +489,7 @@ async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
 					.map((f) => join(p, f))
 			: [p],
 	);
-	for (const file of files) {
+	for (const file of modules) {
 		const recipe = await loadCodeRecipe(file);
 		reserved(recipe.name, file);
 		if (engines.has(recipe.name))
@@ -443,8 +497,57 @@ async function loadEngines(s: SerpcastConfig): Promise<Map<string, Engine>> {
 				`serpcast: ${file}: duplicate recipe name '${recipe.name}'`,
 			);
 		engines.set(recipe.name, recipe);
+		files.set(recipe.name, file);
 	}
 	return engines;
+}
+
+/** The chain's engines, in order, from the loaded recipes (errors on an unknown name). */
+function chain(s: SerpcastConfig, recipes: Map<string, Engine>): Engine[] {
+	return s.engines!.map((name) => {
+		if (name.startsWith(BROWSER))
+			return browserEngine(name, recipes, s.searchcast);
+		const recipe = recipes.get(name);
+		if (recipe) return recipe;
+		throw new Error(
+			`serpcast: unknown engine '${name}' (loaded recipes: ` +
+				`${[...recipes.keys()].join(', ') || 'none'})`,
+		);
+	});
+}
+
+/** One engine of the chain as `webveil doctor` lists it. */
+export interface EngineDescription {
+	name: string;
+	kind: 'declarative' | 'code' | 'browser';
+	/** The recipe file (a browser engine: its recipe's file, in library mode). */
+	file?: string;
+}
+
+/**
+ * The configured chain resolved as a search would (trust check, recipe
+ * loading, engine names), each engine with its kind and recipe file. For
+ * `webveil doctor`; throws what a search would throw.
+ */
+export async function describeSerpcastEngines(
+	config: Config,
+): Promise<EngineDescription[]> {
+	const s = settings(config);
+	const files = new Map<string, string>();
+	const recipes = await loadEngines(s, files);
+	return chain(s, recipes).map((engine): EngineDescription => {
+		if ('searchcast' in engine) {
+			const recipe = engine.name.slice(BROWSER.length);
+			const file = files.get(recipe);
+			return {
+				name: engine.name,
+				kind: 'browser',
+				...(s.searchcast?.mode !== 'endpoint' && file && {file}),
+			};
+		}
+		const kind = isCodeRecipe(engine) ? 'code' : 'declarative';
+		return {name: engine.name, kind, file: files.get(engine.name)!};
+	});
 }
 
 /** This backend's identity key (identity.ts): egress + resolved section. */
@@ -466,15 +569,21 @@ export async function clearSerpcastState(
 	const root = stateRoot(options.env ?? process.env, options.homeDir);
 	if (options.all) return clearState(root);
 	let key: string;
+	let s: SerpcastConfig;
 	try {
-		key = serpcastIdentityKey(resolveConfig(options));
+		const config = resolveConfig(options);
+		s = settings(config);
+		key = serpcastIdentityKey(config, s);
 	} catch (error) {
 		throw new Error(
 			`webveil: no serpcast identity to clear here (${(error as Error).message}); use --all to clear every identity`,
 			{cause: error},
 		);
 	}
-	return clearState(root, key);
+	return clearState(root, key, {
+		staleMs: s.state?.lockStaleMs,
+		waitMs: s.state?.lockWaitMs,
+	});
 }
 
 /** Close every cached instance (process shutdown; see registry closeBackends). */
@@ -502,7 +611,7 @@ export function trustedLibcurlPath(config: Config): string | undefined {
 export function impersonationFailure(error: SerpcastError): Error {
 	return new Error(
 		`serpcast: browser impersonation is not active (${error.message}). ` +
-			'Fix: run `npx serpcast install-libcurl`, or set serpcast.libcurlPath ' +
+			'Fix: run `webveil install-libcurl`, or set serpcast.libcurlPath ' +
 			'in the global config (or WEBVEIL_SERPCAST_LIBCURL_PATH) to a ' +
 			'libcurl-impersonate library.',
 		{cause: error},
@@ -577,17 +686,7 @@ export function createSerpcastBackend(
 			const s = settings(config);
 			const mode = browserMode(s);
 			assertBrowserEgress(config.egress, mode);
-			const recipes = await loadEngines(s);
-			const engines = s.engines!.map((name) => {
-				if (name.startsWith(BROWSER))
-					return browserEngine(name, recipes, s.searchcast);
-				const recipe = recipes.get(name);
-				if (recipe) return recipe;
-				throw new Error(
-					`serpcast: unknown engine '${name}' (loaded recipes: ` +
-						`${[...recipes.keys()].join(', ') || 'none'})`,
-				);
-			});
+			const engines = chain(s, await loadEngines(s));
 			const key = serpcastIdentityKey(config, s);
 			const partition = partitionDir(key);
 			const persist = mode === 'library' && !!s.searchcast?.persistProfile;
@@ -606,8 +705,28 @@ export function createSerpcastBackend(
 						libcurlPath: s.libcurlPath,
 						sessionIdleMs: num(s.sessionIdleMs),
 						cooldownMs: num(s.cooldownMs),
-						...(s.decoyGuard && {decoyGuard: s.decoyGuard}),
-						store: createStateStore(partition),
+						...pick(s, [
+							'timeoutMs',
+							'maxBodyBytes',
+							'reuseConnections',
+							'keepSessions',
+							'idlePollMs',
+							'maxRequestBodyBytes',
+							'preflightCache',
+							'maxPreflightAgeS',
+							'maxRedirects',
+							'decoyRule',
+							'decoyGuard',
+						]),
+						store:
+							s.state?.persist === false
+								? createMemoryStore()
+								: createStateStore(partition, {
+										lock: {
+											staleMs: s.state?.lockStaleMs,
+											waitMs: s.state?.lockWaitMs,
+										},
+									}),
 						...(browser && {searchcast: browser}),
 					});
 				instances.set(key, instance);

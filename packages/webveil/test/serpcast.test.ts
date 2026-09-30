@@ -258,7 +258,7 @@ describe('serpcast backend: search through the core', () => {
 		});
 		const error = await searchWith(create).catch((e: Error) => e);
 		expect(error.message).toMatch(/impersonation is not active \(not found\)/);
-		expect(error.message).toMatch(/npx serpcast install-libcurl/);
+		expect(error.message).toMatch(/webveil install-libcurl/);
 		expect(error.message).toMatch(/serpcast\.libcurlPath/);
 		expect(error.message).toMatch(/WEBVEIL_SERPCAST_LIBCURL_PATH/);
 	});

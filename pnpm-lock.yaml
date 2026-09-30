@@ -58,8 +58,8 @@ importers:
         specifier: 0.4.10
         version: 0.4.10
       serpcast:
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.6.0
+        version: 0.6.0
       serpcast-recipe:
         specifier: ^0.2.0
         version: 0.2.0
@@ -1440,8 +1440,8 @@ packages:
   serpcast-recipe@0.2.0:
     resolution: {integrity: sha512-ngDFQkUYNfBp05xsU/bpTiCrM0I6EF+e5HQX2Eb2OB1w8qysCfp//lzkgATMEfqTpfej6B70sbpmc0EGpD5z1A==}
 
-  serpcast@0.5.0:
-    resolution: {integrity: sha512-/UgUdIbZW992/owB8tsvcFKeSuPgJEBpiah9HuRUY9jevhJX9tMyCUBIe3gvmfM8DW5XC17/seLy09UpJNtETQ==}
+  serpcast@0.6.0:
+    resolution: {integrity: sha512-xt5Y/hxcAeUj1qFBH41bGoJ1+aeaN3jd2J4NNpkSQ36NsFJyL9XehQLa9tqARSVHqqfYYxVilclr2Bb2dpOeXA==}
     hasBin: true
     peerDependencies:
       searchcast: '>=0.1.1'
@@ -3222,7 +3222,7 @@ snapshots:
 
   serpcast-recipe@0.2.0: {}
 
-  serpcast@0.5.0:
+  serpcast@0.6.0:
     dependencies:
       css-select: 7.0.0
       domhandler: 6.0.1

@@ -67,6 +67,17 @@
 //   and counts as idle. Alternative considered: the profile directory's own
 //   mtime, rejected because Chromium rewrites files inside it without
 //   necessarily touching the directory entry, so it is no use-clock.
+//
+// Recorded decisions (task webveil-installs-and-tunables; keys: config.ts
+// `serpcast.state`, rules: tunables.ts):
+// - LOCK_STALE_MS and LOCK_WAIT_MS are the defaults of `serpcast.state.
+//   lockStaleMs` and `lockWaitMs`, handed to `createStateStore` (and so to
+//   `withLock`) by the backend. `webveil state clear` uses the current
+//   identity's values; `--all` has no single identity, so it uses the
+//   defaults.
+// - `serpcast.state.persist: false` is not handled here: the backend then
+//   hands serpcast its in-memory store and this module is never called for
+//   that identity (backends/serpcast.ts).
 
 import {randomBytes} from 'node:crypto';
 import {
@@ -126,6 +137,14 @@ async function ensureDir(dir: string): Promise<void> {
 	await chmod(dir, 0o700);
 }
 
+/** The lock's timing (`serpcast.state.lockStaleMs`/`lockWaitMs`). */
+export interface LockTiming {
+	/** A lock older than this is broken. Default LOCK_STALE_MS (10 s). */
+	staleMs?: number;
+	/** Waiting longer than this is an error. Default LOCK_WAIT_MS (30 s). */
+	waitMs?: number;
+}
+
 /** Test seams of `withLock`, to force an interleaving; nothing else sets them. */
 export interface LockHooks {
 	/** Awaited after judging the lock stale, before breaking it. */
@@ -172,6 +191,7 @@ export async function withLock<T>(
 	dir: string,
 	fn: () => Promise<T>,
 	hooks: LockHooks = {},
+	{staleMs = LOCK_STALE_MS, waitMs = LOCK_WAIT_MS}: LockTiming = {},
 ): Promise<T> {
 	const lock = join(dir, LOCK_FILE);
 	const own = `${process.pid}-${randomBytes(8).toString('hex')}`;
@@ -179,7 +199,7 @@ export async function withLock<T>(
 	const start = Date.now();
 	try {
 		for (;;) {
-			if (Date.now() - start > LOCK_WAIT_MS)
+			if (Date.now() - start > waitMs)
 				throw new Error(`webveil: state lock ${lock} held too long`);
 			await ensureDir(dir);
 			await mkdir(next, {recursive: true, mode: 0o700});
@@ -203,7 +223,7 @@ export async function withLock<T>(
 					(s) => Date.now() - s.mtimeMs,
 					() => 0,
 				);
-				if (age > LOCK_STALE_MS) {
+				if (age > staleMs) {
 					await hooks.onStale?.();
 					await unlink(lock).catch(() => {});
 					continue;
@@ -218,7 +238,7 @@ export async function withLock<T>(
 					(s) => Date.now() - s.mtimeMs,
 					() => 0,
 				);
-				if (age > LOCK_STALE_MS) {
+				if (age > staleMs) {
 					await hooks.onStale?.();
 					await release(lock, token, own);
 					continue;
@@ -262,6 +282,8 @@ async function save(file: string, entries: Entries): Promise<void> {
 export interface StateStoreOptions {
 	/** The clock expiry is measured with, in ms since the epoch. */
 	now?: () => number;
+	/** The partition lock's timing. */
+	lock?: LockTiming;
 }
 
 /** serpcast's `StateStore` over the partition directory `dir`. */
@@ -274,13 +296,18 @@ export function createStateStore(
 	const expired = (e: Entry) => e.expires !== undefined && e.expires <= now();
 	/** Load under the lock, drop expired entries, apply `change`, save. */
 	const update = (change: (entries: Entries) => boolean) =>
-		withLock(dir, async () => {
-			const entries = await load(file);
-			let dirty = false;
-			for (const [key, e] of Object.entries(entries))
-				if (expired(e)) dirty = delete entries[key];
-			if (change(entries) || dirty) await save(file, entries);
-		});
+		withLock(
+			dir,
+			async () => {
+				const entries = await load(file);
+				let dirty = false;
+				for (const [key, e] of Object.entries(entries))
+					if (expired(e)) dirty = delete entries[key];
+				if (change(entries) || dirty) await save(file, entries);
+			},
+			{},
+			options.lock,
+		);
 	return {
 		async get(key) {
 			const entry = (await load(file))[key];
@@ -348,6 +375,7 @@ export async function touchProfile(
 export async function clearState(
 	root: string,
 	identity?: string,
+	lock: LockTiming = {},
 ): Promise<string[]> {
 	const ids =
 		identity !== undefined
@@ -357,7 +385,12 @@ export async function clearState(
 	for (const id of ids) {
 		const dir = partitionDir(id, root);
 		if (!(await stat(dir).catch(() => undefined))) continue;
-		await withLock(dir, () => rm(dir, {recursive: true, force: true}));
+		await withLock(
+			dir,
+			() => rm(dir, {recursive: true, force: true}),
+			{},
+			lock,
+		);
 		cleared.push(id);
 	}
 	return cleared;

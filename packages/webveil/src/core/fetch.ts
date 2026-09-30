@@ -18,6 +18,8 @@ import {createEgressFetch as defaultCreateEgressFetch} from './egress.js';
 import type {EgressFetch} from './egress.js';
 import {guardEgressFetch as defaultGuardEgressFetch} from './security.js';
 import {createHttp as defaultCreateHttp} from './http.js';
+import type {HttpHelperOptions} from './http.js';
+import {httpTimeoutMs} from './tunables.js';
 import {
 	buildDispatcher as defaultBuildDispatcher,
 	fetchEgressConfig as defaultFetchEgressConfig,
@@ -48,7 +50,10 @@ export interface FetchDeps {
 	resolveConfig?: (options?: ResolveOptions) => Config;
 	getBackend?: (name: string, config: Config) => Backend;
 	buildDispatcher?: (config: Config) => Dispatcher | undefined;
-	createHttp?: (dispatcher: Dispatcher | undefined) => Http;
+	createHttp?: (
+		dispatcher: Dispatcher | undefined,
+		helper?: HttpHelperOptions,
+	) => Http;
 	createEgressFetch?: (config: Config) => EgressFetch;
 	guardEgressFetch?: (fetch: EgressFetch, config: Config) => EgressFetch;
 	/** Builds the `fetchTransport: serpcast` fetch (per-hop SSRF inside). */
@@ -112,7 +117,9 @@ export async function fetchAll(
 		// A backend's own /extract is the SAME hop as its /search (it reaches the
 		// backend baseUrl, e.g. a remote Tavily-compat host), so it uses the BACKEND
 		// egress, NOT the fetch-hop egress.
-		const http = createHttp(buildDispatcher(config));
+		const http = createHttp(buildDispatcher(config), {
+			timeoutMs: httpTimeoutMs(config),
+		});
 		const backendFetch = backend.fetch.bind(backend);
 		return runAll(urls, (url) =>
 			backendFetch(url, http, {size: options.size, signal: options.signal}),

@@ -49,6 +49,36 @@
 // - Exit code 2 with error codes `ROUTE_REQUIRED` and `CONFLICTING_OPTIONS`,
 //   the convention for a usage error; the other failures keep exit 1.
 //   `doctor --remote` is unchanged: it already goes through the egress.
+//
+// Recorded decisions (task install-egress-flag, owner request 2026-09-30):
+// `--egress` is a third explicit route: download through the egress webveil
+// already has configured, resolved as `search` resolves it (cwd, project,
+// global, env) and mapped as for serpcast (`serpcastProxy`: SOCKS as
+// `socks5h://`, `http` as is), credentials USED but never printed (progress
+// and errors show the redacted form). It stays explicit: the refusal above
+// still happens without a flag, and now offers `--egress` first (the likely
+// intent; unlike the pasted `--proxy` suggestion it keeps the credentials).
+// - Which hop (`egressRoute`): the backend-hop `egress` when it is a proxy;
+//   else a proxy `fetchEgress` (then the only proxied hop). When both are
+//   proxies and differ, `egress` wins and the progress line names the unused
+//   `fetchEgress`. Alternatives considered: the fetch hop first (downloads are
+//   plain GETs, like `web_fetch`), or refusing the ambiguous case. Rejected:
+//   `egress` is THE egress of the config (fetchEgress is its per-hop
+//   override, docs/adr/0003), so it is what "the configured egress" names,
+//   and `--proxy <url>` remains for the other hop. Note `doctor --remote`
+//   picks its hop by the backend instead (it checks the library's hop); a
+//   download uses no library, so that rule does not apply here.
+// - Every hop direct: `--egress` is a plain direct download, announced on the
+//   progress sink, not an error (the user asked for "whatever my egress is").
+// - Not buildable (`downloadProxy`): an egress URL `serpcastProxy` rejects, or
+//   an `https://` http proxy (serpcast accepts it for search, but its
+//   downloader takes only http://, socks5:// and socks5h://), fails loud
+//   before any request with an `EgressError` (exit 1, like a `search` whose
+//   egress cannot be built), never a silent fallback to direct.
+// - `--egress` with `--proxy` or `--direct` is `CONFLICTING_OPTIONS` (exit 2).
+//   A local file for `install-recipes`: `--egress` is accepted and ignored,
+//   like `--direct`, and the config is not resolved.
+//
 // - No `--dir` for `install-recipes`: webveil resolves `set:<name>` in
 //   serpcast's recipes directory only (backends/serpcast.ts), so a set
 //   installed elsewhere could not be named. The plain serpcast CLI still has
@@ -73,7 +103,7 @@ import {join} from 'node:path';
 import type {DoctorReport, RecipeSet} from 'serpcast/install';
 import {resolveConfig as realResolveConfig} from './core/config.js';
 import type {Config, Egress, ResolveOptions} from './core/config.js';
-import {fetchEgressConfig} from './core/egress.js';
+import {EgressError, fetchEgressConfig} from './core/egress.js';
 import {resolveFetchTransport} from './core/fetch-transport.js';
 import {
 	describeSerpcastEngines,
@@ -99,10 +129,11 @@ export interface SetupDeps {
 
 const stderr = (line: string) => void process.stderr.write(`${line}\n`);
 
-/** How a download leaves: `--proxy <url>`, or `--direct`. */
+/** How a download leaves: `--proxy <url>`, `--direct`, or `--egress`. */
 export interface RouteOptions {
 	proxy?: string;
 	direct?: boolean;
+	egress?: boolean;
 }
 
 /**
@@ -131,37 +162,118 @@ function suggestedProxy(egress: Egress): string {
 	return redactUrl(proxy);
 }
 
-/** `--proxy` with `--direct` is a usage error, whatever the egress. */
+/** Two of `--proxy`, `--direct`, `--egress` is a usage error, whatever the egress. */
 function assertOneRoute(command: string, options: RouteOptions): void {
-	if (options.proxy && options.direct)
+	const given = [
+		options.egress && '--egress',
+		options.proxy && '--proxy',
+		options.direct && '--direct',
+	].filter(Boolean);
+	if (given.length > 1)
 		throw new UsageError(
 			'CONFLICTING_OPTIONS',
-			`webveil ${command}: --proxy and --direct are mutually exclusive; ` +
+			`webveil ${command}: ${given.join(' and ')} are mutually exclusive ` +
+				'(--egress, --proxy <url> and --direct each choose the route); ' +
 				'give one of them.',
 		);
+}
+
+/** A URL with any `user:password@` replaced by `***@`, parsable or not. */
+const redactAny = (url: string) => url.replace(/\/\/[^@/]*@/, '//***@');
+
+/** The config's proxied hops, backend hop first. */
+function proxiedHops(config: Config) {
+	return [
+		{name: 'egress', egress: config.egress},
+		...(config.fetchEgress
+			? [{name: 'fetchEgress', egress: config.fetchEgress}]
+			: []),
+	].filter((hop) => hop.egress.mode !== 'direct');
+}
+
+/**
+ * A hop's proxy as serpcast's downloader takes it (credentials kept), or an
+ * `EgressError` (credentials redacted) when it cannot be built.
+ */
+function downloadProxy(name: string, egress: Egress): string {
+	let proxy: string | undefined;
+	try {
+		proxy = serpcastProxy(egress);
+	} catch {
+		throw new EgressError(
+			`${name} ${egress.mode}: invalid proxy url ` +
+				`'${redactAny(egress.mode === 'direct' ? '' : (egress.url ?? ''))}'. ` +
+				'Nothing was downloaded.',
+		);
+	}
+	if (!proxy || !/^(http|socks5h):\/\//i.test(proxy))
+		throw new EgressError(
+			`${name} ${egress.mode}: the download cannot go through ` +
+				`'${redactAny(proxy ?? '')}' (the downloader takes http://, ` +
+				'socks5:// or socks5h:// proxies). Give --proxy <url> or --direct ' +
+				'instead. Nothing was downloaded.',
+		);
+	return proxy;
+}
+
+/** A hop's mapped proxy for comparison, or its raw url when unbuildable. */
+function mappedOrRaw(egress: Egress): string {
+	try {
+		return serpcastProxy(egress) ?? '';
+	} catch {
+		return egress.mode === 'direct' ? '' : (egress.url ?? '');
+	}
+}
+
+/**
+ * The `--egress` route: the proxy of the configured egress hop (undefined:
+ * every hop is direct), with the progress line saying which hop it is.
+ */
+export function egressRoute(
+	command: string,
+	config: Config,
+): {proxy?: string; line: string} {
+	const hops = proxiedHops(config);
+	const prefix = `webveil ${command} --egress:`;
+	if (hops.length === 0)
+		return {
+			line:
+				`${prefix} every configured egress hop is direct, so the download ` +
+				"is direct, from this machine's own IP",
+		};
+	const [hop, other] = hops as [(typeof hops)[0], (typeof hops)[0]?];
+	const proxy = downloadProxy(hop.name, hop.egress);
+	let line = `${prefix} downloading through ${hop.name} (${redactUrl(proxy)})`;
+	if (other && mappedOrRaw(other.egress) !== proxy)
+		line +=
+			`; ${other.name} (${redactAny(mappedOrRaw(other.egress))}) differs and ` +
+			'is not used (give --proxy <url> for it)';
+	return {proxy, line};
 }
 
 /**
  * The proxy a download goes through (undefined: direct), or a `UsageError`
  * when the route is not explicit although the configured egress is not
  * direct (see the recorded decisions above). `config` is only called when
- * neither flag is given.
+ * neither `--proxy` nor `--direct` is given; `--egress` reports its route on
+ * `log`.
  */
 export function downloadRoute(
 	command: string,
 	options: RouteOptions,
 	config: () => Config,
+	log: (line: string) => void = () => {},
 ): string | undefined {
 	assertOneRoute(command, options);
 	if (options.proxy) return options.proxy;
 	if (options.direct) return undefined;
 	const resolved = config();
-	const hops = [
-		{name: 'egress', egress: resolved.egress},
-		...(resolved.fetchEgress
-			? [{name: 'fetchEgress', egress: resolved.fetchEgress}]
-			: []),
-	].filter((hop) => hop.egress.mode !== 'direct');
+	if (options.egress) {
+		const {proxy, line} = egressRoute(command, resolved);
+		log(line);
+		return proxy;
+	}
+	const hops = proxiedHops(resolved);
 	if (hops.length === 0) return undefined;
 	// One `--proxy` line per distinct proxy, naming the hops that use it.
 	const proxies = new Map<string, string[]>();
@@ -176,6 +288,7 @@ export function downloadRoute(
 			`(${hops.map((hop) => `${hop.name}: ${describeEgress(hop.egress)}`).join(', ')}), ` +
 			"so the download needs an explicit route: without one it would leave from this machine's " +
 			'own IP, telling the host that this IP installed it. Nothing was downloaded. Run it again with one of:\n' +
+			`  --egress   through the configured ${hops[0]!.name} (its credentials included)\n` +
 			[...proxies]
 				.map(
 					([p, names]) => `  --proxy ${p}   through ${names.join(' and ')}\n`,
@@ -188,8 +301,11 @@ export function downloadRoute(
 
 /** The route for `command`, resolving the config only when it is needed. */
 function route(command: string, options: RouteOptions, deps: SetupDeps) {
-	return downloadRoute(command, options, () =>
-		(deps.resolveConfig ?? realResolveConfig)(),
+	return downloadRoute(
+		command,
+		options,
+		() => (deps.resolveConfig ?? realResolveConfig)(),
+		deps.log ?? stderr,
 	);
 }
 
@@ -216,8 +332,9 @@ export async function installRecipes(
 	options: {sha256: string; name?: string; force?: boolean} & RouteOptions,
 	deps: SetupDeps = {},
 ) {
-	// A local file makes no request: no route to require (and `--proxy` stays
-	// serpcast's own error for a file), but conflicting flags are still refused.
+	// A local file makes no request: no route to require (`--direct` and
+	// `--egress` are ignored, `--proxy` stays serpcast's own error for a file),
+	// but conflicting flags are still refused.
 	const proxy = isDownload(source)
 		? route('install-recipes', options, deps)
 		: (assertOneRoute('install-recipes', options), options.proxy);

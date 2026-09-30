@@ -62,12 +62,17 @@ const PROXY_HELP =
 	'Download through this proxy (http://, socks5://, socks5h://; socks5h:// ' +
 	'resolves host names at the proxy, e.g. socks5h://127.0.0.1:9050 for Tor). ' +
 	'Never the configured egress by default: with a direct egress the download ' +
-	'is direct, with a proxy egress (egress or fetchEgress) give --proxy or ' +
-	'--direct, else it is refused (exit 2)';
+	'is direct, with a proxy egress (egress or fetchEgress) give --egress, ' +
+	'--proxy or --direct, else it is refused (exit 2)';
 
 const DIRECT_HELP =
-	"Download from this machine's own IP. Required (or --proxy) when the " +
-	'configured egress or fetchEgress is a proxy';
+	"Download from this machine's own IP. Required (or --egress or --proxy) " +
+	'when the configured egress or fetchEgress is a proxy';
+
+const EGRESS_HELP =
+	'Download through the configured egress, resolved as for search (egress, ' +
+	'else fetchEgress when only that one is a proxy; SOCKS as socks5h://), ' +
+	'credentials included but never printed. Direct when every hop is direct';
 
 /** Run an install command, turning a `UsageError` into an exit-2 error. */
 async function withUsage<T>(
@@ -176,6 +181,7 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 				"install it in serpcast's data directory (~/.local/share/serpcast), " +
 				'where webveil finds it. Runs only when you type it.',
 			options: z.object({
+				egress: z.boolean().optional().describe(EGRESS_HELP),
 				proxy: z.string().optional().describe(PROXY_HELP),
 				direct: z.boolean().optional().describe(DIRECT_HELP),
 				force: z
@@ -202,6 +208,10 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 					.string()
 					.optional()
 					.describe("The set's name (default: the archive's manifest name)"),
+				egress: z
+					.boolean()
+					.optional()
+					.describe(`${EGRESS_HELP}. Ignored for a local file`),
 				proxy: z.string().optional().describe(PROXY_HELP),
 				direct: z
 					.boolean()

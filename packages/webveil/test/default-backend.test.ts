@@ -25,6 +25,7 @@ import {fileURLToPath} from 'node:url';
 import {createSearchcast, SearchcastError} from 'searchcast';
 import type {
 	ChainTransport,
+	RequestOptions,
 	Searchcast,
 	SearchcastOptions,
 	Transport,
@@ -61,6 +62,8 @@ import {doctor} from '../src/setup.js';
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const MWMBL_API = 'https://api.mwmbl.org/api/v2/search/';
 const MARGINALIA_API = 'https://api.marginalia.nu';
+/** Marginalia's current API, called (with an `API-Key` header) only with a key. */
+const MARGINALIA_API2 = 'https://api2.marginalia-search.com';
 const MWMBL_RECIPE = join(pkgDir, 'recipes', 'mwmbl.mjs');
 const MARGINALIA_RECIPE = join(pkgDir, 'recipes', 'marginalia.mjs');
 /** What `describeSearchcastEngines` lists for the default chain. */
@@ -272,10 +275,12 @@ afterEach(async () => {
 });
 
 /**
- * Local fakes of both APIs on one server: Mwmbl's (`/mwmbl?q=<query>`,
- * results with `content`) and Marginalia's (`/marginalia/<key>/search/<query>`,
- * results with `description`), each answering 200 with results, or its given
- * status. Returns the base URL and the paths requested, in order.
+ * Local fakes of the APIs on one server: Mwmbl's (`/mwmbl?q=<query>`,
+ * results with `content`) and Marginalia's two, the URL-keyed one
+ * (`/marginalia/<key>/search/<query>`) and the current one
+ * (`/marginalia2/search?query=<query>`), both with results with `description`;
+ * each answers 200 with results, or its given status. Returns the base URL and
+ * the paths requested, in order.
  */
 async function fakeApis(status: {mwmbl?: number; marginalia?: number} = {}) {
 	const paths: string[] = [];
@@ -303,7 +308,9 @@ async function fakeApis(status: {mwmbl?: number; marginalia?: number} = {}) {
 			);
 			return;
 		}
-		const query = decodeURIComponent(path.split('/')[4] ?? '');
+		const query = path.startsWith('/marginalia2/')
+			? url.searchParams.get('query')
+			: decodeURIComponent(path.split('/')[4] ?? '');
 		res.end(
 			JSON.stringify({
 				results: [
@@ -323,19 +330,29 @@ async function fakeApis(status: {mwmbl?: number; marginalia?: number} = {}) {
 	return {base, paths};
 }
 
-/** A transport that sends both APIs' requests to the local fakes instead. */
-function redirectTo(base: string): ChainTransport {
+/**
+ * A transport that sends the APIs' requests to the local fakes instead. Each
+ * request (its real URL and the options the recipe gave: kind, referer,
+ * author headers) is recorded in `requests`, when given.
+ */
+function redirectTo(
+	base: string,
+	requests: {url: string; options: RequestOptions}[] = [],
+): ChainTransport {
 	const local = (url: string) => {
 		if (url.startsWith(MWMBL_API))
 			return `${base}/mwmbl${url.slice(MWMBL_API.length)}`;
 		if (url.startsWith(`${MARGINALIA_API}/`))
 			return `${base}/marginalia${url.slice(MARGINALIA_API.length)}`;
+		if (url.startsWith(`${MARGINALIA_API2}/`))
+			return `${base}/marginalia2${url.slice(MARGINALIA_API2.length)}`;
 		throw new Error(`unexpected request ${url}`);
 	};
 	return {
 		session(): TransportSession {
 			return {
-				async request(url: string) {
+				async request(url: string, options: RequestOptions) {
+					requests.push({url, options});
 					const r = await globalThis.fetch(local(url));
 					const text = await r.text();
 					return {
@@ -422,11 +439,35 @@ describe('a search through the default chain (local fake APIs, no network)', () 
 		});
 	}
 
-	it('uses MARGINALIA_API_KEY when set', async () => {
+	it('without MARGINALIA_API_KEY, Marginalia is the URL-keyed API, a document request with no author headers', async () => {
+		const api = await fakeApis({mwmbl: 429});
+		const requests: {url: string; options: RequestOptions}[] = [];
+		await searchFresh(redirectTo(api.base, requests));
+		expect(requests.at(-1)?.url).toBe(
+			`${MARGINALIA_API}/public/search/hello%20world`,
+		);
+		expect(requests.at(-1)?.options.kind).toBe('document');
+		expect(requests.at(-1)?.options.headers).toBeUndefined();
+	});
+
+	it('with MARGINALIA_API_KEY, Marginalia is the current API with the key in an API-Key header, never in the URL', async () => {
 		process.env.MARGINALIA_API_KEY = 'my key';
 		const api = await fakeApis({mwmbl: 429});
-		await searchFresh(redirectTo(api.base));
-		expect(api.paths.at(-1)).toBe('/marginalia/my%20key/search/hello%20world');
+		const requests: {url: string; options: RequestOptions}[] = [];
+		const results = await searchFresh(redirectTo(api.base, requests));
+		expect(results).toEqual(
+			MARGINALIA_RESULTS.map((r) => ({...r, unresponsiveEngines: ['mwmbl']})),
+		);
+		expect(api.paths.at(-1)).toBe('/marginalia2/search?query=hello%20world');
+		expect(requests.at(-1)).toEqual({
+			url: `${MARGINALIA_API2}/search?query=hello%20world`,
+			options: expect.objectContaining({
+				kind: 'fetch',
+				referer: `${MARGINALIA_API2}/`,
+				headers: {'api-key': 'my key'},
+			}),
+		});
+		expect(requests.at(-1)?.url).not.toContain('my');
 	});
 
 	it('a failed search names both engines, and says the default changed and how to restore SearXNG', async () => {

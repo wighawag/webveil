@@ -1,43 +1,62 @@
 // An example searchcast code recipe for Marginalia Search (https://marginalia-search.com),
 // an independent web search engine whose API is meant for programs:
-// https://about.marginalia-search.com/article/api/ (read 2026-09-29).
+// https://about.marginalia-search.com/article/api/ (read 2026-09-29; the current API
+// again 2026-09-30).
 //
 // Terms, in short: the key `public` is for experimentation and its rate limit
 // is shared by everyone who uses it (HTTP 503 when hit); ask for a free
 // personal key (non-commercial) for regular use and set it in
 // MARGINALIA_API_KEY. Results are provided under CC-BY-NC-SA 4.0.
 //
-// It uses the URL-keyed API (`api.marginalia.nu/<key>/search/<query>`), which
-// Marginalia documents as deprecated but working "as long as the project
-// does". The current API (`api2.marginalia-search.com`) takes the key in an
-// `API-Key` header, and searchcast's transport sends only Chrome's header table.
-// The key is part of the URL, so it appears in searchcast's error messages
-// (they name the URL): keep that in mind when you log failures.
+// With MARGINALIA_API_KEY set, it calls the current API
+// (`api2.marginalia-search.com/search?query=<query>`) with the key in an
+// `API-Key` header, sent as a page's script would send it: a `fetch` request
+// with an author header. The page it comes from is the API's own origin, so
+// the request is same-origin and Chrome would send no CORS preflight (the API
+// need not answer one). Without a key, it uses the URL-keyed API
+// (`api.marginalia.nu/public/search/<query>`) with the shared `public` key, as
+// before; Marginalia documents that API as deprecated but working "as long as
+// the project does". There the key is part of the URL, so it appears in
+// searchcast's error messages (they name the URL); a personal key never does,
+// since it travels in the header.
 //
 // Bundled with webveil as the second engine of the default chain
 // (`["mwmbl", "marginalia"]`, used when no engines, recipes or code recipes
 // are configured; owner-approved on 2026-09-29 and 2026-09-30). Source: a copy
 // of searchcast's examples/recipes/marginalia.mjs at commit
-// 7b0dbde7daf7b50cf99f6b7846b75e34db18602f
-// (https://github.com/wighawag/searchcast/blob/7b0dbde7daf7b50cf99f6b7846b75e34db18602f/examples/recipes/marginalia.mjs).
+// 701584826ee5d50177c8df667329f27e949fd4aa
+// (https://github.com/wighawag/searchcast/blob/701584826ee5d50177c8df667329f27e949fd4aa/examples/recipes/marginalia.mjs),
+// which needs searchcast 0.3 (author headers on a `fetch` request).
 // It is trusted because it ships in the webveil package, not because of any
 // config layer: a project webveil.json still cannot add code recipes.
 
-const API = 'https://api.marginalia.nu';
+const API = 'https://api2.marginalia-search.com';
+const OLD_API = 'https://api.marginalia.nu';
 
 export default {
 	name: 'marginalia',
 	async search(query, ctx) {
-		const key = process.env.MARGINALIA_API_KEY || 'public';
-		let url = `${API}/${encodeURIComponent(key)}/search/${encodeURIComponent(query)}`;
-		if (ctx.maxResults !== undefined) {
-			// The API takes 1 to 100 results.
-			const count = Math.min(100, Math.max(1, Math.floor(ctx.maxResults)));
-			url += `?count=${count}`;
-		}
+		const key = process.env.MARGINALIA_API_KEY;
+		// Both APIs take 1 to 100 results.
+		const count =
+			ctx.maxResults === undefined
+				? undefined
+				: Math.min(100, Math.max(1, Math.floor(ctx.maxResults)));
 		let data;
 		try {
-			data = await ctx.http.json(url, {kind: 'document'});
+			if (key) {
+				let url = `${API}/search?query=${encodeURIComponent(query)}`;
+				if (count !== undefined) url += `&count=${count}`;
+				data = await ctx.http.json(url, {
+					kind: 'fetch',
+					referer: `${API}/`,
+					headers: {'API-Key': key},
+				});
+			} else {
+				let url = `${OLD_API}/public/search/${encodeURIComponent(query)}`;
+				if (count !== undefined) url += `?count=${count}`;
+				data = await ctx.http.json(url, {kind: 'document'});
+			}
 		} catch (error) {
 			// ctx.http maps 429 to `blocked` already; a 503 (a `transport` error
 			// there) is how this API reports its rate limit, so it is `blocked` too

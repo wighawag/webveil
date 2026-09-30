@@ -1,5 +1,44 @@
 # pi-webveil
 
+## 0.6.0
+
+### Minor Changes
+
+- b0a39b5: The default backend is searchcast with a bundled Marginalia chain; set `backend: "searxng"` for the previous default. `npm install -g webveil` (or `pi install npm:pi-webveil`) is now the whole setup: search works with no service to run, no account and nothing else to install, still on `direct` egress.
+
+  - **The default chain.** When you configure no `searchcast.engines`, `recipes` or `codeRecipes`, the chain is `["marginalia"]`, from a code recipe shipped in the webveil package (`recipes/marginalia.mjs`, a copy of searchcast's example). It queries the Marginalia Search API, which is meant for programs, with the shared `public` key, which is rate limited for everyone who uses it: for regular use ask Marginalia for a free personal key (non-commercial) and set `MARGINALIA_API_KEY`. Its results are provided under CC-BY-NC-SA 4.0. Any engines, recipes or code recipes you configure replace the default chain entirely.
+  - **No trust rule changes.** The bundled recipe is trusted because it ships in the package; a project `webveil.json` still cannot add code recipes.
+  - **`web_fetch` now defaults to the impersonated transport** (`fetchTransport` follows the backend). Where libcurl-impersonate is not available, search and fetch fail with the fix (`webveil install-libcurl`, or `"fetchTransport": "plain"` for fetch), never a silent fallback to Node's TLS fingerprint.
+  - **Upgrading from the SearXNG default.** webveil does not probe for a local SearXNG. While the backend is the built-in default, a failed search and `webveil doctor` (a `defaultBackend` notice) say that the default changed and that `"backend": "searxng"` restores it; `baseUrl` still defaults to `http://127.0.0.1:8080`.
+  - **`webveil state clear`** in a folder with no searchcast settings now clears the default chain's identity instead of refusing.
+
+- f96377d: webveil speaks of searchcast: the `serpcast` backend is now `searchcast`, and so are its config section, `fetchTransport` value and environment variables (serpcast was renamed searchcast). Your 0.10 config keeps working for one release: every old spelling is accepted exactly like the new one, with one warning naming the new spelling, and is removed in the next minor.
+
+  | old                                                    | new                            |
+  | ------------------------------------------------------ | ------------------------------ |
+  | `backend: "serpcast"`                                  | `backend: "searchcast"`        |
+  | config section `serpcast.*`                            | `searchcast.*`                 |
+  | `serpcast.searchcast.*` (the browser runner's options) | `searchcast.browser.*`         |
+  | `fetchTransport: "serpcast"`                           | `fetchTransport: "searchcast"` |
+  | `fetchSerpcast.*`                                      | `fetchSearchcast.*`            |
+  | `WEBVEIL_SERPCAST_*`                                   | `WEBVEIL_SEARCHCAST_*`         |
+  | `WEBVEIL_SERPCAST_SEARCHCAST_*`                        | `WEBVEIL_SEARCHCAST_BROWSER_*` |
+  | `WEBVEIL_FETCH_SERPCAST_*`                             | `WEBVEIL_FETCH_SEARCHCAST_*`   |
+  | `WEBVEIL_BACKEND=serpcast`                             | `WEBVEIL_BACKEND=searchcast`   |
+  - **Warnings**: on stderr for the CLI and the MCP server, once per process; in pi-webveil, once per session as a pi notification and at the end of the tool result; in `webveil doctor`, as `deprecations` (doctor stays healthy).
+  - **Both spellings of one setting in one place is an error** naming both (for example `serpcast.engines` and `searchcast.engines` in one file); across files and env the usual precedence applies.
+  - **Trust is unchanged**: a project `webveil.json` cannot set `serpcast.codeRecipes`, `serpcast.libcurlPath` or `serpcast.searchcast.chrome` any more than their new names.
+  - **No state reset**: a config's identity key (its state directory and browser profile) is the same in either spelling, and unchanged by the rename.
+  - **Library API**: the exports follow the new name without aliases (`createSearchcastBackend`, `searchcastIdentityKey`, `searchcastProxy`, `clearSearchcastState`, `createSearchcastFetch`, the types `SearchcastConfig` (the section), `BrowserConfig` (was `SearchcastConfig`, the browser options), `FetchSearchcastConfig`, `SearchcastDeps` with the seams `createSearchcast` and `importBrowser`, `SearchcastFetchDeps`). New: `configDeprecations`, `reportDeprecations`, and an `onWarning` option on `search` and `fetch`.
+  - **pi-webveil** surfaces the warnings (see above) instead of letting them reach pi's terminal.
+
+### Patch Changes
+
+- Updated dependencies [b0a39b5]
+- Updated dependencies [69c6e66]
+- Updated dependencies [f96377d]
+  - webveil@0.11.0
+
 ## 0.5.6
 
 ### Patch Changes

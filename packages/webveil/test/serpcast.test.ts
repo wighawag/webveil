@@ -21,8 +21,8 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {Cli as IncurCli, Mcp} from 'incur';
-import {createSerpcast, SerpcastError} from 'serpcast';
-import type {Serpcast, SerpcastOptions, TransportSession} from 'serpcast';
+import {createSearchcast, SearchcastError} from 'searchcast';
+import type {Searchcast, SearchcastOptions, TransportSession} from 'searchcast';
 import {
 	clearSerpcastState,
 	closeSerpcastInstances,
@@ -136,12 +136,12 @@ function fakeTransport(behaviour: Behaviour, requests: string[]) {
 
 /** A createSerpcast using real serpcast over the fake transport; records options. */
 function fakeFactory(behaviour: Behaviour = {}) {
-	const built: SerpcastOptions[] = [];
+	const built: SearchcastOptions[] = [];
 	const requests: string[] = [];
 	const closed: number[] = [];
-	const create = (options: SerpcastOptions): Serpcast => {
+	const create = (options: SearchcastOptions): Searchcast => {
 		built.push(options);
-		const real = createSerpcast({
+		const real = createSearchcast({
 			...options,
 			transport: fakeTransport(behaviour, requests),
 		});
@@ -163,7 +163,7 @@ function writeProject(value: Record<string, unknown>): void {
 }
 
 function searchWith(
-	create: (o: SerpcastOptions) => Serpcast,
+	create: (o: SearchcastOptions) => Searchcast,
 	env: Record<string, string> = {},
 	query = 'webveil',
 ) {
@@ -250,9 +250,9 @@ describe('serpcast backend: search through the core', () => {
 
 	it('turns an impersonation error into one carrying the fix', async () => {
 		writeProject({});
-		const create = (): Serpcast => ({
+		const create = (): Searchcast => ({
 			search: () =>
-				Promise.reject(new SerpcastError('impersonation', 'not found')),
+				Promise.reject(new SearchcastError('impersonation', 'not found')),
 			clearSessions: async () => {},
 			close: async () => {},
 		});
@@ -759,7 +759,7 @@ describe('serpcast backend: installed recipe sets (set:<name>)', () => {
 
 	/**
 	 * Build a set archive (a code recipe `gamma`, a declarative recipe `web`,
-	 * a manifest) and install it with serpcast's own `install-recipes` CLI
+	 * a manifest) and install it with searchcast's own `install-recipes` CLI
 	 * into the temp XDG_DATA_HOME. Returns the code recipe's import marker.
 	 */
 	function installSet(name = 'myset'): string {
@@ -788,7 +788,7 @@ export default {
 			.update(readFileSync(archive))
 			.digest('hex');
 		const cli = join(
-			dirname(fileURLToPath(import.meta.resolve('serpcast'))),
+			dirname(fileURLToPath(import.meta.resolve('searchcast'))),
 			'cli.js',
 		);
 		const install = spawnSync(
@@ -798,12 +798,12 @@ export default {
 		);
 		expect(install.status, install.stderr).toBe(0);
 		expect(install.stdout.trim()).toBe(
-			join(root, 'data', 'serpcast', 'recipes', name),
+			join(root, 'data', 'searchcast', 'recipes', name),
 		);
 		return marker;
 	}
 
-	it('loads a set installed by serpcast install-recipes from the global config, code and declarative', async () => {
+	it('loads a set installed by searchcast install-recipes from the global config, code and declarative', async () => {
 		const marker = installSet();
 		writeJson(globalPath, {
 			serpcast: {codeRecipes: ['set:myset'], recipes: ['set:myset']},
@@ -824,7 +824,7 @@ export default {
 		installSet();
 		for (const entry of [
 			'set:myset',
-			join(root, 'data', 'serpcast', 'recipes', 'myset'),
+			join(root, 'data', 'searchcast', 'recipes', 'myset'),
 		]) {
 			writeJson(join(project, 'webveil.json'), {
 				backend: 'serpcast',
@@ -837,7 +837,7 @@ export default {
 	});
 
 	it('treats a set placed without install (no .source.json, as home-manager does) the same way', async () => {
-		const dir = join(root, 'data', 'serpcast', 'recipes', 'placed');
+		const dir = join(root, 'data', 'searchcast', 'recipes', 'placed');
 		writeRecipe(join(dir, 'web.json'), 'web');
 		writeJson(join(dir, 'manifest.json'), {name: 'placed', version: '1'});
 		writeJson(join(project, 'webveil.json'), {
@@ -846,6 +846,55 @@ export default {
 		});
 		const results = await searchWith(fakeFactory().create);
 		expect(results[0]!.url).toBe('https://web.example/hit');
+	});
+
+	it("still finds a set in serpcast's old data directory, by set: or by path, without its manifest.json", async () => {
+		const old = join(root, 'data', 'serpcast', 'recipes', 'legacy');
+		writeRecipe(join(old, 'web.json'), 'web');
+		writeJson(join(old, 'manifest.json'), {name: 'legacy', version: '1'});
+		for (const entry of ['set:legacy', old]) {
+			writeJson(join(project, 'webveil.json'), {
+				backend: 'serpcast',
+				serpcast: {engines: ['web'], recipes: [entry]},
+			});
+			const results = await searchWith(fakeFactory().create);
+			expect(results[0]!.url).toBe('https://web.example/hit');
+			await closeSerpcastInstances();
+		}
+		expect(existsSync(join(root, 'data', 'searchcast'))).toBe(false);
+	});
+
+	it("keeps the identity key of a set still in serpcast's old directory (the same resolved path as before)", () => {
+		const old = join(root, 'data', 'serpcast', 'recipes', 'legacy');
+		writeRecipe(join(old, 'web.json'), 'web');
+		const key = (recipes: string[]) =>
+			serpcastIdentityKey({
+				...resolveConfig({cwd, globalPath, env: {}}),
+				serpcast: {engines: ['web'], recipes},
+			});
+		// serpcast resolved `set:legacy` to this path, so the key is unchanged.
+		expect(key(['set:legacy'])).toBe(key([old]));
+	});
+
+	it('prefers a set in the new data directory over one of the same name in the old one', async () => {
+		const old = join(root, 'data', 'serpcast', 'recipes', 'both');
+		writeRecipe(join(old, 'old.json'), 'old');
+		const cur = join(root, 'data', 'searchcast', 'recipes', 'both');
+		writeRecipe(join(cur, 'web.json'), 'web');
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['web'], recipes: ['set:both']},
+		});
+		const results = await searchWith(fakeFactory().create);
+		expect(results[0]!.url).toBe('https://web.example/hit');
+		await closeSerpcastInstances();
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'serpcast',
+			serpcast: {engines: ['old'], recipes: ['set:both']},
+		});
+		await expect(searchWith(fakeFactory().create)).rejects.toThrow(
+			/unknown engine 'old'/,
+		);
 	});
 
 	it('takes one file of a set (set:<name>/<file>) and the env form', async () => {

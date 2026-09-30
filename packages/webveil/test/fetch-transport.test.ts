@@ -17,9 +17,9 @@ import {dirname, join} from 'node:path';
 import {
 	createTransport as realCreateTransport,
 	DEFAULT_SESSION_IDLE_MS,
-	SerpcastError,
-} from 'serpcast';
-import type {Transport, TransportOptions, TransportResponse} from 'serpcast';
+	SearchcastError,
+} from 'searchcast';
+import type {Transport, TransportOptions, TransportResponse} from 'searchcast';
 import type {Config} from '../src/core/config.js';
 import {resolveConfig} from '../src/core/config.js';
 import {fetch} from '../src/core/fetch.js';
@@ -331,7 +331,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 
 	it('surfaces a size or timeout failure as an error', async () => {
 		writeJson(join(project, 'webveil.json'), {backend: 'serpcast'});
-		const big = new SerpcastError(
+		const big = new SearchcastError(
 			'transport',
 			'response is larger than 16777216 bytes',
 		);
@@ -339,7 +339,7 @@ describe('fetchTransport serpcast: distilly over the impersonated transport', ()
 		await expect(fetchWith(failing)).rejects.toThrow(/larger than/);
 		expect(failing.closed).toEqual([1]); // closed on a failed request too
 		await closeFetchTransports();
-		const slow = new SerpcastError('timeout', `request to ${PAGE} timed out`);
+		const slow = new SearchcastError('timeout', `request to ${PAGE} timed out`);
 		await expect(
 			fetchWith(fakeTransport({[PAGE]: {error: slow}})),
 		).rejects.toThrow(/timed out/);

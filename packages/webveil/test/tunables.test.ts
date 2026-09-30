@@ -20,11 +20,11 @@ import {homedir, tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import type {
 	Engine,
-	Serpcast,
-	SerpcastOptions,
+	Searchcast,
+	SearchcastOptions,
 	Transport,
 	TransportOptions,
-} from 'serpcast';
+} from 'searchcast';
 import {resolveConfig} from '../src/core/config.js';
 import type {Config} from '../src/core/config.js';
 import {
@@ -262,9 +262,9 @@ describe('serpcast.decoyGuard: list or {include, exclude}, replaced whole', () =
 
 /** A createSerpcast recording its options; answers one hit per search. */
 function fakeFactory() {
-	const built: SerpcastOptions[] = [];
+	const built: SearchcastOptions[] = [];
 	const chains: Engine[][] = [];
-	const create = (options: SerpcastOptions): Serpcast => {
+	const create = (options: SearchcastOptions): Searchcast => {
 		built.push(options);
 		return {
 			async search(_query, {engines}) {
@@ -295,7 +295,7 @@ function serpcastProject(extra: Record<string, unknown>) {
 }
 
 function searchWith(
-	create: (o: SerpcastOptions) => Serpcast,
+	create: (o: SearchcastOptions) => Searchcast,
 	env: Record<string, string> = {},
 	maxResults?: number,
 ) {

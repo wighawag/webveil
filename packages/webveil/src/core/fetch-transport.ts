@@ -73,14 +73,14 @@
 import {
 	createTransport as realCreateTransport,
 	DEFAULT_SESSION_IDLE_MS,
-	SerpcastError,
-} from 'serpcast';
+	SearchcastError,
+} from 'searchcast';
 import type {
 	Transport,
 	TransportOptions,
 	TransportResponse,
 	TransportSession,
-} from 'serpcast';
+} from 'searchcast';
 import type {Config, FetchTransport} from './config.js';
 import type {EgressFetch} from './egress.js';
 import {identityKey} from './identity.js';
@@ -275,7 +275,7 @@ export function createSerpcastFetch(
 					.request(url, {kind: 'document', ...(signal && {signal})})
 					.catch((error: unknown) =>
 						Promise.reject(
-							error instanceof SerpcastError && error.kind === 'impersonation'
+							error instanceof SearchcastError && error.kind === 'impersonation'
 								? impersonationFailure(error)
 								: error,
 						),

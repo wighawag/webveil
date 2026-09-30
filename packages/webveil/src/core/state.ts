@@ -96,7 +96,7 @@ import {
 } from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-import type {JsonValue, StateStore} from 'serpcast';
+import type {JsonValue, StateStore} from 'searchcast';
 
 const IDENTITY = /^[0-9a-f]{64}$/;
 const STATE_FILE = 'state.json';

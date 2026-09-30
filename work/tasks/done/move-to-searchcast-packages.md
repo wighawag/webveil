@@ -42,3 +42,13 @@ FIRST, check this task against current reality (launch snapshot; may have drifte
 - Public repo: no real search engine named in code, tests, examples or docs (placeholders), except the Marginalia example the owner approved.
 - No em dashes anywhere; do not hard-wrap Markdown paragraphs.
 - Bound shell commands (`timeout`), cap output, never grep `node_modules`, `dist` or `.git`. No live network calls in tests.
+
+## Decisions
+
+The first four are recorded as comments in `src/setup.ts` and `src/core/backends/serpcast.ts`, and the fifth as a comment in `pnpm-workspace.yaml`.
+1. **doctor's `oldDataDir` is a top-level field and only a notice.** It is not nested under `libcurl`, because it also covers recipe sets. It is not counted as a problem, because the old dir still works for one release and doctor would otherwise fail on a working setup.
+2. **`webveil recipes` gained `oldDir` and `oldSets` (each with a `used` flag).** This mirrors `searchcast recipes list`, and both fields are left out when there are no old sets.
+3. **The seam names `importSearchcast` and `createSerpcast` keep their names until the rename task,** though they now pass searchcast's non-deprecated API.
+4. **The peer range is `>=0.1.0 <0.2.0`,** the same range `searchcast` 0.2 itself declares.
+5. **The new packages are exempt from the release-age window.** They were published today, inside that window, so `pnpm install` rejected them otherwise; the same was done for serpcast before.
+6. **Only `webveil` gets a changeset, as the task specifies.** pi-webveil ships the root README, which changed; changesets will still give it a patch bump through the internal dependency. Recorded here only, not in code.

@@ -11,7 +11,7 @@
 // network logic of its own.
 //
 // The setup commands (`install-libcurl`, `install-recipes`, `recipes`,
-// `doctor`) live in setup.ts, which loads serpcast's install code lazily; they
+// `doctor`) live in setup.ts, which loads searchcast's install code lazily; they
 // are CLI only: the `--mcp` server is built without them (see setup.ts).
 //
 // Testability: `createCli(deps)` takes the core functions as injectable deps so
@@ -178,8 +178,11 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 		.command('install-libcurl', {
 			description:
 				'Download the pinned libcurl-impersonate release, verify its sha256 and ' +
-				"install it in serpcast's data directory (~/.local/share/serpcast), " +
-				'where webveil finds it. Runs only when you type it.',
+				"install it in searchcast's data directory (~/.local/share/searchcast), " +
+				'where webveil finds it. Only needed where the platform package ' +
+				'@searchcast/libcurl-<platform> was not installed (optional ' +
+				'dependencies skipped, or no package for this platform). Runs only ' +
+				'when you type it.',
 			options: z.object({
 				egress: z.boolean().optional().describe(EGRESS_HELP),
 				proxy: z.string().optional().describe(PROXY_HELP),
@@ -196,7 +199,7 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 		.command('install-recipes', {
 			description:
 				'Install a recipe set from a release archive (URL or file), pinned by ' +
-				'its sha256, into ~/.local/share/serpcast/recipes/<set>; name it in ' +
+				'its sha256, into ~/.local/share/searchcast/recipes/<set>; name it in ' +
 				'config as set:<set>. A set may hold code recipes: the pin is your ' +
 				'trust decision.',
 			args: z.object({
@@ -232,7 +235,8 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 		})
 		.command('recipes', {
 			description:
-				'List the installed recipe sets, their source, sha256 and files.',
+				'List the installed recipe sets, their source, sha256 and files ' +
+				"(and those still read from serpcast's old data directory).",
 			async run() {
 				return listRecipes(setup);
 			},
@@ -241,7 +245,8 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 			description:
 				'Check the libcurl-impersonate library webveil loads and this ' +
 				"folder's config: backend, egress, fetch transport, engines and " +
-				'their recipe files, recipe sets. No network unless --remote.',
+				'their recipe files, recipe sets, and what is still read from ' +
+				"serpcast's old data directory. No network unless --remote.",
 			options: z.object({
 				remote: z
 					.boolean()

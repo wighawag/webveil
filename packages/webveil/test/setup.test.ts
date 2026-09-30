@@ -1,6 +1,6 @@
 // The setup commands (`install-libcurl`, `install-recipes`, `recipes`,
-// `doctor`), driven through the CLI with serpcast's REAL installers against a
-// local release server and a temporary XDG_DATA_HOME, as serpcast's own
+// `doctor`), driven through the CLI with searchcast's REAL installers against a
+// local release server and a temporary XDG_DATA_HOME, as searchcast's own
 // installer tests do: the real data directory is never touched, and nothing
 // leaves the machine. Also: they are not MCP tools, and search/fetch never
 // load the install code.
@@ -12,6 +12,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -26,8 +27,8 @@ import {homedir, tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {gzipSync} from 'node:zlib';
-import * as realInstall from 'serpcast/install';
-import type {InstallOptions, InstallRecipesOptions} from 'serpcast/install';
+import * as realInstall from 'searchcast/install';
+import type {InstallOptions, InstallRecipesOptions} from 'searchcast/install';
 import {createCli} from '../src/cli.js';
 import {resolveConfig} from '../src/core/config.js';
 import type {InstallApi, SetupDeps} from '../src/setup.js';
@@ -35,12 +36,13 @@ import {redactUrl} from '../src/setup.js';
 
 // ---- isolation: a temporary XDG_DATA_HOME, the real one untouched ----------
 
-const realData = join(
-	process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
-	'serpcast',
+// Both searchcast's data directory and serpcast's old one (read for one
+// release, never written).
+const realData = ['searchcast', 'serpcast'].map((name) =>
+	join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), name),
 );
 const realDataMtime = () =>
-	existsSync(realData) ? statSync(realData).mtimeMs : undefined;
+	realData.map((dir) => (existsSync(dir) ? statSync(dir).mtimeMs : undefined));
 const realBefore = realDataMtime();
 const savedDataHome = process.env.XDG_DATA_HOME;
 let root: string;
@@ -71,7 +73,7 @@ afterAll(async () => {
 	if (savedDataHome === undefined) delete process.env.XDG_DATA_HOME;
 	else process.env.XDG_DATA_HOME = savedDataHome;
 	rmSync(root, {recursive: true, force: true});
-	expect(realDataMtime()).toBe(realBefore);
+	expect(realDataMtime()).toEqual(realBefore);
 });
 
 afterEach(() => {
@@ -172,7 +174,7 @@ async function run(argv: string[], setup: SetupDeps) {
 	return {out, code, log};
 }
 
-const libraryPath = () => join(dataHome, 'serpcast', libraryName());
+const libraryPath = () => join(dataHome, 'searchcast', libraryName());
 const libraryName = () =>
 	process.platform === 'win32'
 		? 'libcurl-impersonate.dll'
@@ -234,7 +236,7 @@ describe('webveil install-libcurl', () => {
 		const res = await run(['install-libcurl'], {loadInstall: async () => api});
 		expect(res.code).toBe(1);
 		expect(res.out).toMatch(/checksum mismatch/);
-		expect(existsSync(join(dataHome, 'serpcast'))).toBe(false);
+		expect(existsSync(join(dataHome, 'searchcast'))).toBe(false);
 	});
 
 	it('hands --proxy to the installer', async () => {
@@ -277,7 +279,7 @@ describe('webveil install-recipes and webveil recipes', () => {
 			loadInstall: async () => api,
 		});
 		expect(res.code).toBe(0);
-		const dir = join(dataHome, 'serpcast', 'recipes', 'my-set');
+		const dir = join(dataHome, 'searchcast', 'recipes', 'my-set');
 		expect(JSON.parse(res.out)).toMatchObject({
 			name: 'my-set',
 			dir,
@@ -287,7 +289,7 @@ describe('webveil install-recipes and webveil recipes', () => {
 		expect(calls.recipes[0]).not.toHaveProperty('proxy');
 		const listed = await run(['recipes'], {loadInstall: async () => api});
 		const data = JSON.parse(listed.out);
-		expect(data.dir).toBe(join(dataHome, 'serpcast', 'recipes'));
+		expect(data.dir).toBe(join(dataHome, 'searchcast', 'recipes'));
 		expect(data.sets).toEqual([
 			expect.objectContaining({
 				name: 'my-set',
@@ -311,7 +313,7 @@ describe('webveil install-recipes and webveil recipes', () => {
 		);
 		expect(res.code).toBe(0);
 		expect(
-			existsSync(join(dataHome, 'serpcast', 'recipes', 'other', 'web.json')),
+			existsSync(join(dataHome, 'searchcast', 'recipes', 'other', 'web.json')),
 		).toBe(true);
 	});
 
@@ -328,7 +330,7 @@ describe('webveil install-recipes and webveil recipes', () => {
 			{loadInstall: async () => api},
 		);
 		expect(wrong.code).toBe(1);
-		expect(existsSync(join(dataHome, 'serpcast', 'recipes', 'my-set'))).toBe(
+		expect(existsSync(join(dataHome, 'searchcast', 'recipes', 'my-set'))).toBe(
 			false,
 		);
 	});
@@ -336,9 +338,70 @@ describe('webveil install-recipes and webveil recipes', () => {
 	it('lists nothing when no set is installed', async () => {
 		const res = await run(['recipes'], {loadInstall: async () => realInstall});
 		expect(JSON.parse(res.out)).toEqual({
-			dir: join(dataHome, 'serpcast', 'recipes'),
+			dir: join(dataHome, 'searchcast', 'recipes'),
 			sets: [],
 		});
+	});
+});
+
+/** Every file under `dir` with its content (a snapshot to compare). */
+function snapshot(dir: string): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const entry of readdirSync(dir, {recursive: true, withFileTypes: true}))
+		if (entry.isFile()) {
+			const path = join(entry.parentPath, entry.name);
+			out[path] = readFileSync(path, 'utf8');
+		}
+	return out;
+}
+
+describe("serpcast's old data directory (searchcast ADR 0005)", () => {
+	const oldDir = () => join(dataHome, 'serpcast');
+
+	/** An old data directory holding a library and the sets `names`. */
+	function placeOld(...names: string[]) {
+		mkdirSync(oldDir(), {recursive: true});
+		writeFileSync(join(oldDir(), libraryName()), 'OLD LIBRARY');
+		for (const name of names) {
+			mkdirSync(join(oldDir(), 'recipes', name), {recursive: true});
+			writeFileSync(join(oldDir(), 'recipes', name, 'web.json'), RECIPE);
+		}
+	}
+
+	it('the installers write only to the new data directory, the old one untouched', async () => {
+		placeOld('my-set', 'legacy');
+		const before = snapshot(oldDir());
+		const {api} = installApi(serveRelease('LIBRARY v1'));
+		const lib = await run(['install-libcurl'], {loadInstall: async () => api});
+		expect(lib.code).toBe(0);
+		expect(readFileSync(libraryPath(), 'utf8')).toBe('LIBRARY v1');
+		const {url, sha} = serveSet();
+		const set = await run(['install-recipes', url, '--sha256', sha], {
+			loadInstall: async () => api,
+		});
+		expect(set.code).toBe(0);
+		expect(
+			existsSync(join(dataHome, 'searchcast', 'recipes', 'my-set', 'web.json')),
+		).toBe(true);
+		expect(snapshot(oldDir())).toEqual(before);
+	});
+
+	it('`recipes` lists the old sets after the new ones, saying which are used', async () => {
+		placeOld('my-set', 'legacy');
+		const {url, sha} = serveSet();
+		const {api} = installApi();
+		await run(['install-recipes', url, '--sha256', sha], {
+			loadInstall: async () => api,
+		});
+		const data = JSON.parse(
+			(await run(['recipes'], {loadInstall: async () => api})).out,
+		);
+		expect(data.sets.map((s: {name: string}) => s.name)).toEqual(['my-set']);
+		expect(data.oldDir).toBe(join(oldDir(), 'recipes'));
+		expect(data.oldSets).toEqual([
+			expect.objectContaining({name: 'legacy', used: true}),
+			expect.objectContaining({name: 'my-set', used: false}),
+		]);
 	});
 });
 
@@ -471,7 +534,7 @@ describe('the download route under a proxy egress', () => {
 			expect(requested).toEqual([]);
 			expect(calls.libcurl).toHaveLength(0);
 			expect(calls.recipes).toHaveLength(0);
-			expect(existsSync(join(dataHome, 'serpcast'))).toBe(false);
+			expect(existsSync(join(dataHome, 'searchcast'))).toBe(false);
 		});
 	}
 
@@ -548,7 +611,7 @@ describe('the download route under a proxy egress', () => {
 		);
 		expect(res.code).toBe(0);
 		expect(
-			existsSync(join(dataHome, 'serpcast', 'recipes', 'my-set', 'web.json')),
+			existsSync(join(dataHome, 'searchcast', 'recipes', 'my-set', 'web.json')),
 		).toBe(true);
 		expect(requested).toEqual([]);
 	});
@@ -817,6 +880,26 @@ async function socksProxy(): Promise<SocksProxy> {
 	};
 }
 
+/** The variables that name a library before the data directories. */
+const LIBCURL_ENV = [
+	'SEARCHCAST_LIBCURL_PATH',
+	'SERPCAST_LIBCURL_PATH',
+	'LIBCURL_PATH',
+];
+
+/** The platform package searchcast installed for this platform, if any. */
+function platformPackage(): string | undefined {
+	const name = `@searchcast/libcurl-${process.platform}-${process.arch}`;
+	try {
+		createRequire(import.meta.resolve('searchcast')).resolve(
+			`${name}/package.json`,
+		);
+		return name;
+	} catch {
+		return undefined;
+	}
+}
+
 describe('webveil doctor', () => {
 	let project: string;
 	let globalPath: string;
@@ -872,7 +955,7 @@ describe('webveil doctor', () => {
 				{
 					name: 'web',
 					kind: 'declarative',
-					file: join(dataHome, 'serpcast', 'recipes', 'my-set', 'web.json'),
+					file: join(dataHome, 'searchcast', 'recipes', 'my-set', 'web.json'),
 				},
 			],
 			sets: [{entry: 'set:my-set', installed: true}],
@@ -881,6 +964,85 @@ describe('webveil doctor', () => {
 		expect(report.problems[0]).toMatch(/webveil install-libcurl/);
 		expect(report).not.toHaveProperty('libcurl.remote'); // no network by default
 	});
+
+	it('reports the old-data-dir notice (with the mv command) and the library read from there, without failing on it', async () => {
+		const saved = Object.fromEntries(
+			LIBCURL_ENV.map((name) => [name, process.env[name]]),
+		);
+		for (const name of LIBCURL_ENV) delete process.env[name];
+		try {
+			const old = join(dataHome, 'serpcast');
+			mkdirSync(join(old, 'recipes', 'legacy'), {recursive: true});
+			writeFileSync(join(old, 'recipes', 'legacy', 'web.json'), RECIPE);
+			writeFileSync(join(old, libraryName()), 'not a library');
+			write(globalPath, {});
+			write(join(project, 'webveil.json'), {
+				backend: 'serpcast',
+				serpcast: {recipes: ['set:legacy'], engines: ['web']},
+			});
+			const res = await run(['doctor'], doctorDeps());
+			const report = JSON.parse(
+				JSON.parse(res.out).message.replace(/^[^\n]*\n/, ''),
+			);
+			expect(report).toMatchObject({
+				libcurl: {
+					library: {
+						path: join(old, libraryName()),
+						source: 'old data directory',
+					},
+				},
+				oldDataDir: {
+					dir: old,
+					newDir: join(dataHome, 'searchcast'),
+					items: [libraryName(), 'recipes/legacy'],
+					command: `mv '${old}' '${join(dataHome, 'searchcast')}'`,
+				},
+				sets: [
+					{
+						entry: 'set:legacy',
+						installed: true,
+						dir: join(old, 'recipes', 'legacy'),
+					},
+				],
+				engines: [
+					{name: 'web', file: join(old, 'recipes', 'legacy', 'web.json')},
+				],
+			});
+			expect(report).not.toHaveProperty('libcurl.oldDataDir');
+			// Only the unloadable library is a problem, not the old directory.
+			expect(report.problems).toHaveLength(1);
+			expect(report.problems[0]).not.toMatch(/serpcast'?s? old|mv /);
+		} finally {
+			for (const name of LIBCURL_ENV)
+				if (saved[name] === undefined) delete process.env[name];
+				else process.env[name] = saved[name];
+		}
+	});
+
+	it.skipIf(!platformPackage())(
+		"reports the platform package as the library's source when nothing else names one",
+		async () => {
+			const saved = Object.fromEntries(
+				LIBCURL_ENV.map((name) => [name, process.env[name]]),
+			);
+			for (const name of LIBCURL_ENV) delete process.env[name];
+			try {
+				write(globalPath, {});
+				write(join(project, 'webveil.json'), {backend: 'searxng'});
+				const res = await run(['doctor'], doctorDeps());
+				const report = JSON.parse(res.out);
+				expect(report.libcurl.library).toMatchObject({
+					source: 'platform package',
+					package: {name: platformPackage()},
+				});
+				expect(report).not.toHaveProperty('oldDataDir');
+			} finally {
+				for (const name of LIBCURL_ENV)
+					if (saved[name] === undefined) delete process.env[name];
+					else process.env[name] = saved[name];
+			}
+		},
+	);
 
 	it('names a configured set that is not installed', async () => {
 		write(globalPath, {serpcast: {libcurlPath: missingLib()}});
@@ -1009,7 +1171,7 @@ describe('setup commands are CLI only', () => {
  * Every module statically imported from `entry`: webveil's own sources (a
  * `./x.js` import is `./x.ts`) and installed packages, resolved to their
  * files. Dynamic `import()` is not followed: that is how the setup commands
- * load `serpcast/install`, only when they run.
+ * load `searchcast/install`, only when they run.
  */
 function staticImports(entry: string): Set<string> {
 	const seen = new Set<string>();
@@ -1032,8 +1194,8 @@ function staticImports(entry: string): Set<string> {
 				const target = resolve(dirname(file), spec);
 				const ts = target.replace(/\.js$/, '.ts');
 				pending.push(existsSync(ts) ? ts : target);
-			} else if (spec.startsWith('serpcast')) {
-				// Follow serpcast's own graph (the package under test here).
+			} else if (/^(searchcast|@searchcast\/)/.test(spec)) {
+				// Follow searchcast's own graph (the package under test here).
 				pending.push(createRequire(file).resolve(spec));
 			}
 		}
@@ -1044,7 +1206,7 @@ function staticImports(entry: string): Set<string> {
 describe('search and fetch never load the install code', () => {
 	const src = fileURLToPath(new URL('../src/', import.meta.url));
 	const install =
-		/serpcast[\\/]dist[\\/](install|install-api|install-recipes|download)\.js$/;
+		/searchcast[\\/]dist[\\/](install|install-api|install-recipes|download)\.js$/;
 
 	for (const entry of ['core/search.ts', 'core/fetch.ts', 'index.ts', 'cli.ts'])
 		it(`${entry} reaches no download module statically`, () => {
@@ -1053,17 +1215,17 @@ describe('search and fetch never load the install code', () => {
 			expect(reached.length).toBeGreaterThan(3); // the walk did walk
 		});
 
-	it('the setup module imports serpcast/install only dynamically (the control)', () => {
+	it('the setup module imports searchcast/install only dynamically (the control)', () => {
 		const text = readFileSync(join(src, 'setup.ts'), 'utf8');
-		expect(text).toMatch(/import\('serpcast\/install'\)/);
+		expect(text).toMatch(/import\('searchcast\/install'\)/);
 		expect(text).not.toMatch(
-			/^import (?!type\s)[^;]*from 'serpcast\/install'/m,
+			/^import (?!type\s)[^;]*from 'searchcast\/install'/m,
 		);
-		// ...and the walk would catch a static one: serpcast/install itself
+		// ...and the walk would catch a static one: searchcast/install itself
 		// reaches the download module.
 		const direct = [
 			...staticImports(
-				createRequire(join(src, 'setup.ts')).resolve('serpcast/install'),
+				createRequire(join(src, 'setup.ts')).resolve('searchcast/install'),
 			),
 		];
 		expect(direct.some((f) => install.test(f))).toBe(true);

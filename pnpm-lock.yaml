@@ -48,6 +48,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+      '@searchcast/recipe':
+        specifier: ^0.1.0
+        version: 0.1.0
       distilly:
         specifier: ^0.1.0
         version: 0.1.0
@@ -57,10 +60,7 @@ importers:
       incur:
         specifier: 0.4.10
         version: 0.4.10
-      serpcast:
-        specifier: ^0.6.0
-        version: 0.6.0
-      serpcast-recipe:
+      searchcast:
         specifier: ^0.2.0
         version: 0.2.0
       undici:
@@ -649,6 +649,36 @@ packages:
   '@scalar/openapi-types@0.8.0':
     resolution: {integrity: sha512-WmaxVSfvY5K/TwcG2B2TU1WOe1As1uc2s7myswtP6dBlcjU3hM08SApxv/jmyGaCE8t4gO5BBhmHY4pDUfmr2g==}
     engines: {node: '>=22'}
+
+  '@searchcast/libcurl-darwin-arm64@0.1.0':
+    resolution: {integrity: sha512-FrITDN7HTq643Vm45zkB8QzOfYYQvq6rg9fKsEAKKGzC7HajfN6vBfXL3iemx0SDhgM6piUKwqE1cXFQGSXSJw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@searchcast/libcurl-darwin-x64@0.1.0':
+    resolution: {integrity: sha512-vHYhyfX7F2LLpyebfar+/hNmz4ZmN+hGLqbfJhdQSKAuJm+lrSlREGPWXvtLvfn8HyQ5N/GEdEXfDbH8ULxWiQ==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@searchcast/libcurl-linux-arm64@0.1.0':
+    resolution: {integrity: sha512-WEzbjELe5rg1X+5BJGHegTdi8wVSmz5OtTg0z67IsmL/y157iZ6vUKK82E+JQgxchV9PEy6nyAoInJj7/ipc2g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@searchcast/libcurl-linux-x64@0.1.0':
+    resolution: {integrity: sha512-uRA8Ieqyc8jiprws+/o0HZU1w/FcvvPJWfXMw/uKM90D8uiGALd027hht+ORSFvgaxaqiY8bLdKLqAIKjVnxMQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@searchcast/libcurl-win32-x64@0.1.0':
+    resolution: {integrity: sha512-TGBpoga8cQATmz4Iavqg1hJyVQ09VJQEzWRwuX6IyJTmg94fVc6vZzudTFdMOOISMYSL8aiuIpaxz8q4et2Ssg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@searchcast/recipe@0.1.0':
+    resolution: {integrity: sha512-L4oO6cej/OWzjYqjmnCZJOgu4XlpDk394RyAyiX/Oj/Ca70wj6SQnoooPXo122BlGl7hSXJt4zCRe7Sf9YhTkw==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -1432,22 +1462,19 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
+  searchcast@0.2.0:
+    resolution: {integrity: sha512-4PaiRLZq/+1HmBiAMOERiMuCenJC84/nkiWI3EyPzpnp12XtTOmYp5Bi4iabcuwd9HtAgknUWoiZDWBCQCzaNA==}
+    hasBin: true
+    peerDependencies:
+      '@searchcast/browser': '>=0.1.0 <0.2.0'
+    peerDependenciesMeta:
+      '@searchcast/browser':
+        optional: true
+
   semver@7.8.5:
     resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==}
     engines: {node: '>=10'}
     hasBin: true
-
-  serpcast-recipe@0.2.0:
-    resolution: {integrity: sha512-ngDFQkUYNfBp05xsU/bpTiCrM0I6EF+e5HQX2Eb2OB1w8qysCfp//lzkgATMEfqTpfej6B70sbpmc0EGpD5z1A==}
-
-  serpcast@0.6.0:
-    resolution: {integrity: sha512-xt5Y/hxcAeUj1qFBH41bGoJ1+aeaN3jd2J4NNpkSQ36NsFJyL9XehQLa9tqARSVHqqfYYxVilclr2Bb2dpOeXA==}
-    hasBin: true
-    peerDependencies:
-      searchcast: '>=0.1.1'
-    peerDependenciesMeta:
-      searchcast:
-        optional: true
 
   shebang-command@2.0.0:
     resolution: {integrity: sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==}
@@ -2173,6 +2200,23 @@ snapshots:
   '@rolldown/pluginutils@1.0.1': {}
 
   '@scalar/openapi-types@0.8.0': {}
+
+  '@searchcast/libcurl-darwin-arm64@0.1.0':
+    optional: true
+
+  '@searchcast/libcurl-darwin-x64@0.1.0':
+    optional: true
+
+  '@searchcast/libcurl-linux-arm64@0.1.0':
+    optional: true
+
+  '@searchcast/libcurl-linux-x64@0.1.0':
+    optional: true
+
+  '@searchcast/libcurl-win32-x64@0.1.0':
+    optional: true
+
+  '@searchcast/recipe@0.1.0': {}
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -3218,17 +3262,21 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  semver@7.8.5: {}
-
-  serpcast-recipe@0.2.0: {}
-
-  serpcast@0.6.0:
+  searchcast@0.2.0:
     dependencies:
+      '@searchcast/recipe': 0.1.0
       css-select: 7.0.0
       domhandler: 6.0.1
       htmlparser2: 12.0.0
       koffi: 3.3.2
-      serpcast-recipe: 0.2.0
+    optionalDependencies:
+      '@searchcast/libcurl-darwin-arm64': 0.1.0
+      '@searchcast/libcurl-darwin-x64': 0.1.0
+      '@searchcast/libcurl-linux-arm64': 0.1.0
+      '@searchcast/libcurl-linux-x64': 0.1.0
+      '@searchcast/libcurl-win32-x64': 0.1.0
+
+  semver@7.8.5: {}
 
   shebang-command@2.0.0:
     dependencies:

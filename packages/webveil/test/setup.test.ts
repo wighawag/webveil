@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import {createServer} from 'node:http';
 import type {Server} from 'node:http';
-import {connect} from 'node:net';
+import {connect, createServer as createNetServer} from 'node:net';
 import type {AddressInfo} from 'node:net';
 import {createRequire} from 'node:module';
 import {homedir, tmpdir} from 'node:os';
@@ -349,8 +349,12 @@ describe('the download route under a proxy egress', () => {
 	let proxyUrl: string;
 	/** Every CONNECT target the test proxy tunnelled. */
 	const tunnelled: string[] = [];
+	/** The proxy-authorization of each CONNECT ('' when none). */
+	const proxyAuth: string[] = [];
+	let socks: SocksProxy;
 
 	beforeAll(async () => {
+		socks = await socksProxy();
 		project = join(root, 'route-repo');
 		globalPath = join(root, 'route-xdg', 'webveil', 'config.json');
 		proxy = createServer((_req, res) => {
@@ -359,6 +363,7 @@ describe('the download route under a proxy egress', () => {
 		});
 		proxy.on('connect', (req, client, head) => {
 			tunnelled.push(req.url ?? '');
+			proxyAuth.push(req.headers['proxy-authorization'] ?? '');
 			const [host, port] = (req.url ?? '').split(':');
 			const upstream = connect(Number(port), host, () => {
 				client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -376,12 +381,15 @@ describe('the download route under a proxy egress', () => {
 	afterAll(async () => {
 		proxy.closeAllConnections();
 		await new Promise((r) => proxy.close(r));
+		await socks.close();
 	});
 
 	afterEach(() => {
 		rmSync(project, {recursive: true, force: true});
 		rmSync(dirname(globalPath), {recursive: true, force: true});
 		tunnelled.length = 0;
+		proxyAuth.length = 0;
+		socks.seen.length = 0;
 	});
 
 	function write(path: string, value: unknown) {
@@ -451,6 +459,11 @@ describe('the download route under a proxy egress', () => {
 				expect(error.code).toBe('ROUTE_REQUIRED');
 				expect(error.message).toContain(suggestion);
 				expect(error.message).toContain('--direct');
+				// --egress is offered first: the likely intent.
+				const at = (s: string) => error.message.indexOf(s);
+				expect(at('--egress')).toBeGreaterThan(-1);
+				expect(at('--egress')).toBeLessThan(at('--proxy '));
+				expect(at('--egress')).toBeLessThan(at('--direct'));
 				expect(error.message).toMatch(/own IP/);
 				expect(error.message).toMatch(/fetchEgress|egress: /);
 				expect(res.out).not.toContain('secret');
@@ -540,6 +553,179 @@ describe('the download route under a proxy egress', () => {
 		expect(requested).toEqual([]);
 	});
 
+	/** Run both install commands (libcurl, then a set from a URL) with `flags`. */
+	async function installBoth(flags: string[], setup: SetupDeps) {
+		const {url, sha} = serveSet();
+		const lib = await run(['install-libcurl', ...flags], setup);
+		const set = await run(
+			['install-recipes', url, '--sha256', sha, ...flags],
+			setup,
+		);
+		return [lib, set];
+	}
+
+	const withAuth = (url: string) => url.replace('://', '://user:secret@');
+	const authority = () => new URL(base).host;
+
+	describe('--egress', () => {
+		it('goes through an authenticated http egress from the global config, never printing its credentials', async () => {
+			write(globalPath, {egress: {mode: 'http', url: withAuth(proxyUrl)}});
+			const {api} = installApi(serveRelease('LIBRARY v1'));
+			for (const res of await installBoth(['--egress'], deps(api))) {
+				expect(res.code).toBe(0);
+				expect(res.log.join('\n')).toMatch(
+					/--egress: downloading through egress \(http:\/\/\*\*\*@/,
+				);
+				expect(res.out + res.log.join('\n')).not.toContain('secret');
+			}
+			expect(readFileSync(libraryPath(), 'utf8')).toBe('LIBRARY v1');
+			expect(tunnelled).toEqual([authority(), authority()]);
+			const basic = `Basic ${Buffer.from('user:secret').toString('base64')}`;
+			expect(proxyAuth).toEqual([basic, basic]);
+			expect(socks.seen).toEqual([]);
+		});
+
+		it('goes through an authenticated socks5 egress from the project config, as socks5h', async () => {
+			write(join(project, 'webveil.json'), {
+				egress: {mode: 'socks5', url: withAuth(socks.url)},
+			});
+			const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+			for (const res of await installBoth(['--egress'], deps(api))) {
+				expect(res.code).toBe(0);
+				expect(res.out + res.log.join('\n')).not.toContain('secret');
+			}
+			expect(calls.libcurl[0]!.proxy).toBe(
+				withAuth(socks.url).replace('socks5:', 'socks5h:'),
+			);
+			expect(calls.recipes[0]!.proxy).toBe(calls.libcurl[0]!.proxy);
+			expect(socks.seen).toEqual([
+				{target: authority(), user: 'user', password: 'secret'},
+				{target: authority(), user: 'user', password: 'secret'},
+			]);
+			expect(tunnelled).toEqual([]);
+		});
+
+		it('goes through a socks5 egress from env', async () => {
+			const env = {WEBVEIL_EGRESS: 'socks5', WEBVEIL_EGRESS_URL: socks.url};
+			const {api} = installApi(serveRelease('LIBRARY v1'));
+			for (const res of await installBoth(['--egress'], deps(api, env)))
+				expect(res.code).toBe(0);
+			expect(socks.seen).toEqual([
+				{target: authority()},
+				{target: authority()},
+			]);
+		});
+
+		it('uses fetchEgress when it is the only proxied hop', async () => {
+			write(join(project, 'webveil.json'), {
+				fetchEgress: {mode: 'socks5', url: socks.url},
+			});
+			const {api} = installApi(serveRelease('LIBRARY v1'));
+			const [lib] = await installBoth(['--egress'], deps(api));
+			expect(lib!.code).toBe(0);
+			expect(lib!.log.join('\n')).toContain('downloading through fetchEgress');
+			expect(socks.seen).toHaveLength(2);
+		});
+
+		it('uses egress when both hops are proxies that differ, and says so', async () => {
+			write(join(project, 'webveil.json'), {
+				egress: {mode: 'http', url: proxyUrl},
+				fetchEgress: {mode: 'socks5', url: withAuth(socks.url)},
+			});
+			const {api} = installApi(serveRelease('LIBRARY v1'));
+			const [lib] = await installBoth(['--egress'], deps(api));
+			expect(lib!.code).toBe(0);
+			const log = lib!.log.join('\n');
+			expect(log).toContain('downloading through egress');
+			expect(log).toMatch(
+				/fetchEgress \(socks5h:\/\/\*\*\*@[^)]*\) differs and is not used/,
+			);
+			expect(log).not.toContain('secret');
+			expect(tunnelled).toHaveLength(2);
+			expect(socks.seen).toEqual([]);
+		});
+
+		it('downloads directly when every hop is direct, and says so', async () => {
+			write(join(project, 'webveil.json'), {egress: {mode: 'direct'}});
+			const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+			const [lib, set] = await installBoth(['--egress'], deps(api));
+			expect(lib!.code).toBe(0);
+			expect(set!.code).toBe(0);
+			expect(lib!.log.join('\n')).toMatch(
+				/every configured egress hop is direct/,
+			);
+			expect(calls.libcurl[0]).not.toHaveProperty('proxy');
+			expect(calls.recipes[0]).not.toHaveProperty('proxy');
+			expect(tunnelled).toEqual([]);
+			expect(socks.seen).toEqual([]);
+		});
+
+		const unbuildable: [string, unknown][] = [
+			[
+				'an https:// http proxy (the downloader cannot use it)',
+				{mode: 'http', url: 'https://user:secret@proxy.test:3128'},
+			],
+			[
+				'a socks5 egress with an http:// url',
+				{mode: 'socks5', url: 'http://user:secret@proxy.test:3128'},
+			],
+			['a malformed url', {mode: 'socks5', url: 'socks5://user:secret@'}],
+		];
+		for (const [label, egress] of unbuildable)
+			it(`fails loud before any request on an unbuildable egress: ${label}`, async () => {
+				write(join(project, 'webveil.json'), {egress});
+				const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+				for (const res of await installBoth(['--egress'], deps(api))) {
+					expect(res.code).toBe(1);
+					expect(res.out).toMatch(/Nothing was downloaded/);
+					expect(res.out + res.log.join('\n')).not.toContain('secret');
+				}
+				expect(calls.libcurl).toHaveLength(0);
+				expect(calls.recipes).toHaveLength(0);
+				expect(requested).toEqual([]);
+			});
+
+		it('conflicts with --proxy and --direct, whatever the source', async () => {
+			const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+			const {archive, sha} = serveSet();
+			const file = join(root, 'route-set.tar.gz');
+			writeFileSync(file, archive);
+			for (const other of [['--proxy', proxyUrl], ['--direct']])
+				for (const argv of [
+					['install-libcurl'],
+					['install-recipes', file, '--sha256', sha],
+				]) {
+					const res = await run([...argv, '--egress', ...other], deps(api));
+					expect(res.code).toBe(2);
+					const error = JSON.parse(res.out);
+					expect(error.code).toBe('CONFLICTING_OPTIONS');
+					expect(error.message).toContain(`--egress and ${other[0]}`);
+				}
+			expect(calls.libcurl).toHaveLength(0);
+			expect(calls.recipes).toHaveLength(0);
+			expect(requested).toEqual([]);
+		});
+
+		it('is accepted and ignored for a local file (the config is not even read)', async () => {
+			const {archive, sha} = serveSet();
+			const file = join(root, 'route-set.tar.gz');
+			writeFileSync(file, archive);
+			const {api, calls} = installApi();
+			const res = await run(
+				['install-recipes', file, '--sha256', sha, '--egress'],
+				{
+					loadInstall: async () => api,
+					resolveConfig: () => {
+						throw new Error('the config was resolved');
+					},
+				},
+			);
+			expect(res.code).toBe(0);
+			expect(calls.recipes[0]).not.toHaveProperty('proxy');
+			expect(requested).toEqual([]);
+		});
+	});
+
 	it('a direct egress downloads directly with no flag', async () => {
 		write(join(project, 'webveil.json'), {egress: {mode: 'direct'}});
 		const {api, calls} = installApi(serveRelease('LIBRARY v1'));
@@ -548,6 +734,88 @@ describe('the download route under a proxy egress', () => {
 		expect(calls.libcurl[0]).not.toHaveProperty('proxy');
 	});
 });
+
+interface SocksProxy {
+	url: string;
+	/** Each CONNECT: its target, and the credentials when the client sent them. */
+	seen: {target: string; user?: string; password?: string}[];
+	close(): Promise<void>;
+}
+
+/** A minimal SOCKS5 proxy (no-auth or user/password, CONNECT only) for tests. */
+async function socksProxy(): Promise<SocksProxy> {
+	const seen: SocksProxy['seen'] = [];
+	const sockets = new Set<import('node:net').Socket>();
+	const server = createNetServer((client) => {
+		sockets.add(client);
+		client.on('close', () => sockets.delete(client));
+		client.on('error', () => client.destroy());
+		let buffer = Buffer.alloc(0);
+		let stage: 'greet' | 'auth' | 'connect' | 'open' = 'greet';
+		let creds: {user?: string; password?: string} = {};
+		client.on('data', function onData(chunk: Buffer) {
+			buffer = Buffer.concat([buffer, chunk]);
+			for (;;) {
+				if (stage === 'greet') {
+					if (buffer.length < 2 || buffer.length < 2 + buffer[1]!) return;
+					const methods = [...buffer.subarray(2, 2 + buffer[1]!)];
+					buffer = buffer.subarray(2 + buffer[1]!);
+					const auth = methods.includes(2);
+					client.write(Buffer.from([5, auth ? 2 : 0]));
+					stage = auth ? 'auth' : 'connect';
+				} else if (stage === 'auth') {
+					if (buffer.length < 2) return;
+					const ulen = buffer[1]!;
+					if (buffer.length < 3 + ulen) return;
+					const plen = buffer[2 + ulen]!;
+					if (buffer.length < 3 + ulen + plen) return;
+					creds = {
+						user: buffer.subarray(2, 2 + ulen).toString(),
+						password: buffer.subarray(3 + ulen, 3 + ulen + plen).toString(),
+					};
+					buffer = buffer.subarray(3 + ulen + plen);
+					client.write(Buffer.from([1, 0]));
+					stage = 'connect';
+				} else if (stage === 'connect') {
+					if (buffer.length < 5) return;
+					const type = buffer[3]!;
+					const len = type === 1 ? 4 : type === 4 ? 16 : 1 + buffer[4]!;
+					if (buffer.length < 4 + len + 2) return;
+					const host =
+						type === 1
+							? [...buffer.subarray(4, 8)].join('.')
+							: type === 3
+								? buffer.subarray(5, 4 + len).toString()
+								: '(ipv6)';
+					const port = buffer.readUInt16BE(4 + len);
+					const rest = buffer.subarray(4 + len + 2);
+					seen.push({target: `${host}:${port}`, ...creds});
+					client.off('data', onData);
+					stage = 'open';
+					const upstream = connect(port, host, () => {
+						client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+						upstream.write(rest);
+						upstream.pipe(client);
+						client.pipe(upstream);
+					});
+					upstream.on('error', () => client.destroy());
+					client.on('close', () => upstream.destroy());
+					return;
+				} else return;
+			}
+		});
+	});
+	await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+	return {
+		url: `socks5://127.0.0.1:${(server.address() as AddressInfo).port}`,
+		seen,
+		close: () =>
+			new Promise<void>((r) => {
+				for (const s of sockets) s.destroy();
+				server.close(() => r());
+			}),
+	};
+}
 
 describe('webveil doctor', () => {
 	let project: string;

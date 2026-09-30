@@ -31,3 +31,14 @@ Owner request (2026-09-30). The install commands (`install-libcurl`, `install-re
 ## Prompt
 
 Read `packages/webveil/src/setup.ts` (`downloadRoute`). FIRST, check this task against current reality. RECORD non-obvious decisions.
+
+## Decisions
+
+All four are recorded in the comment block at the top of `packages/webveil/src/setup.ts`, under "Recorded decisions (task install-egress-flag)":
+
+1. **Which hop:** `egress` when it is a proxy, otherwise `fetchEgress`. When both are proxies and differ, `egress` wins and the progress line names the unused `fetchEgress`. I chose this because `egress` is the config's main egress and `fetchEgress` is its per-hop override (ADR 0003). The alternatives were taking the fetch hop first or refusing the ambiguous case. This deliberately differs from `doctor --remote`, which picks its hop by backend.
+2. **Every hop direct:** `--egress` does a plain direct download and says so on the progress output. It is not an error.
+3. **Unusable egress:** exits 1 (the same code as other failures, not the exit-2 usage errors) and nothing is requested. It never falls back to direct.
+4. **Local file:** `--egress` is ignored and the config is not resolved, the same as `--direct`. The conflict checks still apply.
+
+Nothing outside the task's scope needed an observation note. The working tree holds only the intended changes (`dist` is gitignored).

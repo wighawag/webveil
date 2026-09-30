@@ -16,8 +16,11 @@ allowBuilds:
 # searchcast 0.2 and its packages (serpcast renamed, task
 # move-to-searchcast-packages) were published on 2026-09-30, inside the
 # release-age window: pinned exact versions, as was done for serpcast.
+# searchcast 0.3.0 (code recipes' author headers, task
+# marginalia-key-via-header) was published the same day.
 minimumReleaseAgeExclude:
   - searchcast@0.2.0
+  - searchcast@0.3.0
   - '@searchcast/recipe@0.1.0'
   - '@searchcast/libcurl-linux-x64@0.1.0'
   - '@searchcast/libcurl-linux-arm64@0.1.0'

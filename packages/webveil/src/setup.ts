@@ -20,6 +20,35 @@
 //   configured `egress`: where a download goes is the user's decision at the
 //   moment they type it, and a silent egress could be the wrong one (a
 //   per-folder egress picked up from the cwd). The help says how to route it.
+//
+// Recorded decisions (task install-route-explicit-under-proxy-egress, owner
+// decision 2026-09-30, refining the one above): a download's route is never
+// GUESSED either way. When the config `search` would resolve here has a
+// non-direct egress, a direct download would tell the host (GitHub) that this
+// IP installed webveil's library or a recipe set, so the installers refuse
+// (`downloadRoute`, exit 2 before any request) until the user types
+// `--proxy <url>` or `--direct`. Still never the egress silently.
+// - Which egress counts: EITHER hop. The backend-hop `egress` or a set
+//   `fetchEgress` that is not direct means the user wants that traffic off
+//   their IP, so either one requires the explicit choice. Alternative
+//   considered: the backend hop only (a local SearXNG with a proxied
+//   `web_fetch` would then download directly without a word).
+// - The suggested `--proxy` value is the hop's proxy mapped as webveil hands
+//   it to serpcast (`serpcastProxy`: SOCKS as `socks5h://`), egress first,
+//   then a different fetchEgress; with its credentials REDACTED (`***`), since
+//   the message may land in a terminal log or a paste. The user puts them back.
+//   Alternative considered: printing the credentials so it is truly
+//   paste-ready (rejected: a secret in an error message).
+// - The config is resolved only when neither flag is given, so `--proxy` or
+//   `--direct` works even in a folder whose config does not parse. Without a
+//   flag, a config error is the command's error (as it would be for `search`).
+// - `--proxy` with `--direct` is a usage error (exit 2) whatever the egress
+//   and whatever the source. A local file for `install-recipes` makes no
+//   request, so no route is required there (`--direct` is accepted and
+//   ignored; `--proxy` stays serpcast's own error for a file).
+// - Exit code 2 with error codes `ROUTE_REQUIRED` and `CONFLICTING_OPTIONS`,
+//   the convention for a usage error; the other failures keep exit 1.
+//   `doctor --remote` is unchanged: it already goes through the egress.
 // - No `--dir` for `install-recipes`: webveil resolves `set:<name>` in
 //   serpcast's recipes directory only (backends/serpcast.ts), so a set
 //   installed elsewhere could not be named. The plain serpcast CLI still has
@@ -70,14 +99,112 @@ export interface SetupDeps {
 
 const stderr = (line: string) => void process.stderr.write(`${line}\n`);
 
+/** How a download leaves: `--proxy <url>`, or `--direct`. */
+export interface RouteOptions {
+	proxy?: string;
+	direct?: boolean;
+}
+
+/**
+ * A usage error of an install command (exit 2): raised before anything is
+ * loaded or downloaded.
+ */
+export class UsageError extends Error {
+	readonly exitCode = 2;
+	constructor(
+		readonly code: 'ROUTE_REQUIRED' | 'CONFLICTING_OPTIONS',
+		message: string,
+	) {
+		super(message);
+		this.name = 'UsageError';
+	}
+}
+
+/** A hop's proxy as `--proxy` takes it (SOCKS as `socks5h://`), redacted. */
+function suggestedProxy(egress: Egress): string {
+	let proxy: string;
+	try {
+		proxy = serpcastProxy(egress) ?? '';
+	} catch {
+		proxy = egress.mode === 'direct' ? '' : (egress.url ?? '');
+	}
+	return redactUrl(proxy);
+}
+
+/** `--proxy` with `--direct` is a usage error, whatever the egress. */
+function assertOneRoute(command: string, options: RouteOptions): void {
+	if (options.proxy && options.direct)
+		throw new UsageError(
+			'CONFLICTING_OPTIONS',
+			`webveil ${command}: --proxy and --direct are mutually exclusive; ` +
+				'give one of them.',
+		);
+}
+
+/**
+ * The proxy a download goes through (undefined: direct), or a `UsageError`
+ * when the route is not explicit although the configured egress is not
+ * direct (see the recorded decisions above). `config` is only called when
+ * neither flag is given.
+ */
+export function downloadRoute(
+	command: string,
+	options: RouteOptions,
+	config: () => Config,
+): string | undefined {
+	assertOneRoute(command, options);
+	if (options.proxy) return options.proxy;
+	if (options.direct) return undefined;
+	const resolved = config();
+	const hops = [
+		{name: 'egress', egress: resolved.egress},
+		...(resolved.fetchEgress
+			? [{name: 'fetchEgress', egress: resolved.fetchEgress}]
+			: []),
+	].filter((hop) => hop.egress.mode !== 'direct');
+	if (hops.length === 0) return undefined;
+	// One `--proxy` line per distinct proxy, naming the hops that use it.
+	const proxies = new Map<string, string[]>();
+	for (const hop of hops) {
+		const proxy = suggestedProxy(hop.egress);
+		proxies.set(proxy, [...(proxies.get(proxy) ?? []), hop.name]);
+	}
+	const redacted = [...proxies.keys()].some((p) => p.includes('//***@'));
+	throw new UsageError(
+		'ROUTE_REQUIRED',
+		`webveil ${command}: the configured egress is not direct ` +
+			`(${hops.map((hop) => `${hop.name}: ${describeEgress(hop.egress)}`).join(', ')}), ` +
+			"so the download needs an explicit route: without one it would leave from this machine's " +
+			'own IP, telling the host that this IP installed it. Nothing was downloaded. Run it again with one of:\n' +
+			[...proxies]
+				.map(
+					([p, names]) => `  --proxy ${p}   through ${names.join(' and ')}\n`,
+				)
+				.join('') +
+			"  --direct   from this machine's own IP" +
+			(redacted ? '\n(put the proxy credentials back in place of ***)' : ''),
+	);
+}
+
+/** The route for `command`, resolving the config only when it is needed. */
+function route(command: string, options: RouteOptions, deps: SetupDeps) {
+	return downloadRoute(command, options, () =>
+		(deps.resolveConfig ?? realResolveConfig)(),
+	);
+}
+
+/** True when `install-recipes` downloads `source` (else: a local file). */
+const isDownload = (source: string) => /^https?:\/\//i.test(source);
+
 /** `webveil install-libcurl`: the pinned libcurl-impersonate, checksum verified. */
 export async function installLibcurl(
-	options: {proxy?: string; force?: boolean},
+	options: {force?: boolean} & RouteOptions,
 	deps: SetupDeps = {},
 ) {
+	const proxy = route('install-libcurl', options, deps);
 	const api = await (deps.loadInstall ?? loadInstallApi)();
 	return api.installLibcurl({
-		...(options.proxy && {proxy: options.proxy}),
+		...(proxy && {proxy}),
 		force: options.force ?? false,
 		log: deps.log ?? stderr,
 	});
@@ -86,14 +213,19 @@ export async function installLibcurl(
 /** `webveil install-recipes`: a checksum-pinned recipe set. */
 export async function installRecipes(
 	source: string,
-	options: {sha256: string; name?: string; proxy?: string; force?: boolean},
+	options: {sha256: string; name?: string; force?: boolean} & RouteOptions,
 	deps: SetupDeps = {},
 ) {
+	// A local file makes no request: no route to require (and `--proxy` stays
+	// serpcast's own error for a file), but conflicting flags are still refused.
+	const proxy = isDownload(source)
+		? route('install-recipes', options, deps)
+		: (assertOneRoute('install-recipes', options), options.proxy);
 	const api = await (deps.loadInstall ?? loadInstallApi)();
 	return api.installRecipes(source, {
 		sha256: options.sha256,
 		...(options.name && {name: options.name}),
-		...(options.proxy && {proxy: options.proxy}),
+		...(proxy && {proxy}),
 		force: options.force ?? false,
 		log: deps.log ?? stderr,
 	});

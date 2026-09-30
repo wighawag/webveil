@@ -18,13 +18,13 @@ import {createServer} from 'node:http';
 import type {Server} from 'node:http';
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
-import {createSerpcast} from 'serpcast';
+import {createSearchcast} from 'searchcast';
 import type {
 	SearchcastModule,
-	Serpcast,
-	SerpcastOptions,
+	Searchcast,
+	SearchcastOptions,
 	TransportSession,
-} from 'serpcast';
+} from 'searchcast';
 import {
 	closeSerpcastInstances,
 	createSerpcastBackend,
@@ -132,13 +132,13 @@ function fakeSearchcast() {
 
 /** webveil's seams: real serpcast over the blocked transport, options recorded. */
 function fakes() {
-	const built: SerpcastOptions[] = [];
+	const built: SearchcastOptions[] = [];
 	const closed: number[] = [];
 	const browser = fakeSearchcast();
 	const deps: SerpcastDeps = {
-		createSerpcast(options): Serpcast {
+		createSerpcast(options): Searchcast {
 			built.push(options);
-			const real = createSerpcast({...options, transport: blockedTransport});
+			const real = createSearchcast({...options, transport: blockedTransport});
 			return {
 				...real,
 				close: async () => {
@@ -241,24 +241,26 @@ describe('searchcast library mode', () => {
 		expect(fake.browser.closed).toHaveLength(1);
 	});
 
-	it('fails naming the package when searchcast is not installed', async () => {
+	it('fails naming the package when @searchcast/browser is not installed', async () => {
 		writeProject();
 		const fake = fakes();
-		const missing = new Error("Cannot find package 'searchcast'");
+		const missing = new Error("Cannot find package '@searchcast/browser'");
 		const error = await searchWith({
 			...fake.deps,
 			importSearchcast: () => Promise.reject(missing),
 		}).catch((e: Error) => e);
-		expect(error.message).toMatch(/"searchcast" is not installed/);
-		expect(error.message).toMatch(/npm install searchcast/);
+		expect(error.message).toMatch(/"@searchcast\/browser" .*is not installed/);
+		expect(error.message).toMatch(/npm install @searchcast\/browser/);
 		expect(fake.built).toHaveLength(0);
 	});
 
-	it('fails naming the package with the real import (searchcast is an optional peer, not installed here)', async () => {
+	it('fails naming the package with the real import (@searchcast/browser is an optional peer, not installed here)', async () => {
 		writeProject();
 		const fake = fakes();
 		const {importSearchcast: _, ...deps} = fake.deps;
-		await expect(searchWith(deps)).rejects.toThrow(/npm install searchcast/);
+		await expect(searchWith(deps)).rejects.toThrow(
+			/npm install @searchcast\/browser/,
+		);
 	});
 
 	it('refuses a SOCKS egress with credentials, with an explanation', async () => {

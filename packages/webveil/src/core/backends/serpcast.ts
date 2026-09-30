@@ -163,27 +163,53 @@
 //   search does, recipe loading included: listing a code recipe's engine name
 //   means importing (running) it, as every search does; the trust check runs
 //   first, as for a search.
+//
+// Recorded decisions (task move-to-searchcast-packages, serpcast renamed
+// searchcast 0.2 and the browser runner renamed @searchcast/browser:
+// searchcast's ADR 0005). The user-facing `serpcast` spellings (backend name,
+// config section, env) are unchanged here; the next task renames them.
+// - A `set:<name>` entry is resolved with searchcast's `recipeSetDir`: the set
+//   in `$XDG_DATA_HOME/searchcast/recipes`, else in serpcast's old
+//   `$XDG_DATA_HOME/serpcast/recipes` (read for one release), so a set
+//   installed by serpcast keeps working. The old recipes directory counts as a
+//   set location for `declarativePaths` too. The missing-set error names the
+//   new directory (where `webveil install-recipes` writes).
+// - Identity keys: a `set:` entry is resolved to its path before it is hashed
+//   (as before), so a config naming a set now installed in the new directory
+//   gets a new identity key (a fresh state partition, once); a set still read
+//   from the old directory keeps its path and so its key.
+// - The browser runner is imported as `@searchcast/browser` (the optional peer
+//   `>=0.1.0 <0.2.0`, the range searchcast 0.2 itself accepts), and its
+//   missing-package error names it and its install line. The seam keeps its
+//   name `importSearchcast` (the module type is searchcast's
+//   `SearchcastModule`), and `createSerpcast` keeps its name as a seam until
+//   the rename task; both now hand searchcast's non-deprecated API.
+// - The impersonation fix message says the library usually comes with
+//   searchcast (the optional platform package) and only then points at
+//   `webveil install-libcurl` (or `libcurlPath`).
 
 import {existsSync, readdirSync, statSync} from 'node:fs';
 import {dirname, join} from 'node:path';
+import {RecipeError} from '@searchcast/recipe';
+import {loadRecipeFile} from '@searchcast/recipe/node';
 import {
 	createMemoryStore,
-	createSerpcast as realCreateSerpcast,
+	createSearchcast as realCreateSearchcast,
 	DEFAULT_SESSION_IDLE_MS,
 	isCodeRecipe,
 	loadCodeRecipe,
+	oldDataDir,
+	recipeSetDir,
 	recipesDir,
-	SerpcastError,
-} from 'serpcast';
+	SearchcastError,
+} from 'searchcast';
 import type {
 	Engine,
+	Searchcast,
 	SearchcastLibraryOptions,
 	SearchcastModule,
-	Serpcast,
-	SerpcastOptions,
-} from 'serpcast';
-import {RecipeError} from 'serpcast-recipe';
-import {loadRecipeFile} from 'serpcast-recipe/node';
+	SearchcastOptions,
+} from 'searchcast';
 import {resolveConfig} from '../config.js';
 import type {
 	Config,
@@ -210,7 +236,7 @@ import type {Backend, SearchResult} from './types.js';
 
 /** Test seams: how an instance is created, how searchcast is imported. */
 export interface SerpcastDeps {
-	createSerpcast?: (options: SerpcastOptions) => Serpcast;
+	createSerpcast?: (options: SearchcastOptions) => Searchcast;
 	importSearchcast?: () => Promise<SearchcastModule>;
 }
 
@@ -225,8 +251,15 @@ const EXECUTABLE_KEYS = [
 const BROWSER = 'searchcast:';
 /** The prefix of an installed recipe set entry in `recipes`/`codeRecipes`. */
 const SET = 'set:';
-/** What `serpcast install-recipes` writes beside a set's recipes. */
+/** What `install-recipes` writes beside a set's recipes. */
 const SOURCE_FILE = '.source.json';
+/**
+ * Where installed sets live: searchcast's recipes directory, then serpcast's
+ * old one (read, never written, for one release: searchcast's ADR 0005).
+ */
+const SET_BASES = () => [recipesDir(), join(oldDataDir(), 'recipes')];
+/** The optional browser-runner package library-mode engines need. */
+const BROWSER_PACKAGE = '@searchcast/browser';
 const SOCKS = ['socks5', 'socks', 'socks5h'];
 /** Chromium switches that would move the browser off `egress` (see above). */
 const EGRESS_SWITCHES = new Set([
@@ -239,7 +272,7 @@ const EGRESS_SWITCHES = new Set([
 	'host-resolver-rules',
 	'host-rules',
 ]);
-const instances = new Map<string, Serpcast>();
+const instances = new Map<string, Searchcast>();
 
 /** The proxy URL for serpcast: SOCKS always `socks5h` (DNS at the proxy). */
 export function serpcastProxy(egress: Egress): string | undefined {
@@ -257,8 +290,9 @@ const SET_PART = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
  * An installed recipe set entry (`set:<name>` or `set:<name>/<file>`) as its
- * path under serpcast's `recipesDir()` (the user's data directory, never the
- * cwd), or undefined when `value` is not one.
+ * path under searchcast's `recipeSetDir` (the user's data directory, else
+ * serpcast's old one for one release; never the cwd), or undefined when
+ * `value` is not one.
  */
 function installedSetPath(value: string): string | undefined {
 	if (!value.startsWith(SET)) return undefined;
@@ -268,8 +302,8 @@ function installedSetPath(value: string): string | undefined {
 			`serpcast: '${value}' is not an installed recipe set entry ` +
 				'(set:<name> or set:<name>/<file>)',
 		);
-	const dir = join(recipesDir(), parts[0]!);
-	if (!existsSync(dir))
+	const dir = recipeSetDir(parts[0]!);
+	if (!dir)
 		throw new Error(
 			`serpcast: recipe set '${parts[0]}' is not installed in ` +
 				`${recipesDir()} (install it with \`webveil install-recipes ` +
@@ -291,15 +325,16 @@ function resolveRecipePath(config: Config, key: string, value: string): string {
 
 /**
  * A `recipes` entry as its recipe files: a file as is, a directory as every
- * `*.json` inside, sorted (serpcast-recipe's `loadRecipes` rule); an
- * installed set directory (directly under `recipesDir()`, or holding
- * serpcast's `.source.json`) without hidden files (`.source.json`) and the
- * set's `manifest.json`, which are not recipes.
+ * `*.json` inside, sorted (@searchcast/recipe's `loadRecipes` rule); an
+ * installed set directory (directly under `recipesDir()` or serpcast's old
+ * recipes directory, or holding the installer's `.source.json`) without
+ * hidden files (`.source.json`) and the set's `manifest.json`, which are not
+ * recipes.
  */
 function declarativePaths(path: string): string[] {
 	if (!statSync(path).isDirectory()) return [path];
 	const isSet =
-		dirname(path) === recipesDir() || existsSync(join(path, SOURCE_FILE));
+		SET_BASES().includes(dirname(path)) || existsSync(join(path, SOURCE_FILE));
 	return readdirSync(path)
 		.sort()
 		.filter((f) => f.endsWith('.json'))
@@ -449,9 +484,12 @@ function browserEngine(
 	return {name, searchcast: {recipe: found}};
 }
 
-/** Import `searchcast` (a variable specifier: an optional package, not bundled). */
+/**
+ * Import the browser runner `@searchcast/browser` (a variable specifier: an
+ * optional package, not bundled).
+ */
 function importSearchcast(): Promise<SearchcastModule> {
-	const name = 'searchcast';
+	const name = BROWSER_PACKAGE;
 	return import(name) as Promise<SearchcastModule>;
 }
 
@@ -607,19 +645,22 @@ export function trustedLibcurlPath(config: Config): string | undefined {
 	return resolvePath(config, 'libcurlPath', lib);
 }
 
-/** An `impersonation` SerpcastError as an error carrying the fix (search and fetch). */
-export function impersonationFailure(error: SerpcastError): Error {
+/** An `impersonation` SearchcastError as an error carrying the fix (search and fetch). */
+export function impersonationFailure(error: SearchcastError): Error {
 	return new Error(
 		`serpcast: browser impersonation is not active (${error.message}). ` +
-			'Fix: run `webveil install-libcurl`, or set serpcast.libcurlPath ' +
-			'in the global config (or WEBVEIL_SERPCAST_LIBCURL_PATH) to a ' +
-			'libcurl-impersonate library.',
+			'On most platforms searchcast brings the library as its optional ' +
+			'dependency @searchcast/libcurl-<platform>. Fix: reinstall webveil ' +
+			'with optional dependencies enabled; where that is not possible (or ' +
+			'the platform has no such package), run `webveil install-libcurl`, ' +
+			'or set serpcast.libcurlPath in the global config (or ' +
+			'WEBVEIL_SERPCAST_LIBCURL_PATH) to a libcurl-impersonate library.',
 		{cause: error},
 	);
 }
 
 function failure(error: unknown): Error {
-	if (!(error instanceof SerpcastError)) return error as Error;
+	if (!(error instanceof SearchcastError)) return error as Error;
 	if (error.kind === 'impersonation') return impersonationFailure(error);
 	if (error.kind !== 'exhausted') return error;
 	const each = (error.failures ?? []).map(
@@ -643,8 +684,9 @@ async function libraryOptions(
 				Promise.reject(
 					new Error(
 						'serpcast: a searchcast library-mode engine is listed, but the ' +
-							'optional package "searchcast" is not installed (npm install ' +
-							'searchcast); or use serpcast.searchcast endpoint mode',
+							`optional package "${BROWSER_PACKAGE}" (the browser runner) ` +
+							`is not installed (npm install ${BROWSER_PACKAGE}, next to ` +
+							'webveil); or use serpcast.searchcast endpoint mode',
 						{cause},
 					),
 				),
@@ -699,7 +741,7 @@ export function createSerpcastBackend(
 						: undefined;
 				instance =
 					instances.get(key) ??
-					(deps.createSerpcast ?? realCreateSerpcast)({
+					(deps.createSerpcast ?? realCreateSearchcast)({
 						proxy: serpcastProxy(config.egress),
 						strict: true,
 						libcurlPath: s.libcurlPath,

@@ -43,18 +43,18 @@
 	],
 	"dependencies": {
 		"@modelcontextprotocol/server": "2.0.0-alpha.2",
+		"@searchcast/recipe": "^0.1.0",
 		"distilly": "^0.1.0",
 		"fetch-socks": "^1.3.3",
 		"incur": "0.4.10",
-		"serpcast": "^0.6.0",
-		"serpcast-recipe": "^0.2.0",
+		"searchcast": "^0.2.0",
 		"undici": "^7.28.0"
 	},
 	"peerDependencies": {
-		"searchcast": ">=0.1.1"
+		"@searchcast/browser": ">=0.1.0 <0.2.0"
 	},
 	"peerDependenciesMeta": {
-		"searchcast": {
+		"@searchcast/browser": {
 			"optional": true
 		}
 	},

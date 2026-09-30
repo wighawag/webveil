@@ -1,7 +1,7 @@
 // setup: the four commands that make webveil the only thing a user installs
 // (`install-libcurl`, `install-recipes`, `recipes`, `doctor`), wrapping
-// serpcast's install API. The installers live on serpcast's separate
-// `serpcast/install` entry, which this module imports LAZILY (`loadInstallApi`),
+// searchcast's install API. The installers live on searchcast's separate
+// `searchcast/install` entry, which this module imports LAZILY (`loadInstallApi`),
 // only when one of these commands runs: `search`, `fetch` and everything they
 // import never load download code (test/setup.test.ts walks the imports).
 //
@@ -97,10 +97,28 @@
 //   through the fetch hop's egress (the hop that uses the library then).
 // - Progress lines go to stderr as serpcast's CLI prints them; the result is
 //   the command's output (TOON or JSON, as for every webveil command).
+//
+// Recorded decisions (task move-to-searchcast-packages, serpcast renamed
+// searchcast 0.2, searchcast's ADR 0005):
+// - The installers write only to searchcast's data directory
+//   (`$XDG_DATA_HOME/searchcast`): they are searchcast's own installers, which
+//   never write to serpcast's old one. Reading falls back to the old one for
+//   one release, as searchcast does (`recipeSetDir`, the library lookup).
+// - `doctor` shows searchcast's old-data-dir notice (`oldDataDirHits`: what is
+//   still read from `$XDG_DATA_HOME/serpcast`, with the `mv` command) as a
+//   top-level `oldDataDir` field, not inside `libcurl`: it covers recipe sets
+//   too, and it is shown whatever the backend. It is a notice, not a problem:
+//   it does not make doctor unhealthy (the old directory still works for one
+//   release). Alternative considered: counting it as a problem, rejected
+//   because doctor would then fail on a working setup.
+// - `recipes` lists the sets still in the old directory as `oldSets` (with
+//   `used`: false when a set of the same name in the new directory shadows
+//   it), mirroring `searchcast recipes list`; absent when there are none.
+// - A `set:` entry in `doctor` is resolved with `recipeSetDir` (new directory,
+//   then old), as a search resolves it (backends/serpcast.ts).
 
-import {existsSync} from 'node:fs';
 import {join} from 'node:path';
-import type {DoctorReport, RecipeSet} from 'serpcast/install';
+import type {DoctorReport, OldDataDirHits, RecipeSet} from 'searchcast/install';
 import {resolveConfig as realResolveConfig} from './core/config.js';
 import type {Config, Egress, ResolveOptions} from './core/config.js';
 import {EgressError, fetchEgressConfig} from './core/egress.js';
@@ -112,12 +130,12 @@ import {
 } from './core/backends/serpcast.js';
 import type {EngineDescription} from './core/backends/serpcast.js';
 
-/** serpcast's install API (the `serpcast/install` entry). */
-export type InstallApi = typeof import('serpcast/install');
+/** searchcast's install API (the `searchcast/install` entry). */
+export type InstallApi = typeof import('searchcast/install');
 
-/** Import `serpcast/install`: the only place download code is loaded. */
+/** Import `searchcast/install`: the only place download code is loaded. */
 export function loadInstallApi(): Promise<InstallApi> {
-	return import('serpcast/install');
+	return import('searchcast/install');
 }
 
 /** Seams: the install API, the progress sink, and config resolution. */
@@ -348,11 +366,9 @@ export async function installRecipes(
 	});
 }
 
-/** `webveil recipes`: the installed sets, with where they came from. */
-export async function listRecipes(deps: SetupDeps = {}) {
-	const api = await (deps.loadInstall ?? loadInstallApi)();
-	const dir = api.recipesDir();
-	const sets = api.listRecipeSets(dir).map((set: RecipeSet) => ({
+/** One installed set as `webveil recipes` lists it. */
+function describeSet(set: RecipeSet) {
+	return {
 		name: set.name,
 		dir: set.dir,
 		...(set.source?.manifest?.version && {
@@ -364,8 +380,26 @@ export async function listRecipes(deps: SetupDeps = {}) {
 			const sha256 = set.source?.files[file];
 			return sha256 ? `${file} sha256 ${sha256}` : file;
 		}),
+	};
+}
+
+/**
+ * `webveil recipes`: the installed sets, with where they came from; then, when
+ * there are any, the sets still in serpcast's old data directory (read for
+ * one release), each saying whether it is used or shadowed by a set of the
+ * same name in the new one.
+ */
+export async function listRecipes(deps: SetupDeps = {}) {
+	const api = await (deps.loadInstall ?? loadInstallApi)();
+	const dir = api.recipesDir();
+	const sets = api.listRecipeSets(dir).map(describeSet);
+	const oldDir = join(api.oldDataDir(), 'recipes');
+	const names = new Set(sets.map((set) => set.name));
+	const oldSets = api.listRecipeSets(oldDir).map((set: RecipeSet) => ({
+		...describeSet(set),
+		used: !names.has(set.name),
 	}));
-	return {dir, sets};
+	return {dir, sets, ...(oldSets.length > 0 && {oldDir, oldSets})};
 }
 
 /** A proxy URL with its credentials replaced by `***`. */
@@ -402,7 +436,12 @@ export interface DoctorResult {
 	egress: string;
 	fetchEgress: string;
 	fetchTransport?: string;
-	libcurl?: DoctorReport & {needed: boolean};
+	libcurl?: Omit<DoctorReport, 'oldDataDir'> & {needed: boolean};
+	/**
+	 * What is still read from serpcast's old data directory (the library, recipe
+	 * sets), with the command that moves it; absent when nothing is.
+	 */
+	oldDataDir?: OldDataDirHits;
 	engines?: EngineDescription[];
 	sets?: {entry: string; installed: boolean; dir: string}[];
 }
@@ -449,7 +488,7 @@ export async function doctor(
 		serpcastProxy(serpcastBackend ? config.egress : fetchConfig.egress),
 	);
 	if (libcurlPath) {
-		const report = await api.doctor({
+		const {oldDataDir: _old, ...report} = await api.doctor({
 			...(libcurlPath.path && {libcurlPath: libcurlPath.path}),
 			...(proxy && {proxy}),
 			remote: options.remote ?? false,
@@ -458,22 +497,26 @@ export async function doctor(
 		if (needed && !api.healthy(report))
 			problems.push(
 				report.problem
-					? `${report.problem} (with webveil: \`webveil install-libcurl\`, ` +
-							'or serpcast.libcurlPath in the global config)'
+					? `${report.problem} (with webveil: reinstall it with optional ` +
+							'dependencies, which bring @searchcast/libcurl-<platform> on ' +
+							'supported platforms; else `webveil install-libcurl`, or ' +
+							'serpcast.libcurlPath in the global config)'
 					: `remote check failed: ${report.remote?.error ?? 'unknown'}`,
 			);
 	}
+	const old = api.oldDataDirHits();
+	if (old) result.oldDataDir = old;
 	if (serpcastBackend) {
 		const dir = api.recipesDir();
 		result.sets = setEntries(config).map((entry) => {
 			const name = entry.slice('set:'.length).split('/')[0]!;
-			const installed = existsSync(join(dir, name));
-			if (!installed)
+			const found = api.recipeSetDir(name);
+			if (!found)
 				problems.push(
 					`recipe set '${name}' (${entry}) is not installed in ${dir}: ` +
 						'webveil install-recipes <archive> --sha256 <hex>',
 				);
-			return {entry, installed, dir: join(dir, name)};
+			return {entry, installed: !!found, dir: found ?? join(dir, name)};
 		});
 		// A missing set is already reported; resolving the chain would only
 		// report it again.

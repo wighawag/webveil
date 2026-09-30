@@ -1,18 +1,26 @@
 packages:
   - "packages/*"
 # Do not install peer dependencies nobody asked for. webveil declares
-# `searchcast` as an OPTIONAL peer (library-mode browser engines, installed
-# by the user next to webveil), and serpcast declares it as an optional peer
-# too; with pnpm's default (autoInstallPeers: true) it would be pulled into
-# the dev tree and the lockfile. pnpm has no per-package form of this
-# setting, so it is workspace-wide: every required peer in this workspace is
-# already satisfied by a direct dependency (checked with `pnpm install`,
+# `@searchcast/browser` as an OPTIONAL peer (library-mode browser engines,
+# installed by the user next to webveil), and searchcast declares it as an
+# optional peer too; with pnpm's default (autoInstallPeers: true) it would be
+# pulled into the dev tree and the lockfile. pnpm has no per-package form of
+# this setting, so it is workspace-wide: every required peer in this workspace
+# is already satisfied by a direct dependency (checked with `pnpm install`,
 # which reports unmet peers). See work/tasks/*/searchcast-optional-peer-dependency.md.
 autoInstallPeers: false
 allowBuilds:
   '@parcel/watcher': true
   esbuild: true
   koffi: false
+# searchcast 0.2 and its packages (serpcast renamed, task
+# move-to-searchcast-packages) were published on 2026-09-30, inside the
+# release-age window: pinned exact versions, as was done for serpcast.
 minimumReleaseAgeExclude:
-  - serpcast-recipe@0.1.0 || 0.2.0
-  - serpcast@0.1.0 || 0.1.1 || 0.2.0 || 0.3.0 || 0.5.0 || 0.6.0
+  - searchcast@0.2.0
+  - '@searchcast/recipe@0.1.0'
+  - '@searchcast/libcurl-linux-x64@0.1.0'
+  - '@searchcast/libcurl-linux-arm64@0.1.0'
+  - '@searchcast/libcurl-darwin-x64@0.1.0'
+  - '@searchcast/libcurl-darwin-arm64@0.1.0'
+  - '@searchcast/libcurl-win32-x64@0.1.0'

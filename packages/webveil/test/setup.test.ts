@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import {createServer} from 'node:http';
 import type {Server} from 'node:http';
+import {connect} from 'node:net';
 import type {AddressInfo} from 'node:net';
 import {createRequire} from 'node:module';
 import {homedir, tmpdir} from 'node:os';
@@ -48,12 +49,15 @@ let server: Server;
 let base: string;
 /** url path -> body the release server answers. */
 const served = new Map<string, Buffer>();
+/** Every url path the release server was asked for. */
+const requested: string[] = [];
 
 beforeAll(async () => {
 	root = mkdtempSync(join(tmpdir(), 'webveil-setup-'));
 	dataHome = join(root, 'data');
 	process.env.XDG_DATA_HOME = dataHome;
 	server = createServer((req, res) => {
+		requested.push(req.url ?? '');
 		const body = served.get(req.url ?? '');
 		res.statusCode = body ? 200 : 404;
 		res.end(body ?? 'not found');
@@ -73,6 +77,7 @@ afterAll(async () => {
 afterEach(() => {
 	rmSync(dataHome, {recursive: true, force: true});
 	served.clear();
+	requested.length = 0;
 });
 
 // ---- a minimal .tar.gz writer (ustar headers, regular files only) ----------
@@ -144,10 +149,16 @@ function installApi(release?: realInstall.Release) {
 	return {api, calls};
 }
 
+/** An isolated config with the default (direct) egress, never the user's. */
+const directConfig = () =>
+	resolveConfig({cwd: root, globalPath: join(root, 'no-config.json'), env: {}});
+
 /** Serve the CLI; returns stdout, the exit code and the progress lines. */
 async function run(argv: string[], setup: SetupDeps) {
 	const log: string[] = [];
-	const cli = createCli({setup: {log: (l) => log.push(l), ...setup}});
+	const cli = createCli({
+		setup: {log: (l) => log.push(l), resolveConfig: directConfig, ...setup},
+	});
 	let out = '';
 	let code = 0;
 	await cli.serve([...argv, '--format', 'json'], {
@@ -328,6 +339,213 @@ describe('webveil install-recipes and webveil recipes', () => {
 			dir: join(dataHome, 'serpcast', 'recipes'),
 			sets: [],
 		});
+	});
+});
+
+describe('the download route under a proxy egress', () => {
+	let project: string;
+	let globalPath: string;
+	let proxy: Server;
+	let proxyUrl: string;
+	/** Every CONNECT target the test proxy tunnelled. */
+	const tunnelled: string[] = [];
+
+	beforeAll(async () => {
+		project = join(root, 'route-repo');
+		globalPath = join(root, 'route-xdg', 'webveil', 'config.json');
+		proxy = createServer((_req, res) => {
+			res.statusCode = 405;
+			res.end();
+		});
+		proxy.on('connect', (req, client, head) => {
+			tunnelled.push(req.url ?? '');
+			const [host, port] = (req.url ?? '').split(':');
+			const upstream = connect(Number(port), host, () => {
+				client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+				upstream.write(head);
+				upstream.pipe(client);
+				client.pipe(upstream);
+			});
+			upstream.on('error', () => client.destroy());
+			client.on('error', () => upstream.destroy());
+		});
+		await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+		proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+	});
+
+	afterAll(async () => {
+		proxy.closeAllConnections();
+		await new Promise((r) => proxy.close(r));
+	});
+
+	afterEach(() => {
+		rmSync(project, {recursive: true, force: true});
+		rmSync(dirname(globalPath), {recursive: true, force: true});
+		tunnelled.length = 0;
+	});
+
+	function write(path: string, value: unknown) {
+		mkdirSync(dirname(path), {recursive: true});
+		writeFileSync(path, JSON.stringify(value));
+	}
+
+	/** Seams: the recording install API and this folder's config. */
+	function deps(api: InstallApi, env: Record<string, string> = {}): SetupDeps {
+		return {
+			loadInstall: async () => api,
+			resolveConfig: () => resolveConfig({cwd: project, globalPath, env}),
+		};
+	}
+
+	const SOCKS = 'socks5://user:secret@127.0.0.1:9050';
+	const configs: [string, () => Record<string, string>, string][] = [
+		[
+			'an http egress in the global config',
+			() => {
+				write(globalPath, {
+					egress: {mode: 'http', url: 'http://user:secret@proxy.test:3128'},
+				});
+				return {};
+			},
+			'--proxy http://***@proxy.test:3128',
+		],
+		[
+			'a socks5 egress in the project config',
+			() => {
+				write(join(project, 'webveil.json'), {
+					egress: {mode: 'socks5', url: SOCKS},
+				});
+				return {};
+			},
+			'--proxy socks5h://***@127.0.0.1:9050',
+		],
+		[
+			'a socks5 egress from env',
+			() => ({WEBVEIL_EGRESS: 'socks5', WEBVEIL_EGRESS_URL: SOCKS}),
+			'--proxy socks5h://***@127.0.0.1:9050',
+		],
+		[
+			'a socks5 fetchEgress only (the backend hop direct)',
+			() => {
+				write(join(project, 'webveil.json'), {
+					fetchEgress: {mode: 'socks5', url: SOCKS},
+				});
+				return {};
+			},
+			'--proxy socks5h://***@127.0.0.1:9050',
+		],
+	];
+
+	for (const [label, setUp, suggestion] of configs) {
+		it(`refuses a download with no route, before any request: ${label}`, async () => {
+			const env = setUp();
+			const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+			const {url, sha} = serveSet();
+			for (const argv of [
+				['install-libcurl'],
+				['install-recipes', url, '--sha256', sha],
+			]) {
+				const res = await run(argv, deps(api, env));
+				expect(res.code).toBe(2);
+				const error = JSON.parse(res.out);
+				expect(error.code).toBe('ROUTE_REQUIRED');
+				expect(error.message).toContain(suggestion);
+				expect(error.message).toContain('--direct');
+				expect(error.message).toMatch(/own IP/);
+				expect(error.message).toMatch(/fetchEgress|egress: /);
+				expect(res.out).not.toContain('secret');
+			}
+			expect(requested).toEqual([]);
+			expect(calls.libcurl).toHaveLength(0);
+			expect(calls.recipes).toHaveLength(0);
+			expect(existsSync(join(dataHome, 'serpcast'))).toBe(false);
+		});
+	}
+
+	it('--direct downloads directly', async () => {
+		write(join(project, 'webveil.json'), {
+			egress: {mode: 'socks5', url: SOCKS},
+		});
+		const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+		const res = await run(['install-libcurl', '--direct'], deps(api));
+		expect(res.code).toBe(0);
+		expect(readFileSync(libraryPath(), 'utf8')).toBe('LIBRARY v1');
+		expect(calls.libcurl[0]).not.toHaveProperty('proxy');
+		const {url, sha} = serveSet();
+		const set = await run(
+			['install-recipes', url, '--sha256', sha, '--direct'],
+			deps(api),
+		);
+		expect(set.code).toBe(0);
+		expect(calls.recipes[0]).not.toHaveProperty('proxy');
+		expect(tunnelled).toEqual([]);
+		expect(requested).toContain('/my-set-1.2.0.tar.gz');
+	});
+
+	it('--proxy goes through the given proxy', async () => {
+		write(join(project, 'webveil.json'), {
+			egress: {mode: 'socks5', url: SOCKS},
+		});
+		const {api} = installApi(serveRelease('LIBRARY v1'));
+		const res = await run(['install-libcurl', '--proxy', proxyUrl], deps(api));
+		expect(res.code).toBe(0);
+		expect(readFileSync(libraryPath(), 'utf8')).toBe('LIBRARY v1');
+		const {url, sha} = serveSet();
+		const set = await run(
+			['install-recipes', url, '--sha256', sha, '--proxy', proxyUrl],
+			deps(api),
+		);
+		expect(set.code).toBe(0);
+		const authority = new URL(base).host;
+		expect(tunnelled).toEqual([authority, authority]);
+	});
+
+	it('refuses --proxy with --direct, whatever the egress and the source', async () => {
+		const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+		const {archive, sha} = serveSet();
+		const file = join(root, 'route-set.tar.gz');
+		writeFileSync(file, archive);
+		for (const argv of [
+			['install-libcurl'],
+			['install-recipes', file, '--sha256', sha],
+		]) {
+			const res = await run(
+				[...argv, '--proxy', proxyUrl, '--direct'],
+				deps(api),
+			);
+			expect(res.code).toBe(2);
+			expect(JSON.parse(res.out).code).toBe('CONFLICTING_OPTIONS');
+		}
+		expect(calls.libcurl).toHaveLength(0);
+		expect(calls.recipes).toHaveLength(0);
+		expect(requested).toEqual([]);
+	});
+
+	it('needs no route for a local file', async () => {
+		write(join(project, 'webveil.json'), {
+			egress: {mode: 'socks5', url: SOCKS},
+		});
+		const {archive, sha} = serveSet();
+		const file = join(root, 'route-set.tar.gz');
+		writeFileSync(file, archive);
+		const {api} = installApi();
+		const res = await run(
+			['install-recipes', file, '--sha256', sha],
+			deps(api),
+		);
+		expect(res.code).toBe(0);
+		expect(
+			existsSync(join(dataHome, 'serpcast', 'recipes', 'my-set', 'web.json')),
+		).toBe(true);
+		expect(requested).toEqual([]);
+	});
+
+	it('a direct egress downloads directly with no flag', async () => {
+		write(join(project, 'webveil.json'), {egress: {mode: 'direct'}});
+		const {api, calls} = installApi(serveRelease('LIBRARY v1'));
+		const res = await run(['install-libcurl'], deps(api));
+		expect(res.code).toBe(0);
+		expect(calls.libcurl[0]).not.toHaveProperty('proxy');
 	});
 });
 

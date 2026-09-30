@@ -27,7 +27,13 @@ import {search as coreSearch} from './core/search.js';
 import {fetch as coreFetch} from './core/fetch.js';
 import {closeBackends} from './core/backends/registry.js';
 import {clearSerpcastState} from './core/backends/serpcast.js';
-import {doctor, installLibcurl, installRecipes, listRecipes} from './setup.js';
+import {
+	UsageError,
+	doctor,
+	installLibcurl,
+	installRecipes,
+	listRecipes,
+} from './setup.js';
 import type {SetupDeps} from './setup.js';
 
 /**
@@ -55,7 +61,32 @@ export interface CliOptions {
 const PROXY_HELP =
 	'Download through this proxy (http://, socks5://, socks5h://; socks5h:// ' +
 	'resolves host names at the proxy, e.g. socks5h://127.0.0.1:9050 for Tor). ' +
-	'Default: a direct download, never the configured egress';
+	'Never the configured egress by default: with a direct egress the download ' +
+	'is direct, with a proxy egress (egress or fetchEgress) give --proxy or ' +
+	'--direct, else it is refused (exit 2)';
+
+const DIRECT_HELP =
+	"Download from this machine's own IP. Required (or --proxy) when the " +
+	'configured egress or fetchEgress is a proxy';
+
+/** Run an install command, turning a `UsageError` into an exit-2 error. */
+async function withUsage<T>(
+	c: {
+		error(e: {code: string; message: string; exitCode: number}): never;
+	},
+	fn: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await fn();
+	} catch (error) {
+		if (!(error instanceof UsageError)) throw error;
+		return c.error({
+			code: error.code,
+			message: error.message,
+			exitCode: error.exitCode,
+		});
+	}
+}
 
 /** The size presets `fetch` accepts, mirroring the core's `FetchSize`. */
 const SIZES = ['s', 'm', 'l', 'f'] as const;
@@ -146,13 +177,14 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 				'where webveil finds it. Runs only when you type it.',
 			options: z.object({
 				proxy: z.string().optional().describe(PROXY_HELP),
+				direct: z.boolean().optional().describe(DIRECT_HELP),
 				force: z
 					.boolean()
 					.optional()
 					.describe('Replace a differing library already installed'),
 			}),
 			async run(c) {
-				return installLibcurl(c.options, setup);
+				return withUsage(c, () => installLibcurl(c.options, setup));
 			},
 		})
 		.command('install-recipes', {
@@ -171,13 +203,21 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 					.optional()
 					.describe("The set's name (default: the archive's manifest name)"),
 				proxy: z.string().optional().describe(PROXY_HELP),
+				direct: z
+					.boolean()
+					.optional()
+					.describe(
+						`${DIRECT_HELP}. A local file makes no request and needs neither`,
+					),
 				force: z
 					.boolean()
 					.optional()
 					.describe('Replace a differing set already installed'),
 			}),
 			async run(c) {
-				return installRecipes(c.args.source, c.options, setup);
+				return withUsage(c, () =>
+					installRecipes(c.args.source, c.options, setup),
+				);
 			},
 		})
 		.command('recipes', {

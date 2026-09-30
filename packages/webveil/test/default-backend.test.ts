@@ -1,16 +1,18 @@
 // The default backend (task default-backend-searchcast): a fresh config is
-// the searchcast backend on `direct` egress with the bundled Marginalia chain;
+// the searchcast backend on `direct` egress with the bundled default chain
+// (Mwmbl then Marginalia since task default-chain-mwmbl);
 // any user engine setting replaces that chain whole; no trust rule changes;
 // a missing library fails loud (search and fetch); a failed search and
 // `webveil doctor` say the default changed. The chain runs for real (real
-// searchcast, the real bundled recipe) against a LOCAL fake of the Marginalia
-// API: no network.
+// searchcast, the real bundled recipes) against LOCAL fakes of the Mwmbl and
+// Marginalia APIs: no network.
 
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from 'node:fs';
@@ -30,10 +32,13 @@ import type {
 } from 'searchcast';
 import * as realInstall from 'searchcast/install';
 import {
-	BUNDLED_RECIPE,
+	BUNDLED_RECIPES,
 	closeSearchcastInstances,
 	createSearchcastBackend,
+	DEFAULT_CHAIN_NOTE,
+	DEFAULT_ENGINES,
 	describeSearchcastEngines,
+	usesDefaultSearchcastChain,
 } from '../src/core/backends/searchcast.js';
 import {getBackend} from '../src/core/backends/registry.js';
 import {
@@ -54,7 +59,15 @@ import {TrustError} from '../src/core/trust.js';
 import {doctor} from '../src/setup.js';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
-const API = 'https://api.marginalia.nu';
+const MWMBL_API = 'https://api.mwmbl.org/api/v2/search/';
+const MARGINALIA_API = 'https://api.marginalia.nu';
+const MWMBL_RECIPE = join(pkgDir, 'recipes', 'mwmbl.mjs');
+const MARGINALIA_RECIPE = join(pkgDir, 'recipes', 'marginalia.mjs');
+/** What `describeSearchcastEngines` lists for the default chain. */
+const DEFAULT_CHAIN = [
+	{name: 'mwmbl', kind: 'code', file: MWMBL_RECIPE},
+	{name: 'marginalia', kind: 'code', file: MARGINALIA_RECIPE},
+];
 
 let root: string;
 let globalPath: string;
@@ -70,10 +83,12 @@ beforeEach(() => {
 		XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 		XDG_DATA_HOME: process.env.XDG_DATA_HOME,
 		MARGINALIA_API_KEY: process.env.MARGINALIA_API_KEY,
+		MWMBL_API_KEY: process.env.MWMBL_API_KEY,
 	};
 	process.env.XDG_STATE_HOME = join(root, 'state');
 	process.env.XDG_DATA_HOME = join(root, 'data');
 	delete process.env.MARGINALIA_API_KEY;
+	delete process.env.MWMBL_API_KEY;
 });
 
 afterEach(async () => {
@@ -119,12 +134,19 @@ describe('the default config', () => {
 		expect(resolveFetchTransport(config)).toBe('searchcast');
 	});
 
-	it('runs the bundled Marginalia code recipe, shipped in the package', async () => {
-		expect(BUNDLED_RECIPE).toBe(join(pkgDir, 'recipes', 'marginalia.mjs'));
-		expect(existsSync(BUNDLED_RECIPE)).toBe(true);
-		expect(await describeSearchcastEngines(fresh())).toEqual([
-			{name: 'marginalia', kind: 'code', file: BUNDLED_RECIPE},
-		]);
+	it('runs the bundled chain, Mwmbl then Marginalia, from code recipes shipped in the package', async () => {
+		expect(DEFAULT_ENGINES).toEqual(['mwmbl', 'marginalia']);
+		expect(BUNDLED_RECIPES).toEqual([MWMBL_RECIPE, MARGINALIA_RECIPE]);
+		for (const file of BUNDLED_RECIPES) expect(existsSync(file)).toBe(true);
+		expect(usesDefaultSearchcastChain(fresh())).toBe(true);
+		expect(await describeSearchcastEngines(fresh())).toEqual(DEFAULT_CHAIN);
+	});
+
+	it('records the searchcast commit each bundled recipe was copied from', () => {
+		for (const file of BUNDLED_RECIPES)
+			expect(readFileSync(file, 'utf8')).toMatch(
+				/github\.com\/wighawag\/searchcast\/blob\/[0-9a-f]{40}\/examples\/recipes\//,
+			);
 	});
 
 	it('takes a proxy egress: the unused loopback baseUrl does not trip the local-backend guard', () => {
@@ -182,18 +204,22 @@ describe('user engine settings replace the default chain whole', () => {
 		);
 	});
 
-	it('engines alone: the bundled recipe is not loaded', async () => {
-		writeJson(globalPath, {searchcast: {engines: ['marginalia']}});
-		await expect(describeSearchcastEngines(fresh())).rejects.toThrow(
-			/unknown engine 'marginalia' \(loaded recipes: none\)/,
-		);
+	it('engines alone: the bundled recipes are not loaded', async () => {
+		for (const name of DEFAULT_ENGINES) {
+			writeJson(globalPath, {searchcast: {engines: [name]}});
+			const config = fresh();
+			expect(usesDefaultSearchcastChain(config)).toBe(false);
+			await expect(describeSearchcastEngines(config)).rejects.toThrow(
+				new RegExp(`unknown engine '${name}' \\(loaded recipes: none\\)`),
+			);
+		}
 	});
 
 	it('code recipes alone (env): no default engines merged in', async () => {
 		const config = resolveConfig({
 			cwd: project,
 			globalPath,
-			env: {WEBVEIL_SEARCHCAST_CODE_RECIPES: BUNDLED_RECIPE},
+			env: {WEBVEIL_SEARCHCAST_CODE_RECIPES: MWMBL_RECIPE},
 		});
 		await expect(describeSearchcastEngines(config)).rejects.toThrow(
 			/set searchcast\.engines/,
@@ -211,15 +237,19 @@ describe('user engine settings replace the default chain whole', () => {
 		writeJson(globalPath, {searchcast: {cooldownMs: 1000}});
 		expect(
 			(await describeSearchcastEngines(fresh())).map((e) => e.name),
-		).toEqual(['marginalia']);
+		).toEqual(['mwmbl', 'marginalia']);
 	});
 });
 
 describe('no trust rule relaxed', () => {
-	it('a project webveil.json still cannot add code recipes, the bundled file included', async () => {
-		for (const codeRecipes of [[BUNDLED_RECIPE], ['./mine.mjs']]) {
+	it('a project webveil.json still cannot add code recipes, the bundled files included', async () => {
+		for (const codeRecipes of [
+			[MWMBL_RECIPE],
+			[MARGINALIA_RECIPE],
+			['./mine.mjs'],
+		]) {
 			writeJson(join(project, 'webveil.json'), {
-				searchcast: {codeRecipes, engines: ['marginalia']},
+				searchcast: {codeRecipes, engines: ['mwmbl']},
 			});
 			await expect(describeSearchcastEngines(fresh())).rejects.toThrow(
 				TrustError,
@@ -229,13 +259,11 @@ describe('no trust rule relaxed', () => {
 
 	it('a project webveil.json selecting the searchcast backend gets the bundled chain', async () => {
 		writeJson(join(project, 'webveil.json'), {backend: 'searchcast'});
-		expect(await describeSearchcastEngines(fresh())).toEqual([
-			{name: 'marginalia', kind: 'code', file: BUNDLED_RECIPE},
-		]);
+		expect(await describeSearchcastEngines(fresh())).toEqual(DEFAULT_CHAIN);
 	});
 });
 
-// ---- the chain against a local fake of the Marginalia API ----------------
+// ---- the chain against local fakes of the Mwmbl and Marginalia APIs -------
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -244,16 +272,38 @@ afterEach(async () => {
 });
 
 /**
- * A local fake of the Marginalia API (`/<key>/search/<query>`): 200 with
- * results, or `status`. Returns its base URL and the paths requested.
+ * Local fakes of both APIs on one server: Mwmbl's (`/mwmbl?q=<query>`,
+ * results with `content`) and Marginalia's (`/marginalia/<key>/search/<query>`,
+ * results with `description`), each answering 200 with results, or its given
+ * status. Returns the base URL and the paths requested, in order.
  */
-async function fakeApi(status = 200) {
+async function fakeApis(status: {mwmbl?: number; marginalia?: number} = {}) {
 	const paths: string[] = [];
 	server = createServer((req, res) => {
-		paths.push(req.url ?? '');
-		res.statusCode = status;
+		const path = req.url ?? '';
+		paths.push(path);
+		const url = new URL(path, 'http://fake');
+		const mwmbl = url.pathname === '/mwmbl';
+		res.statusCode = (mwmbl ? status.mwmbl : status.marginalia) ?? 200;
 		res.setHeader('content-type', 'application/json');
-		const query = decodeURIComponent((req.url ?? '').split('/')[3] ?? '');
+		if (mwmbl) {
+			const query = url.searchParams.get('q');
+			res.end(
+				JSON.stringify({
+					query,
+					results: [
+						{
+							url: 'https://m.example/',
+							title: `M about ${query}`,
+							content: 'from mwmbl',
+						},
+						{title: 'no url'},
+					],
+				}),
+			);
+			return;
+		}
+		const query = decodeURIComponent(path.split('/')[4] ?? '');
 		res.end(
 			JSON.stringify({
 				results: [
@@ -273,15 +323,20 @@ async function fakeApi(status = 200) {
 	return {base, paths};
 }
 
-/** A transport that sends the API's requests to the local fake instead. */
+/** A transport that sends both APIs' requests to the local fakes instead. */
 function redirectTo(base: string): ChainTransport {
+	const local = (url: string) => {
+		if (url.startsWith(MWMBL_API))
+			return `${base}/mwmbl${url.slice(MWMBL_API.length)}`;
+		if (url.startsWith(`${MARGINALIA_API}/`))
+			return `${base}/marginalia${url.slice(MARGINALIA_API.length)}`;
+		throw new Error(`unexpected request ${url}`);
+	};
 	return {
 		session(): TransportSession {
 			return {
 				async request(url: string) {
-					if (!url.startsWith(`${API}/`))
-						throw new Error(`unexpected request ${url}`);
-					const r = await globalThis.fetch(base + url.slice(API.length));
+					const r = await globalThis.fetch(local(url));
 					const text = await r.text();
 					return {
 						url,
@@ -320,44 +375,75 @@ function searchFresh(
 	);
 }
 
-describe('a search through the default chain (local fake API, no network)', () => {
-	it('returns the API results, with the shared public key, strict and direct', async () => {
-		const api = await fakeApi();
+const MARGINALIA_RESULTS = [
+	{
+		title: 'One about hello world',
+		url: 'https://one.example/',
+		snippet: 'the first',
+	},
+	{title: 'https://two.example/', url: 'https://two.example/'},
+];
+
+describe('a search through the default chain (local fake APIs, no network)', () => {
+	it('asks Mwmbl first, keyless, strict and direct; Marginalia is not asked', async () => {
+		const api = await fakeApis();
 		const built: SearchcastOptions[] = [];
 		const results = await searchFresh(redirectTo(api.base), built);
 		expect(results).toEqual([
 			{
-				title: 'One about hello world',
-				url: 'https://one.example/',
-				snippet: 'the first',
+				title: 'M about hello world',
+				url: 'https://m.example/',
+				snippet: 'from mwmbl',
 			},
-			{title: 'https://two.example/', url: 'https://two.example/'},
 		]);
-		expect(api.paths).toEqual(['/public/search/hello%20world']);
+		expect(api.paths).toEqual(['/mwmbl?q=hello%20world']);
 		expect(built[0]).toMatchObject({strict: true, proxy: undefined});
 	});
 
-	it('uses MARGINALIA_API_KEY when set', async () => {
-		process.env.MARGINALIA_API_KEY = 'my key';
-		const api = await fakeApi();
+	it('uses MWMBL_API_KEY when set', async () => {
+		process.env.MWMBL_API_KEY = 'my key';
+		const api = await fakeApis();
 		await searchFresh(redirectTo(api.base));
-		expect(api.paths).toEqual(['/my%20key/search/hello%20world']);
+		expect(api.paths).toEqual(['/mwmbl?q=hello%20world&api_key=my%20key']);
 	});
 
-	it('a failed search says the default changed and how to restore SearXNG', async () => {
-		const api = await fakeApi(503);
+	for (const status of [429, 503, 500]) {
+		it(`falls through to Marginalia (shared public key) when Mwmbl answers ${status}`, async () => {
+			const api = await fakeApis({mwmbl: status});
+			const results = await searchFresh(redirectTo(api.base));
+			// A fallback answer names the engine that failed first.
+			expect(results).toEqual(
+				MARGINALIA_RESULTS.map((r) => ({...r, unresponsiveEngines: ['mwmbl']})),
+			);
+			expect(api.paths).toEqual([
+				'/mwmbl?q=hello%20world',
+				'/marginalia/public/search/hello%20world',
+			]);
+		});
+	}
+
+	it('uses MARGINALIA_API_KEY when set', async () => {
+		process.env.MARGINALIA_API_KEY = 'my key';
+		const api = await fakeApis({mwmbl: 429});
+		await searchFresh(redirectTo(api.base));
+		expect(api.paths.at(-1)).toBe('/marginalia/my%20key/search/hello%20world');
+	});
+
+	it('a failed search names both engines, and says the default changed and how to restore SearXNG', async () => {
+		const api = await fakeApis({mwmbl: 503, marginalia: 503});
 		const error = await searchFresh(redirectTo(api.base)).catch(
 			(e: Error) => e,
 		);
 		expect(error).toBeInstanceOf(Error);
-		expect((error as Error).message).toMatch(/every engine failed: marginalia/);
+		expect((error as Error).message).toMatch(/every engine failed: mwmbl/);
+		expect((error as Error).message).toMatch(/marginalia/);
 		expect((error as Error).message).toContain(DEFAULT_BACKEND_NOTE);
 		expect(DEFAULT_BACKEND_NOTE).toContain('"backend": "searxng"');
 	});
 
 	it('an explicitly chosen backend gets no such note', async () => {
 		writeJson(globalPath, {backend: 'searchcast'});
-		const api = await fakeApi(503);
+		const api = await fakeApis({mwmbl: 503, marginalia: 503});
 		const error = await searchFresh(redirectTo(api.base)).catch(
 			(e: Error) => e,
 		);
@@ -436,9 +522,7 @@ describe('webveil doctor with the default backend', () => {
 		expect(result.backend).toBe('searchcast');
 		expect(result.defaultBackend).toBe(DEFAULT_BACKEND_NOTE);
 		expect(result.problems.join(' ')).not.toContain('default backend');
-		expect(result.engines).toEqual([
-			{name: 'marginalia', kind: 'code', file: BUNDLED_RECIPE},
-		]);
+		expect(result.engines).toEqual(DEFAULT_CHAIN);
 	});
 
 	it('has no notice once the backend is set', async () => {
@@ -448,13 +532,41 @@ describe('webveil doctor with the default backend', () => {
 			{loadInstall: async () => realInstall, resolveConfig: fresh},
 		);
 		expect(result).not.toHaveProperty('defaultBackend');
+		expect(result).not.toHaveProperty('defaultChain');
+	});
+});
+
+describe('webveil doctor with the default chain', () => {
+	const run = () =>
+		doctor({}, {loadInstall: async () => realInstall, resolveConfig: fresh});
+
+	it('adds the defaultChain notice pointing to recipes (not a problem)', async () => {
+		const result = await run();
+		expect(result.defaultChain).toBe(DEFAULT_CHAIN_NOTE);
+		expect(DEFAULT_CHAIN_NOTE).toContain('webveil install-recipes');
+		expect(DEFAULT_CHAIN_NOTE).toMatch(/recipes/);
+		expect(result.problems.join(' ')).not.toContain('default engine chain');
+	});
+
+	it('keeps it with an explicit searchcast backend and no chain of its own', async () => {
+		writeJson(globalPath, {backend: 'searchcast'});
+		const result = await run();
+		expect(result).not.toHaveProperty('defaultBackend');
+		expect(result.defaultChain).toBe(DEFAULT_CHAIN_NOTE);
+	});
+
+	it('drops it once the user configures a chain', async () => {
+		writeJson(globalPath, {
+			searchcast: {recipes: [writeAlpha()], engines: ['alpha']},
+		});
+		expect(await run()).not.toHaveProperty('defaultChain');
 	});
 });
 
 // ---- the published tarball ------------------------------------------------
 
 describe('the webveil tarball', () => {
-	it('ships the bundled recipe', () => {
+	it('ships both bundled recipes', () => {
 		const res = spawnSync(
 			'npm',
 			['pack', '--dry-run', '--json', '--ignore-scripts'],
@@ -462,6 +574,8 @@ describe('the webveil tarball', () => {
 		);
 		expect(res.status).toBe(0);
 		const [pack] = JSON.parse(res.stdout) as [{files: {path: string}[]}];
-		expect(pack.files.map((f) => f.path)).toContain('recipes/marginalia.mjs');
+		const files = pack.files.map((f) => f.path);
+		expect(files).toContain('recipes/mwmbl.mjs');
+		expect(files).toContain('recipes/marginalia.mjs');
 	});
 });

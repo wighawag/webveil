@@ -129,6 +129,16 @@
 // notice (the default changed; `backend: "searxng"` restores it). Like
 // `deprecations`, a notice, not a problem: the default works, so doctor stays
 // healthy.
+//
+// Recorded decision (task default-chain-mwmbl): while the searchcast backend
+// runs the bundled default chain, `doctor` adds a top-level `defaultChain`
+// notice (`DEFAULT_CHAIN_NOTE`: the chain is a floor, recipes are the
+// product, and where to start). A notice beside `defaultBackend`, not merged
+// into it: `defaultBackend` is about the backend changing and disappears once
+// `backend` is set, while the default chain stays in use with an explicit
+// `backend: "searchcast"` and no engines. Not a problem, so doctor stays
+// healthy. Alternative considered: printing it on every search, rejected as
+// noise (the README carries the message for new users).
 
 import {join} from 'node:path';
 import type {DoctorReport, OldDataDirHits, RecipeSet} from 'searchcast/install';
@@ -142,9 +152,11 @@ import {EgressError, fetchEgressConfig} from './core/egress.js';
 import {resolveFetchTransport} from './core/fetch-transport.js';
 import {configDeprecations, reportDeprecations} from './core/spellings.js';
 import {
+	DEFAULT_CHAIN_NOTE,
 	describeSearchcastEngines,
 	searchcastProxy,
 	trustedLibcurlPath,
+	usesDefaultSearchcastChain,
 } from './core/backends/searchcast.js';
 import type {EngineDescription} from './core/backends/searchcast.js';
 
@@ -474,6 +486,12 @@ export interface DoctorResult {
 	 * the default changed and how to restore SearXNG. Not a problem.
 	 */
 	defaultBackend?: string;
+	/**
+	 * Present while the searchcast backend runs the bundled default chain (no
+	 * engines, recipes or code recipes set): says so and points to recipes.
+	 * Not a problem.
+	 */
+	defaultChain?: string;
 	engines?: EngineDescription[];
 	sets?: {entry: string; installed: boolean; dir: string}[];
 }
@@ -514,6 +532,8 @@ export async function doctor(
 	const deprecations = configDeprecations(config);
 	if (deprecations.length > 0) result.deprecations = deprecations;
 	if (usesDefaultBackend(config)) result.defaultBackend = DEFAULT_BACKEND_NOTE;
+	if (usesDefaultSearchcastChain(config))
+		result.defaultChain = DEFAULT_CHAIN_NOTE;
 	const searchcastBackend = config.backend === 'searchcast';
 	const needed = searchcastBackend || transport === 'searchcast';
 	const libcurlPath = await attempt(problems, () => ({

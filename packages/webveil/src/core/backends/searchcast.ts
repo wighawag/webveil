@@ -206,7 +206,8 @@
 // Recorded decisions (task default-backend-searchcast; the default backend:
 // config.ts):
 // - The DEFAULT CHAIN (`DEFAULT_ENGINES`, the bundled code recipe
-//   `BUNDLED_RECIPE`, the package's `recipes/marginalia.mjs`) is filled in
+//   `BUNDLED_RECIPE`, the package's `recipes/marginalia.mjs`; since task
+//   default-chain-mwmbl `BUNDLED_RECIPES`, below) is filled in
 //   here, in `settings`, AFTER the trust check and only when the resolved
 //   section sets none of `engines`, `recipes` and `codeRecipes` (an empty
 //   list counts as set, so `engines: []` is still the old error). Not in
@@ -228,6 +229,22 @@
 // - The impersonation failure of `web_fetch` also names
 //   `"fetchTransport": "plain"` (fetch-transport.ts): with the default
 //   backend, `web_fetch` now needs the library too.
+//
+// Recorded decisions (task default-chain-mwmbl; owner decision 2026-09-30:
+// Marginalia's keyless API was down, Mwmbl's answered):
+// - The default chain is `["mwmbl", "marginalia"]` from two bundled code
+//   recipes (`BUNDLED_RECIPES`, the package's `recipes/mwmbl.mjs` and
+//   `recipes/marginalia.mjs`), listed file by file rather than as the
+//   `recipes/` directory, so a stray file in the package can never become an
+//   engine. `BUNDLED_RECIPE` (one path) became `BUNDLED_RECIPES` (a list); it
+//   was never exported from the package entry, so nothing public changes.
+// - The identity key of the default chain hashes the two files and the new
+//   `engines`, so a user of the 0.11 default starts one fresh state partition
+//   (its Marginalia cooldown and sessions are left behind; `state clear --all`
+//   removes the old one). Alternative considered: pinning the old key, which
+//   would make two different chains share one partition.
+// - `usesDefaultSearchcastChain` is exported for `webveil doctor`
+//   (setup.ts), which adds a `defaultChain` notice when this chain is in use.
 
 import {existsSync, readdirSync, statSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -317,16 +334,33 @@ const EGRESS_SWITCHES = new Set([
 ]);
 const instances = new Map<string, Searchcast>();
 
+/** The package's `recipes/` directory (three levels above both `src/core/backends/` and `dist/core/backends/`). */
+const bundled = (file: string) =>
+	fileURLToPath(new URL(`../../../recipes/${file}`, import.meta.url));
+
 /**
- * The code recipe of the default chain, shipped in the webveil package
- * (`recipes/marginalia.mjs`, three levels above both `src/core/backends/` and
- * `dist/core/backends/`). Trusted because it ships with webveil.
+ * The code recipes of the default chain, shipped in the webveil package
+ * (`recipes/mwmbl.mjs` and `recipes/marginalia.mjs`, copies of searchcast's
+ * examples). Trusted because they ship with webveil.
  */
-export const BUNDLED_RECIPE = fileURLToPath(
-	new URL('../../../recipes/marginalia.mjs', import.meta.url),
-);
-/** The default engine chain: the bundled recipe's engine. */
-export const DEFAULT_ENGINES: readonly string[] = ['marginalia'];
+export const BUNDLED_RECIPES: readonly string[] = [
+	bundled('mwmbl.mjs'),
+	bundled('marginalia.mjs'),
+];
+/** The default engine chain: the bundled recipes' engines, in order. */
+export const DEFAULT_ENGINES: readonly string[] = ['mwmbl', 'marginalia'];
+
+/**
+ * What `webveil doctor` says while the default chain is in use: a notice, not
+ * a problem (the default works), pointing to recipes.
+ */
+export const DEFAULT_CHAIN_NOTE =
+	'the default engine chain is in use (mwmbl, then marginalia: two small ' +
+	'independent indexes through their keyless public APIs, with per-IP ' +
+	'quotas). It is a floor: webveil does much more with recipes (any ' +
+	"site's search as an engine, code recipes, a browser fallback). Install " +
+	'a recipe set with `webveil install-recipes <url> --sha256 <hex>` or ' +
+	'write your own: https://github.com/wighawag/webveil#the-default-engines-and-what-recipes-add';
 
 /** True when the section configures no engine chain at all (the default applies). */
 function usesDefaultChain(s: SearchcastConfig): boolean {
@@ -334,6 +368,16 @@ function usesDefaultChain(s: SearchcastConfig): boolean {
 		s.engines === undefined &&
 		s.recipes === undefined &&
 		s.codeRecipes === undefined
+	);
+}
+
+/**
+ * True when a search with `config` runs the bundled default chain: the
+ * searchcast backend, and no engines, recipes or code recipes set anywhere.
+ */
+export function usesDefaultSearchcastChain(config: Config): boolean {
+	return (
+		config.backend === 'searchcast' && usesDefaultChain(config.searchcast ?? {})
 	);
 }
 
@@ -480,7 +524,7 @@ function settings(config: Config): SearchcastConfig {
 		);
 	// Added after the paths are resolved: it is already absolute, and it has no
 	// config source to resolve against (see the decisions above).
-	if (fallback) s.codeRecipes = [BUNDLED_RECIPE];
+	if (fallback) s.codeRecipes = [...BUNDLED_RECIPES];
 	if (s.libcurlPath)
 		s.libcurlPath = resolvePath(config, 'libcurlPath', s.libcurlPath);
 	const browser = browserSettings(config, s.browser);

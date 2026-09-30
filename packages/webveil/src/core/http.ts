@@ -5,15 +5,20 @@
 
 import {type Dispatcher, fetch as undiciFetch} from 'undici';
 import type {Http, HttpRequestOptions} from './backends/types.js';
+import {DEFAULT_HTTP_TIMEOUT_MS} from './tunables.js';
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+/** The helper's defaults: `timeoutMs` is config `httpTimeoutMs` (tunables.ts). */
+export interface HttpHelperOptions {
+	timeoutMs?: number;
+}
 
-async function request(
+async function send(
 	dispatcher: Dispatcher | undefined,
 	url: string,
 	options: HttpRequestOptions = {},
+	defaultTimeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
 ): Promise<Response> {
-	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	if (options.signal)
@@ -38,13 +43,18 @@ async function request(
  * Build the proxied http helper over a given dispatcher. Both methods throw on a
  * non-2xx response so a backend never silently consumes an error body.
  */
-export function createHttp(dispatcher: Dispatcher | undefined): Http {
+export function createHttp(
+	dispatcher: Dispatcher | undefined,
+	helper: HttpHelperOptions = {},
+): Http {
+	const request = (url: string, options?: HttpRequestOptions) =>
+		send(dispatcher, url, options, helper.timeoutMs);
 	return {
 		async fetchJson<T = unknown>(
 			url: string,
 			options?: HttpRequestOptions,
 		): Promise<T> {
-			const res = await request(dispatcher, url, options);
+			const res = await request(url, options);
 			if (!res.ok)
 				throw new Error(`http ${res.status} ${res.statusText} for ${url}`);
 			return (await res.json()) as T;
@@ -53,7 +63,7 @@ export function createHttp(dispatcher: Dispatcher | undefined): Http {
 			url: string,
 			options?: HttpRequestOptions,
 		): Promise<string> {
-			const res = await request(dispatcher, url, options);
+			const res = await request(url, options);
 			if (!res.ok)
 				throw new Error(`http ${res.status} ${res.statusText} for ${url}`);
 			return await res.text();

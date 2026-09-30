@@ -15,6 +15,10 @@
 // `{mode: http}` without a url would silently inherit the global SOCKS url
 // instead of failing loud. They were the only object-valued keys before this
 // change, so every existing config resolves exactly as it did.
+// `serpcast.decoyGuard` is a leaf too (task webveil-installs-and-tunables): it
+// is a list OR an `{include, exclude}` object, and a list in one layer merged
+// with an object in another would silently drop one of them; replaced whole,
+// it behaves as the list always did.
 
 /** Which layer a resolved key came from. File layers carry the file's path. */
 export type ConfigSource =
@@ -33,7 +37,7 @@ export interface Layer {
 }
 
 /** Object-valued key paths that are leaves (replaced whole, never merged). */
-const WHOLE_KEYS = new Set(['egress', 'fetchEgress']);
+const WHOLE_KEYS = new Set(['egress', 'fetchEgress', 'serpcast.decoyGuard']);
 
 const PROVENANCE = Symbol('webveil.provenance');
 

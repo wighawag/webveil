@@ -40,3 +40,26 @@ Anything that changes what an instance does joins the identity key automatically
 ## Prompt
 
 Read serpcast 0.6's README and `serpcast/install` types first. FIRST, check this task against current reality. RECORD non-obvious decisions.
+
+## Decisions
+
+Each is written up in a comment where the choice is made, and all are indexed in `work/notes/observations/2026-09-30-webveil-installs-and-tunables-decisions.md`.
+1. **All four setup commands are CLI only**, including the read-only `recipes` and `doctor`. `--proxy` defaults to a direct download, never the configured egress. There is no `--dir` option, because webveil only looks for `set:` entries in the default recipes directory. (`setup.ts`, `cli.ts`)
+2. **`doctor`'s rules:**
+   - The library only counts toward "healthy" when the serpcast backend or serpcast fetch transport uses it.
+   - `--remote` goes through the backend egress when the backend is serpcast, otherwise through the fetch egress.
+   - Listing a code recipe's engine name means importing (running) that module, after the same trust check a search does.
+
+   (`setup.ts`, and `describeSerpcastEngines` in `serpcast.ts`)
+3. **Key names and placement:** the fetch transport's keys went into a new `fetchSerpcast` section rather than under `serpcast`. The whole `serpcast` section feeds the search identity key, so a fetch setting there would move the search state. (`tunables.ts`, `config.ts`)
+4. **No key is kept out of the identity key.** That key names both the cached instance and the on-disk state, and every new key is an instance option. As a result, changing any `serpcast` key, even a timeout, starts fresh engine sessions. Unset keys don't change it, so existing state stays where it is. (`serpcast.ts`)
+5. **`serpcast.decoyGuard` is replaced whole across config layers**, so a list in one layer and an object in another don't mix. (`layers.ts`)
+6. **`fetchMaxRedirects` behind a proxy:** when set, the plain fetch guard follows redirects itself there too. When unset, the proxied path is unchanged. This partly reverses an earlier recorded decision. (`security.ts`)
+7. **Two combinations and a fallback:**
+   - `state.persist: false` together with `persistProfile: true` is an error.
+   - `webveil state clear --all` uses the default lock times.
+   - `serpcast.sessionIdleMs` must now be positive; serpcast 0.6 rejects 0 anyway.
+
+   (`serpcast.ts`, `state.ts`, `tunables.ts`)
+
+Two things I noticed but left alone, both logged in the same note: webveil still doesn't expose serpcast's `caPath` or the browser's `headless` and `concurrency` options as keys. And serpcast's own doctor message says `serpcast install-libcurl`, so webveil's doctor appends the webveil command.

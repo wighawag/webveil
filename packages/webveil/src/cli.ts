@@ -10,6 +10,10 @@
 // calls. The core owns config/egress/backend/extraction; this file owns no
 // network logic of its own.
 //
+// The setup commands (`install-libcurl`, `install-recipes`, `recipes`,
+// `doctor`) live in setup.ts, which loads serpcast's install code lazily; they
+// are CLI only: the `--mcp` server is built without them (see setup.ts).
+//
 // Testability: `createCli(deps)` takes the core functions as injectable deps so
 // a test wires fakes and asserts the commands call the core (via `cli.serve`
 // with custom argv/stdout) WITHOUT touching the network. The bottom of the file
@@ -23,6 +27,8 @@ import {search as coreSearch} from './core/search.js';
 import {fetch as coreFetch} from './core/fetch.js';
 import {closeBackends} from './core/backends/registry.js';
 import {clearSerpcastState} from './core/backends/serpcast.js';
+import {doctor, installLibcurl, installRecipes, listRecipes} from './setup.js';
+import type {SetupDeps} from './setup.js';
 
 /**
  * The two core functions the frontend wraps, seamed so tests can inject fakes.
@@ -32,7 +38,24 @@ export interface CliDeps {
 	search?: typeof coreSearch;
 	fetch?: typeof coreFetch;
 	clearState?: typeof clearSerpcastState;
+	/** Seams of the setup commands (install API, progress sink, config). */
+	setup?: SetupDeps;
 }
+
+/** How the CLI is built: `setupCommands: false` leaves out the setup commands. */
+export interface CliOptions {
+	/**
+	 * Include `install-libcurl`, `install-recipes`, `recipes` and `doctor`
+	 * (default true). The bin builds the `--mcp` server without them: they are
+	 * CLI only (setup.ts, recorded decisions).
+	 */
+	setupCommands?: boolean;
+}
+
+const PROXY_HELP =
+	'Download through this proxy (http://, socks5://, socks5h://; socks5h:// ' +
+	'resolves host names at the proxy, e.g. socks5h://127.0.0.1:9050 for Tor). ' +
+	'Default: a direct download, never the configured egress';
 
 /** The size presets `fetch` accepts, mirroring the core's `FetchSize`. */
 const SIZES = ['s', 'm', 'l', 'f'] as const;
@@ -43,7 +66,7 @@ const SIZES = ['s', 'm', 'l', 'f'] as const;
  * injected core, normalizing nothing themselves — the core already deduped,
  * clamped, and size-bounded.
  */
-export function createCli(deps: CliDeps = {}) {
+export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 	const search = deps.search ?? coreSearch;
 	const fetch = deps.fetch ?? coreFetch;
 	const clearState = deps.clearState ?? clearSerpcastState;
@@ -65,7 +88,7 @@ export function createCli(deps: CliDeps = {}) {
 		},
 	});
 
-	return Cli.create('webveil', {
+	const cli = Cli.create('webveil', {
 		description:
 			'Anonymous-capable, self-hosted, account-free web search + fetch for agents.',
 	})
@@ -113,6 +136,83 @@ export function createCli(deps: CliDeps = {}) {
 			},
 		})
 		.command(state);
+	if (options.setupCommands === false) return cli;
+	const setup = deps.setup ?? {};
+	return cli
+		.command('install-libcurl', {
+			description:
+				'Download the pinned libcurl-impersonate release, verify its sha256 and ' +
+				"install it in serpcast's data directory (~/.local/share/serpcast), " +
+				'where webveil finds it. Runs only when you type it.',
+			options: z.object({
+				proxy: z.string().optional().describe(PROXY_HELP),
+				force: z
+					.boolean()
+					.optional()
+					.describe('Replace a differing library already installed'),
+			}),
+			async run(c) {
+				return installLibcurl(c.options, setup);
+			},
+		})
+		.command('install-recipes', {
+			description:
+				'Install a recipe set from a release archive (URL or file), pinned by ' +
+				'its sha256, into ~/.local/share/serpcast/recipes/<set>; name it in ' +
+				'config as set:<set>. A set may hold code recipes: the pin is your ' +
+				'trust decision.',
+			args: z.object({
+				source: z.string().describe('The archive: an http(s) URL or a file'),
+			}),
+			options: z.object({
+				sha256: z.string().describe("The archive's sha256 (hex), required"),
+				name: z
+					.string()
+					.optional()
+					.describe("The set's name (default: the archive's manifest name)"),
+				proxy: z.string().optional().describe(PROXY_HELP),
+				force: z
+					.boolean()
+					.optional()
+					.describe('Replace a differing set already installed'),
+			}),
+			async run(c) {
+				return installRecipes(c.args.source, c.options, setup);
+			},
+		})
+		.command('recipes', {
+			description:
+				'List the installed recipe sets, their source, sha256 and files.',
+			async run() {
+				return listRecipes(setup);
+			},
+		})
+		.command('doctor', {
+			description:
+				'Check the libcurl-impersonate library webveil loads and this ' +
+				"folder's config: backend, egress, fetch transport, engines and " +
+				'their recipe files, recipe sets. No network unless --remote.',
+			options: z.object({
+				remote: z
+					.boolean()
+					.optional()
+					.describe(
+						'Ask a fingerprint echo service (tls.browserleaks.com) once, ' +
+							'through the egress',
+					),
+			}),
+			async run(c) {
+				const result = await doctor({remote: c.options.remote}, setup);
+				if (result.healthy) return result;
+				return c.error({
+					code: 'UNHEALTHY',
+					message:
+						`webveil doctor: not healthy: ${result.problems.join('; ')}\n` +
+						JSON.stringify(result, null, 2),
+					exitCode: 1,
+				});
+			},
+		});
 }
 
 // The real CLI (also `export default` so `incur gen` can import it for typed
@@ -161,6 +261,10 @@ export async function serveCli(
 	return target.serve(args);
 }
 
-if (isMain()) void serveCli(cli);
+// The `--mcp` server is built without the setup commands (CliOptions).
+if (isMain())
+	void serveCli(
+		argv.includes('--mcp') ? createCli({}, {setupCommands: false}) : cli,
+	);
 
 export default cli;

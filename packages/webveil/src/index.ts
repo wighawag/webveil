@@ -18,7 +18,10 @@
 //   - core/backends/custom.ts  : the local-command escape hatch (JSON stdin/stdout)
 //   - core/backends/serpcast.ts : keyless recipes over libcurl-impersonate (egress = search egress)
 //   - core/state.ts             : serpcast's state store on disk, one partition per identity
+//   - core/tunables.ts          : every tuning value's rule and default (validated where used)
 //   - cli.ts                    : the incur CLI + MCP frontend (the `webveil` bin)
+//   - setup.ts                  : the CLI-only setup commands (install-libcurl, install-recipes,
+//                                 recipes, doctor); loads `serpcast/install` lazily
 // pi-webveil (sibling package) wraps the SAME core functions as registerTool
 // web_search / web_fetch, in-process, as an Ollama drop-in.
 
@@ -40,8 +43,11 @@ export type {
 	FetchSize,
 	FetchTransport,
 	PartialConfig,
+	FetchSerpcastConfig,
 	ResolveOptions,
+	SearchcastConfig,
 	SerpcastConfig,
+	StateConfig,
 } from './core/config.js';
 
 // egress seam
@@ -127,4 +133,5 @@ export type {FetchCoreOptions, FetchDeps} from './core/fetch.js';
 
 // incur CLI + MCP frontend (the `webveil` bin builds and serves this)
 export {createCli, serveCli} from './cli.js';
-export type {CliDeps} from './cli.js';
+export type {CliDeps, CliOptions} from './cli.js';
+export type {DoctorResult, SetupDeps} from './setup.js';

@@ -393,7 +393,7 @@ describe('fetchTransport serpcast: impersonation', () => {
 		).catch((e: Error) => e);
 		expect(error).toBeInstanceOf(Error);
 		expect(error.message).toContain('impersonation is not active');
-		expect(error.message).toContain('npx serpcast install-libcurl');
+		expect(error.message).toContain('webveil install-libcurl');
 		expect(plain).not.toHaveBeenCalled();
 	});
 });

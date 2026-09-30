@@ -14,6 +14,7 @@ import {lookup} from 'node:dns/promises';
 import {isIP} from 'node:net';
 import type {Config} from './config.js';
 import type {EgressFetch} from './egress.js';
+import {DEFAULT_MAX_REDIRECTS, fetchMaxRedirects} from './tunables.js';
 
 /** Thrown when the SSRF guard refuses a request to a private/blocked address. */
 export class SsrfError extends Error {
@@ -139,12 +140,12 @@ export async function assertPublicUrl(
 // Shared by BOTH `web_fetch` transports (the plain guarded fetch below and the
 // `fetchTransport: serpcast` adapter in fetch-transport.ts), so a redirect
 // target gets the same gate on either: http(s) only, SSRF-checked, at most
-// MAX_REDIRECTS hops.
+// `fetchMaxRedirects` hops (default MAX_REDIRECTS, tunables.ts).
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-/** At most this many redirects are followed (the WHATWG fetch limit). */
-export const MAX_REDIRECTS = 20;
+/** At most this many redirects are followed by default (the WHATWG fetch limit). */
+export const MAX_REDIRECTS = DEFAULT_MAX_REDIRECTS;
 
 /** Is this status a redirect webveil follows (301, 302, 303, 307, 308)? */
 export function isRedirectStatus(status: number): boolean {
@@ -168,16 +169,17 @@ export async function assertFetchableHop(
 
 /**
  * The next url of a redirect (its `Location` resolved against the current url),
- * or an error once `hop` (0 for the first response) reaches MAX_REDIRECTS.
+ * or an error once `hop` (0 for the first response) reaches `max`.
  */
 export function nextRedirectUrl(
 	location: string,
 	url: string,
 	hop: number,
+	max = MAX_REDIRECTS,
 ): string {
-	if (hop === MAX_REDIRECTS)
+	if (hop >= max)
 		throw new Error(
-			`webveil: too many redirects (more than ${MAX_REDIRECTS}) fetching ${url}`,
+			`webveil: too many redirects (more than ${max}) fetching ${url}`,
 		);
 	return new URL(location, url).href;
 }
@@ -229,6 +231,14 @@ const BODY_HEADERS = [
  *   is checked, no DNS lookup happens locally. Alternative considered: follow
  *   manually under a proxy too (one code path), rejected because it would
  *   change proxied behaviour for no security gain (every check is a no-op).
+ * - `fetchMaxRedirects` (task webveil-installs-and-tunables) caps the hops
+ *   followed here. undici's own following has a fixed limit of 20, so under a
+ *   PROXY egress with `fetchMaxRedirects` SET the guard follows the redirects
+ *   itself too (the SSRF check is still a no-op there, only the http(s) rule
+ *   applies); unset, the proxied path stays exactly as above. Alternative
+ *   considered: documenting the key as direct-egress only, rejected because a
+ *   setting that silently does nothing on one egress is the kind of
+ *   unswitchable behaviour the key exists to remove.
  */
 export function guardEgressFetch(
 	fetch: EgressFetch,
@@ -236,9 +246,11 @@ export function guardEgressFetch(
 	deps: GuardDeps = {},
 ): EgressFetch {
 	const assert = deps.assertPublicUrl ?? assertPublicUrl;
-	const proxied = egressIsProxy(config);
+	const max = fetchMaxRedirects(config); // validated before any request
+	const delegate =
+		egressIsProxy(config) && config.fetchMaxRedirects === undefined;
 	return (async (input: RequestInfo | URL, init?: RequestInit) => {
-		if (proxied) return fetch(input as never, init as never);
+		if (delegate) return fetch(input as never, init as never);
 		const request =
 			typeof input === 'string' || input instanceof URL ? undefined : input;
 		let url =
@@ -276,7 +288,7 @@ export function guardEgressFetch(
 			const location = response.headers.get('location');
 			if (!location) return followed(response, url, hop);
 			await response.body?.cancel().catch(() => {});
-			const next = nextRedirectUrl(location, url, hop);
+			const next = nextRedirectUrl(location, url, hop, max);
 			const status = response.status;
 			if (
 				(status === 303 && method !== 'GET' && method !== 'HEAD') ||

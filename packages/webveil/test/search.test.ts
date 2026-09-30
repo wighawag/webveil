@@ -199,7 +199,7 @@ describe('core.search()', () => {
 			},
 		);
 		expect(buildDispatcher).toHaveBeenCalledWith(config);
-		expect(createHttp).toHaveBeenCalledWith(dispatcher);
+		expect(createHttp).toHaveBeenCalledWith(dispatcher, {timeoutMs: 30_000});
 	});
 
 	it('selects the backend by config.backend name', async () => {

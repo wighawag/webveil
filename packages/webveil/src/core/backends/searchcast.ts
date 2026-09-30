@@ -202,9 +202,36 @@
 //   considered: hashing the new shape (every identity with browser settings
 //   would start a fresh partition once, and its persistent profile would be
 //   orphaned until `state clear --all`).
+//
+// Recorded decisions (task default-backend-searchcast; the default backend:
+// config.ts):
+// - The DEFAULT CHAIN (`DEFAULT_ENGINES`, the bundled code recipe
+//   `BUNDLED_RECIPE`, the package's `recipes/marginalia.mjs`) is filled in
+//   here, in `settings`, AFTER the trust check and only when the resolved
+//   section sets none of `engines`, `recipes` and `codeRecipes` (an empty
+//   list counts as set, so `engines: []` is still the old error). Not in
+//   config.ts DEFAULTS: the layer merge is key by key, so a user setting only
+//   `recipes` would keep the default `engines` and `codeRecipes` (a merge the
+//   spec rules out), and the trust check would see a code recipe path with a
+//   `defaults` provenance. Filling it in here, any user engine setting
+//   replaces the whole chain, and the bundled path never enters provenance,
+//   so no trust rule changes: a project `webveil.json` still cannot set
+//   `codeRecipes`, and cannot name the bundled file either except by setting
+//   nothing. Alternative considered: a `set:`-like name for the bundled file
+//   (so a user chain could mix it in); not needed for the default and a new
+//   concept, left out.
+// - The default chain is a searchcast section like any other: its identity
+//   key hashes the bundled file's absolute path and `engines`, so
+//   `clearSearchcastState` (no `--all`) clears the default chain's partition
+//   in a folder with no searchcast settings, where it used to refuse.
+//   `describeSearchcastEngines` (`webveil doctor`) lists it with its file.
+// - The impersonation failure of `web_fetch` also names
+//   `"fetchTransport": "plain"` (fetch-transport.ts): with the default
+//   backend, `web_fetch` now needs the library too.
 
 import {existsSync, readdirSync, statSync} from 'node:fs';
 import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {RecipeError} from '@searchcast/recipe';
 import {loadRecipeFile} from '@searchcast/recipe/node';
 import {
@@ -289,6 +316,26 @@ const EGRESS_SWITCHES = new Set([
 	'host-rules',
 ]);
 const instances = new Map<string, Searchcast>();
+
+/**
+ * The code recipe of the default chain, shipped in the webveil package
+ * (`recipes/marginalia.mjs`, three levels above both `src/core/backends/` and
+ * `dist/core/backends/`). Trusted because it ships with webveil.
+ */
+export const BUNDLED_RECIPE = fileURLToPath(
+	new URL('../../../recipes/marginalia.mjs', import.meta.url),
+);
+/** The default engine chain: the bundled recipe's engine. */
+export const DEFAULT_ENGINES: readonly string[] = ['marginalia'];
+
+/** True when the section configures no engine chain at all (the default applies). */
+function usesDefaultChain(s: SearchcastConfig): boolean {
+	return (
+		s.engines === undefined &&
+		s.recipes === undefined &&
+		s.codeRecipes === undefined
+	);
+}
 
 /** The proxy URL for searchcast: SOCKS always `socks5h` (DNS at the proxy). */
 export function searchcastProxy(egress: Egress): string | undefined {
@@ -415,6 +462,8 @@ function browserSettings(
 function settings(config: Config): SearchcastConfig {
 	assertTrusted(config, EXECUTABLE_KEYS);
 	const s: SearchcastConfig = {...config.searchcast};
+	const fallback = usesDefaultChain(s);
+	if (fallback) s.engines = [...DEFAULT_ENGINES];
 	if (!isList(s.engines) || s.engines.length === 0)
 		throw new Error(
 			'searchcast: set searchcast.engines (engine names, in order)',
@@ -429,6 +478,9 @@ function settings(config: Config): SearchcastConfig {
 		s.codeRecipes = s.codeRecipes.map((p) =>
 			resolveRecipePath(config, 'codeRecipes', p),
 		);
+	// Added after the paths are resolved: it is already absolute, and it has no
+	// config source to resolve against (see the decisions above).
+	if (fallback) s.codeRecipes = [BUNDLED_RECIPE];
 	if (s.libcurlPath)
 		s.libcurlPath = resolvePath(config, 'libcurlPath', s.libcurlPath);
 	const browser = browserSettings(config, s.browser);
@@ -676,7 +728,15 @@ export function trustedLibcurlPath(config: Config): string | undefined {
 }
 
 /** An `impersonation` SearchcastError as an error carrying the fix (search and fetch). */
-export function impersonationFailure(error: SearchcastError): Error {
+export function impersonationFailure(
+	error: SearchcastError,
+	caller: 'search' | 'fetch' = 'search',
+): Error {
+	const plain =
+		caller === 'fetch'
+			? ' Or set "fetchTransport": "plain" to fetch pages with Node\'s own ' +
+				'TLS fingerprint instead (never done silently).'
+			: '';
 	return new Error(
 		`searchcast: browser impersonation is not active (${error.message}). ` +
 			'On most platforms searchcast brings the library as its optional ' +
@@ -684,7 +744,8 @@ export function impersonationFailure(error: SearchcastError): Error {
 			'with optional dependencies enabled; where that is not possible (or ' +
 			'the platform has no such package), run `webveil install-libcurl`, ' +
 			'or set searchcast.libcurlPath in the global config (or ' +
-			'WEBVEIL_SEARCHCAST_LIBCURL_PATH) to a libcurl-impersonate library.',
+			'WEBVEIL_SEARCHCAST_LIBCURL_PATH) to a libcurl-impersonate library.' +
+			plain,
 		{cause: error},
 	);
 }

@@ -466,7 +466,7 @@ describe('identity key', () => {
 
 describe('warnings reach the caller', () => {
 	it('search hands each warning to onWarning before the backend runs', async () => {
-		writeJson(projectFile, {backend: 'serpcast'});
+		writeJson(projectFile, {backend: 'serpcast', searchcast: {engines: []}});
 		const warnings: string[] = [];
 		const error = await search('q', {
 			cwd: project,

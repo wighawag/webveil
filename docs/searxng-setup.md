@@ -1,7 +1,9 @@
 # SearXNG setup (detailed)
 
-webveil's zero-config default is a local **SearXNG** at `http://127.0.0.1:8080` on
-`direct` egress. The [Quick start](../README.md#quick-start) covers the happy path (Docker,
+With `"backend": "searxng"` (the default before webveil 0.11; the default is now
+`searchcast`), webveil uses a local **SearXNG** at `http://127.0.0.1:8080` on `direct`
+egress unless `baseUrl` says otherwise. The README's
+[With a local SearXNG](../README.md#with-a-local-searxng) covers the happy path (Docker,
 one port note). This page is the full reference: every install topology, the
 uwsgi-vs-`http-socket` catch, Unix sockets, reverse proxies, and the limiter/JSON
 requirements.

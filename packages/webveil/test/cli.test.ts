@@ -412,7 +412,7 @@ describe('webveil CLI: deprecated serpcast spellings', () => {
 			dir = mkdtempSync(join(tmpdir(), 'webveil-spellings-'));
 			writeFileSync(
 				join(dir, 'webveil.json'),
-				JSON.stringify({backend: 'serpcast', serpcast: {}}),
+				JSON.stringify({backend: 'serpcast', serpcast: {engines: []}}),
 			);
 			const res = spawnSync(process.execPath, [BIN, 'search', 'q'], {
 				cwd: dir,
@@ -424,7 +424,8 @@ describe('webveil CLI: deprecated serpcast spellings', () => {
 					WEBVEIL_SERPCAST_COOLDOWN_MS: '5',
 				},
 			});
-			// The backend is searchcast: it asks for its engine chain.
+			// The backend is searchcast: an empty chain (so not the default one, and
+			// no network) is refused.
 			expect(res.status).toBe(1);
 			expect(res.stdout).toContain('set searchcast.engines');
 			const lines = res.stderr

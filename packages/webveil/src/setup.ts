@@ -123,10 +123,20 @@
 //   `oldDataDir`, a notice, not a problem (the old spellings still work for
 //   one release), so doctor stays healthy. The install commands print them on
 //   their progress sink (`log`) when they resolve the config.
+//
+// Recorded decision (task default-backend-searchcast; config.ts): while the
+// backend is the built-in default, `doctor` adds a top-level `defaultBackend`
+// notice (the default changed; `backend: "searxng"` restores it). Like
+// `deprecations`, a notice, not a problem: the default works, so doctor stays
+// healthy.
 
 import {join} from 'node:path';
 import type {DoctorReport, OldDataDirHits, RecipeSet} from 'searchcast/install';
-import {resolveConfig as realResolveConfig} from './core/config.js';
+import {
+	DEFAULT_BACKEND_NOTE,
+	resolveConfig as realResolveConfig,
+	usesDefaultBackend,
+} from './core/config.js';
 import type {Config, Egress, ResolveOptions} from './core/config.js';
 import {EgressError, fetchEgressConfig} from './core/egress.js';
 import {resolveFetchTransport} from './core/fetch-transport.js';
@@ -459,6 +469,11 @@ export interface DoctorResult {
 	 * naming its new spelling; absent when there are none. Not a problem.
 	 */
 	deprecations?: string[];
+	/**
+	 * Present while `backend` is the built-in default (no layer sets it): says
+	 * the default changed and how to restore SearXNG. Not a problem.
+	 */
+	defaultBackend?: string;
 	engines?: EngineDescription[];
 	sets?: {entry: string; installed: boolean; dir: string}[];
 }
@@ -498,6 +513,7 @@ export async function doctor(
 	};
 	const deprecations = configDeprecations(config);
 	if (deprecations.length > 0) result.deprecations = deprecations;
+	if (usesDefaultBackend(config)) result.defaultBackend = DEFAULT_BACKEND_NOTE;
 	const searchcastBackend = config.backend === 'searchcast';
 	const needed = searchcastBackend || transport === 'searchcast';
 	const libcurlPath = await attempt(problems, () => ({

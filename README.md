@@ -24,18 +24,34 @@ framework-agnostic. Two thin frontends wrap that same core:
 
 ## Quick start
 
-webveil needs a **backend** for results. Two backends give real web results with no account and no API key:
+```sh
+npm install -g webveil        # or, in pi: pi install npm:pi-webveil
+webveil search "hello world"
+```
 
-- **`searchcast`**: webveil queries search engines itself, over HTTP with a real browser's fingerprint, following **recipes** you provide. There is no service to run, and webveil's `egress` is the search egress. See [Without SearXNG](#without-searxng-the-searchcast-backend).
-- **`searxng`** (the zero-config default): a SearXNG metasearch service you run yourself. See [With a local SearXNG](#with-a-local-searxng-the-default-backend).
+That is the whole setup (Node 22 or later, on Linux x64 and arm64 with glibc, macOS x64 and arm64, and Windows x64): no service to run, no account, nothing else to install. The default backend is **`searchcast`**: webveil sends the search itself, over HTTP with a real browser's TLS fingerprint (the native library comes with webveil on those platforms), from your own IP (`direct` egress) unless you configure an [egress](#anonymous-egress-mullvad--tor). Its default engine chain is one engine, [Marginalia Search](https://marginalia-search.com), an independent web search engine whose [API](https://about.marginalia-search.com/article/api/) is meant for programs, queried by a code recipe that ships in the webveil package (`recipes/marginalia.mjs`, a copy of searchcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/searchcast/blob/main/examples/recipes/marginalia.mjs)). Know its terms:
 
-No option is zero-setup, account-free and real-web-results at once (see [`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md)): searchcast needs recipes (its native library comes with webveil on most platforms), SearXNG needs a service you run, and `tavily-compat` needs an account or a key.
+- **A shared key.** It uses Marginalia's `public` API key, whose rate limit is shared by everyone who uses it (the API then answers HTTP 503, which webveil reports as the engine being blocked; in tests on 2026-09-29 it was often slow or unresponsive). For regular use, ask Marginalia for a free personal key (non-commercial use) and set `MARGINALIA_API_KEY` in webveil's environment. The key is part of the request URL, so it can appear in error messages.
+- **The results licence.** Marginalia provides its results under CC-BY-NC-SA 4.0.
+- **One small independent index.** It is not a general-purpose engine: expect fewer results, and different ones, than a big engine returns.
 
-### Without SearXNG: the searchcast backend
+`web_fetch` (`webveil fetch <url>`) uses the browser fingerprint too with this backend. Where the native library is missing, search and fetch fail with the fix (`webveil install-libcurl`, or `"fetchTransport": "plain"` for fetch), never a silent fallback to Node's fingerprint. `webveil doctor` checks the whole setup and makes no network request.
+
+When you want more, the options are:
+
+- **Your own searchcast recipes**: a recipe set you install, or recipes you write, for the engines you choose. Any engines, recipes or code recipes you configure replace the default chain entirely. See [The searchcast backend](#the-searchcast-backend-recipes-and-engine-chains).
+- **`searxng`**: a SearXNG metasearch service you run yourself (`"backend": "searxng"`). See [With a local SearXNG](#with-a-local-searxng).
+- **`tavily-compat`** (an account or key) and **`custom`** (your own command): see [How it works](#how-it-works-seams).
+
+No option is zero-setup, account-free and full web results at once (see [`work/notes/ideas/default-backend-policy-account-vs-origin.md`](work/notes/ideas/default-backend-policy-account-vs-origin.md)). Zero setup now gives you one small independent index through a shared key, with no account (Marginalia sees your IP, or your egress's, and your queries); private recipe sets need recipes you trust, SearXNG needs a service you run, and `tavily-compat` needs an account or a key.
+
+**Upgrading from the SearXNG default.** Up to webveil 0.10 the default backend was a local SearXNG at `http://127.0.0.1:8080`. webveil does not look for one (that would be a guess, and a request you did not ask for): set `"backend": "searxng"` in the global config (or `WEBVEIL_BACKEND=searxng`) to keep using it; `baseUrl` still defaults to `http://127.0.0.1:8080`. While the backend is the built-in default, a failed search and `webveil doctor` (its `defaultBackend` notice) remind you of this.
+
+### The searchcast backend: recipes and engine chains
 
 Requires Node 22 or later. The native library comes with webveil on Linux x64 and arm64 (glibc), macOS x64 and arm64, and Windows x64; elsewhere, use your own build (step 2).
 
-webveil is the only thing you install. In short:
+webveil is the only thing you install. To run engines of your own choosing instead of the default chain, in short:
 
 ```sh
 npm i -g webveil                                           # brings the native library on supported platforms
@@ -93,7 +109,7 @@ webveil doctor                                             # library, config, en
    }
    ```
 
-   `recipes` lists recipe files or directories; a relative path is relative to the config file that sets it, never to the cwd. `engines` is the **engine chain**: recipe names, tried in order, and the first engine that answers wins. There is no default chain: a missing or empty `engines` is an error, and so is a name that no loaded recipe has. (Instead of the `backend` key, `WEBVEIL_BACKEND=searchcast` works too.)
+   `recipes` lists recipe files or directories; a relative path is relative to the config file that sets it, never to the cwd. `engines` is the **engine chain**: recipe names, tried in order, and the first engine that answers wins. Setting any of `engines`, `recipes` or `codeRecipes` replaces the default chain entirely (nothing is merged with it): a missing or empty `engines` is then an error, and so is a name that no loaded recipe has. (`backend` is already `searchcast` by default; stating it keeps the config working if the default ever changes. `WEBVEIL_BACKEND=searchcast` works too.)
 
 5. **Search.**
 
@@ -115,7 +131,7 @@ What to expect:
 
 The four setup commands (`install-libcurl`, `install-recipes`, `recipes`, `doctor`) are CLI only: they are not MCP tools (`webveil --mcp` serves `search`, `fetch` and `state_clear`) and not pi tools. The installers download code webveil runs, and the checksum pin is your trust decision, not an agent's. They load searchcast's install code only when they run: `search` and `fetch` never load it.
 
-**Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private searchcast recipes* under [How it works](#how-it-works-seams). searchcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/searchcast/tree/main/examples/recipes) is such a code recipe, so it goes under `searchcast.codeRecipes` in the global config; its shared `public` key is often rate limited or unresponsive (it timed out for most test queries on 2026-09-29, direct and through Tor), so ask Marginalia for a free personal key and set `MARGINALIA_API_KEY`.
+**Private recipes** (code recipes, or recipes you would rather not publish) go outside any repository, for example in `~/.config/webveil/recipes/`, named from the global config: see *Private searchcast recipes* under [How it works](#how-it-works-seams). The default chain runs searchcast's [`examples/recipes/marginalia.mjs`](https://github.com/wighawag/searchcast/tree/main/examples/recipes), bundled in webveil, but only while you configure no chain of your own. To keep Marginalia in your own chain, copy that file next to your recipes and list it under `searchcast.codeRecipes` in the global config (a code recipe, so never from a project `webveil.json`), with `marginalia` in `engines`. Its shared `public` key is often rate limited or unresponsive (it timed out for most test queries on 2026-09-29, direct and through Tor), so ask Marginalia for a free personal key and set `MARGINALIA_API_KEY`.
 
 #### Installing recipes
 
@@ -232,16 +248,22 @@ Up to webveil 0.10 this backend was called `serpcast`, after the library it ran 
 - **The rename resets nothing**: the identity key of a config (its state directory and browser profile) is the same in either spelling, and the rename does not change it.
 - The browser engine names `searchcast:<recipe>` in `engines` are unchanged.
 
-### With a local SearXNG (the default backend)
+### With a local SearXNG
 
-The zero-config default is a local **SearXNG** at `http://127.0.0.1:8080` on `direct` egress (non-anonymous). Run one with Docker:
+A local **SearXNG** at `http://127.0.0.1:8080` on `direct` egress (non-anonymous) was the default backend up to webveil 0.10. Select it in the global config, `~/.config/webveil/config.json`:
+
+```json
+{"backend": "searxng"}
+```
+
+(or `WEBVEIL_BACKEND=searxng`). Run one with Docker:
 
 ```sh
 # The container binds 8080 internally; map host 8080 -> 8080 to match the default.
 docker run -d --name searxng -p 8080:8080 searxng/searxng
 ```
 
-Then searches and fetches work with no config:
+Then searches and fetches work with no other setting:
 
 ```sh
 webveil search "hello world"
@@ -377,7 +399,7 @@ never in webveil: see
   metasearch), `tavily-compat` (a generic Tavily-shaped `/search` + `/extract`),
   `custom` (a local command via a JSON stdin/stdout contract), and `searchcast` (keyless
   search engines from recipes over libcurl-impersonate, no SearXNG; webveil's `egress`
-  is its search egress). The backend is handed a
+  is its search egress; the default backend, with the bundled Marginalia chain). The backend is handed a
   proxied `http` helper so it cannot bypass egress. The searxng backend also surfaces
   engine degradation from the response's `unresponsive_engines` — partial failures
   **annotate** the results (`unresponsiveEngines`, so a degraded answer never masquerades
@@ -417,7 +439,7 @@ Every key, in the global config (`~/.config/webveil/config.json`), a project `we
 
 | key | default | env | meaning |
 | --- | --- | --- | --- |
-| `backend` | `searxng` | `WEBVEIL_BACKEND` | `searxng`, `tavily-compat`, `custom` or `searchcast`. |
+| `backend` | `searchcast` (`searxng` up to 0.10) | `WEBVEIL_BACKEND` | `searxng`, `tavily-compat`, `custom` or `searchcast`. |
 | `baseUrl` | `http://127.0.0.1:8080` | `WEBVEIL_BASE_URL` | The backend's URL (`unix:` socket paths too); for `custom`, its command (**executable**). |
 | `apiKey` | none | `WEBVEIL_API_KEY` | The `tavily-compat` key. |
 | `egress` | `{"mode": "direct"}` | `WEBVEIL_EGRESS`, `WEBVEIL_EGRESS_URL` | The backend hop's egress: `direct`, `http` or `socks5` with a `url`. With `searchcast`, the search egress. |
@@ -432,7 +454,7 @@ Every key, in the global config (`~/.config/webveil/config.json`), a project `we
 | `fetchSearchcast.maxBodyBytes` | 16777216 (16 MiB) | `WEBVEIL_FETCH_SEARCHCAST_MAX_BODY_BYTES` | The largest page the searchcast fetch transport accepts. |
 | `maxResults` | 10 | `WEBVEIL_MAX_RESULTS` | Results a search returns when the caller passes none (a caller's `maxResults` wins). |
 | `httpTimeoutMs` | 30000 | `WEBVEIL_HTTP_TIMEOUT_MS` | The per-request timeout of webveil's requests to a backend (`searxng`, `tavily-compat`). |
-| `searchcast.engines` | none (required) | none | The engine chain, in order. |
+| `searchcast.engines` | the default chain `["marginalia"]` (bundled) while `engines`, `recipes` and `codeRecipes` are all unset; else required | none | The engine chain, in order. |
 | `searchcast.recipes` | none | none | Declarative recipe files or directories, or `set:<name>[/<file>]`. |
 | `searchcast.codeRecipes` | none | `WEBVEIL_SEARCHCAST_CODE_RECIPES` | Code recipe modules or directories, or `set:...` (**executable**). |
 | `searchcast.libcurlPath` | searchcast's lookup (`SEARCHCAST_LIBCURL_PATH`, the data directory, then the platform package) | `WEBVEIL_SEARCHCAST_LIBCURL_PATH` | The libcurl-impersonate library (**executable**). |

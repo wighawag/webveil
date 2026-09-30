@@ -11,7 +11,11 @@
 // and bypass the configured egress. A configured-but-unbuildable proxy throws at
 // buildDispatcher (fail-loud), never silently un-proxied.
 
-import {resolveConfig as defaultResolveConfig} from './config.js';
+import {
+	DEFAULT_BACKEND_NOTE,
+	resolveConfig as defaultResolveConfig,
+	usesDefaultBackend,
+} from './config.js';
 import type {Config, ResolveOptions} from './config.js';
 import {
 	buildDispatcher as defaultBuildDispatcher,
@@ -139,6 +143,17 @@ export async function search(
 	let raw: SearchResult[];
 	try {
 		raw = await backend.search(query, http, {signal: options.signal});
+	} catch (error) {
+		// A user who relied on the old SearXNG default learns why search now
+		// behaves differently (config.ts). The message is extended in place so
+		// the error keeps its class (TrustError, EgressError, ...).
+		if (
+			usesDefaultBackend(config) &&
+			error instanceof Error &&
+			error.name !== 'AbortError'
+		)
+			error.message += ` (note: ${DEFAULT_BACKEND_NOTE})`;
+		throw error;
 	} finally {
 		// Best-effort close of the per-hop socket Agent (the shared egress
 		// dispatcher, owned by config, is NOT touched here).

@@ -533,7 +533,19 @@ describe('searchcast backend: state persisted per identity (as between CLI calls
 		expect(readdirSync(stateRoot())).toEqual([]);
 	});
 
-	it('refuses to guess the current identity without a searchcast section, pointing at --all', async () => {
+	it('clears the default chain identity in a folder with no searchcast settings', async () => {
+		const env = {...process.env};
+		const key = searchcastIdentityKey(resolveConfig({cwd, globalPath, env}));
+		mkdirSync(partitionDir(key), {recursive: true});
+		writeFileSync(join(partitionDir(key), 'state.json'), '{}');
+		expect(await clearSearchcastState({cwd, globalPath, env})).toEqual([key]);
+		expect(existsSync(partitionDir(key))).toBe(false);
+	});
+
+	it('refuses to guess the current identity when the searchcast section does not resolve, pointing at --all', async () => {
+		writeJson(join(project, 'webveil.json'), {
+			searchcast: {recipes: ['recipes']},
+		});
 		await expect(
 			clearSearchcastState({cwd, globalPath, env: {...process.env}}),
 		).rejects.toThrow(/no searchcast identity to clear here.*--all/);

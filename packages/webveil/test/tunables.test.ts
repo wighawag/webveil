@@ -819,7 +819,10 @@ describe('fetchMaxRedirects: both transports', () => {
 	});
 
 	it('reaches the plain guard through the core fetch from config', async () => {
-		writeJson(join(project, 'webveil.json'), {fetchMaxRedirects: 0});
+		writeJson(join(project, 'webveil.json'), {
+			fetchMaxRedirects: 0,
+			fetchTransport: 'plain',
+		});
 		const inner = redirecting();
 		await expect(
 			fetch(

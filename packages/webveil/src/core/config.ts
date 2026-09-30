@@ -14,7 +14,7 @@
 import {readFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {delimiter, dirname, join, parse} from 'node:path';
-import {attachProvenance, mergeLayers} from './layers.js';
+import {attachProvenance, configProvenance, mergeLayers} from './layers.js';
 import type {Layer} from './layers.js';
 import {
 	attachDeprecations,
@@ -243,12 +243,42 @@ export interface ResolveOptions {
 	globalPath?: string;
 }
 
+/**
+ * Recorded decisions (task default-backend-searchcast, spec
+ * searchcast-backend; owner-approved Marginalia chain):
+ * - The default `backend` is `searchcast` (it was `searxng`), still on
+ *   `direct` egress. Its engine chain, when the user sets none, is the
+ *   bundled Marginalia code recipe, filled in by the backend, not here
+ *   (backends/searchcast.ts explains why: a key-by-key merge would mix a
+ *   user's chain with the default one).
+ * - `baseUrl` keeps its old default `http://127.0.0.1:8080`: searchcast does
+ *   not use it, and it is what makes `backend: "searxng"` alone restore the
+ *   previous default exactly.
+ * - No probe for a local SearXNG (a guess, and a network call nobody asked
+ *   for). Instead, while `backend` comes from these defaults
+ *   (`usesDefaultBackend`), a failed search (search.ts) and `webveil doctor`
+ *   (setup.ts, a `defaultBackend` notice, not a problem) carry
+ *   `DEFAULT_BACKEND_NOTE`. Alternative considered: a one-time warning on
+ *   every command, rejected as noise for the users the default works for.
+ */
 const DEFAULTS: Config = {
-	backend: 'searxng',
+	backend: 'searchcast',
 	baseUrl: 'http://127.0.0.1:8080',
 	egress: {mode: 'direct'},
 	fetchSize: 'm',
 };
+
+/** What a user who relied on the old implicit SearXNG default needs to know. */
+export const DEFAULT_BACKEND_NOTE =
+	'the default backend changed in webveil 0.11: it is now searchcast with a ' +
+	'bundled Marginalia engine chain (it was a local SearXNG at ' +
+	'http://127.0.0.1:8080); set "backend": "searxng" (or ' +
+	'WEBVEIL_BACKEND=searxng) to restore the previous default';
+
+/** True when `backend` was set by no config layer (the built-in default). */
+export function usesDefaultBackend(config: Config): boolean {
+	return configProvenance(config)?.backend?.layer === 'defaults';
+}
 
 const PROJECT_FILE = 'webveil.json';
 

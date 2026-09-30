@@ -33,7 +33,7 @@ describe('resolveConfig', () => {
 			globalPath: join(root, 'nope', 'webveil.json'),
 		});
 		expect(cfg).toEqual({
-			backend: 'searxng',
+			backend: 'searchcast',
 			baseUrl: 'http://127.0.0.1:8080',
 			egress: {mode: 'direct'},
 			fetchSize: 'm',

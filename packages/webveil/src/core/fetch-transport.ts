@@ -276,7 +276,7 @@ export function createSearchcastFetch(
 					.catch((error: unknown) =>
 						Promise.reject(
 							error instanceof SearchcastError && error.kind === 'impersonation'
-								? impersonationFailure(error)
+								? impersonationFailure(error, 'fetch')
 								: error,
 						),
 					);

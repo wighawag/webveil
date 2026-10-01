@@ -1,5 +1,18 @@
 # pi-webveil
 
+## 0.8.0
+
+### Minor Changes
+
+- cd07fa1: A browser engine is now named `browser:<recipe>` in `searchcast.engines` (it was `searchcast:<recipe>`, which no longer said "browser" once the backend itself is called searchcast). `searchcast:<recipe>` still works for one release, in `engines` and in `decoyGuard` (and `WEBVEIL_SEARCHCAST_DECOY_GUARD`), with one warning per config file (or for env) naming each old name: on stderr for the CLI and MCP server, in pi-webveil's notifications and tool result, and under `deprecations` in `webveil doctor`. Both prefixes naming the same recipe in one list is an error naming both. A chain keeps its identity key (state partition and browser profile) whichever prefix it uses; only a browser engine's cooldown restarts. A recipe may no longer be named `browser:...` (as `searchcast:...` was already refused), since that name now means a browser engine.
+
+### Patch Changes
+
+- 83a22d2: Text cleanup with no behaviour change. Error messages, the pi extension's degradation warning (now `[warning] search degraded (unresponsive engines: a, b). ...`), source comments and the docs no longer use em dashes, and examples name no real search engine except Mwmbl and Marginalia: they use placeholders such as `engine-a`. A repo test (`scripts/text-rules.mjs`) now fails on either, outside `work/` and the changelogs.
+- Updated dependencies [cd07fa1]
+- Updated dependencies [83a22d2]
+  - webveil@0.13.0
+
 ## 0.7.1
 
 ### Patch Changes

@@ -59,7 +59,7 @@ const page: FetchResult = {
 	truncated: false,
 };
 
-describe('pi-webveil — registration', () => {
+describe('pi-webveil: registration', () => {
 	it('registers EXACTLY two tools named web_search and web_fetch', () => {
 		const {pi, tools} = fakePi();
 		piWebveil(pi);
@@ -83,7 +83,7 @@ describe('pi-webveil — registration', () => {
 	});
 });
 
-describe('pi-webveil — web_search routes to core.search', () => {
+describe('pi-webveil: web_search routes to core.search', () => {
 	it('calls core.search with the query and the per-folder cwd from ctx.cwd', async () => {
 		const search = vi.fn(async () => [hit]);
 		const {pi, tools} = fakePi();
@@ -142,7 +142,7 @@ describe('pi-webveil — web_search routes to core.search', () => {
 		// Some engines unresponsive, others answered: partial results are still
 		// useful, but the model must not read them as a clean answer.
 		const search = vi.fn(async () => [
-			{...hit, unresponsiveEngines: ['brave', 'duckduckgo']},
+			{...hit, unresponsiveEngines: ['engine-b', 'engine-c']},
 		]);
 		const {pi, tools} = fakePi();
 		piWebveil(pi, {search});
@@ -151,7 +151,7 @@ describe('pi-webveil — web_search routes to core.search', () => {
 			.execute('id', {query: 'q'}, undefined, undefined, {cwd: '/w'});
 		const text = result.content.map((c) => c.text).join('\n');
 		expect(text).toContain('[warning] search degraded');
-		expect(text).toContain('brave, duckduckgo');
+		expect(text).toContain('engine-b, engine-c');
 	});
 
 	it('renders NO degradation warning for a clean answer', async () => {
@@ -177,7 +177,7 @@ describe('pi-webveil — web_search routes to core.search', () => {
 	});
 });
 
-describe('pi-webveil — web_fetch routes to core.fetch', () => {
+describe('pi-webveil: web_fetch routes to core.fetch', () => {
 	it('calls core.fetch with the url and the per-folder cwd from ctx.cwd', async () => {
 		const fetch = vi.fn(async () => page);
 		const {pi, tools} = fakePi();
@@ -224,7 +224,7 @@ describe('pi-webveil — web_fetch routes to core.fetch', () => {
 	});
 });
 
-describe('pi-webveil — no live network', () => {
+describe('pi-webveil: no live network', () => {
 	it('never reaches a global fetch when routing to fake core', async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, 'fetch')

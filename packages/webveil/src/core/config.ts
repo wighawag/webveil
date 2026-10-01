@@ -1,4 +1,4 @@
-// config seam — per-folder resolution. Precedence (highest wins):
+// config seam: per-folder resolution. Precedence (highest wins):
 //   env > nearest webveil.json (walking up from cwd) > global
 //   $XDG_CONFIG_HOME/webveil/config.json (~/.config/webveil/config.json) >
 //   defaults.
@@ -73,9 +73,9 @@ export type Egress =
  * comma, whereas the path delimiter (`codeRecipes`) or whitespace
  * (`chromeArgs`) would be surprising for a list of names. A name missing from
  * `engines` is NOT an error (unlike `engines` itself): a global
- * `decoyGuard: ["bing"]` must keep working in a project whose chain has no
- * `bing`; searchcast simply never judges it. Alternative considered: failing on
- * such a name, rejected for that layering reason.
+ * `decoyGuard: ["engine-a"]` must keep working in a project whose chain has no
+ * `engine-a`; searchcast simply never judges it. Alternative considered:
+ * failing on such a name, rejected for that layering reason.
  *
  * Recorded decisions (task webveil-installs-and-tunables; rules and defaults:
  * tunables.ts): searchcast's tuning options pass through under their searchcast

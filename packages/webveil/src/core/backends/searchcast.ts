@@ -39,8 +39,8 @@
 // profile layout and idle clock: state.ts):
 // - A browser engine is named `searchcast:<recipe>` in `searchcast.engines`, so
 //   ONE ordered chain mixes HTTP and browser engines and the same recipe JSON
-//   can run both ways (`ddg` over HTTP, `searchcast:ddg` in the browser). A
-//   loaded recipe whose own name starts with `searchcast:` is an error (the
+//   can run both ways (`engine-a` over HTTP, `searchcast:engine-a` in the
+//   browser). A loaded recipe whose own name starts with `searchcast:` is an error (the
 //   prefix is reserved), never a silent shadow. In library mode the recipe
 //   must be a loaded declarative one (a code recipe cannot run in a browser);
 //   in endpoint mode `<recipe>` is the name on the server and is not loaded

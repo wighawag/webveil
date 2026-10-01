@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// webveil — the incur-based CLI + MCP frontend. ONE `Cli.create()` definition
+// webveil: the incur-based CLI + MCP frontend. ONE `Cli.create()` definition
 // yields the CLI, an MCP server (`--mcp`), skills (`skills add`), a `--llms`
 // manifest, TOON output, and token pagination for free (incur). Pi-agnostic:
 // any agent (pi via pi-mcp-adapter, Claude Code, Cursor, Codex, bash) consumes
@@ -99,7 +99,7 @@ const SIZES = ['s', 'm', 'l', 'f'] as const;
 /**
  * Build the webveil CLI. Returns the incur `Cli` so a caller (the bin below, or
  * a test) decides how to serve it. The `search`/`fetch` commands forward to the
- * injected core, normalizing nothing themselves — the core already deduped,
+ * injected core, normalizing nothing themselves: the core already deduped,
  * clamped, and size-bounded.
  */
 export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {

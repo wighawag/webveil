@@ -1,9 +1,9 @@
-// egress seam — how outbound HTTP leaves the machine. Yields TWO artifacts off
+// egress seam: how outbound HTTP leaves the machine. Yields TWO artifacts off
 // the SAME undici dispatcher: the proxied `http` helper (see http.ts, handed to
 // backends) and an egress-bound WHATWG `fetch` (injected into distilly/fetch).
 //
 // CRITICAL anonymity invariant (docs/adr/0001): egress is fail-loud. A
-// configured proxy that cannot be built MUST throw — it must NEVER silently
+// configured proxy that cannot be built MUST throw; it must NEVER silently
 // fall back to un-proxied (direct) transport.
 
 import {Agent, type Dispatcher, ProxyAgent, fetch as undiciFetch} from 'undici';
@@ -48,7 +48,7 @@ export function assertEgressAllowsBaseUrl(cfg: Config): void {
 	if (isUnixBaseUrl(cfg.baseUrl))
 		throw new EgressError(
 			`egress ${cfg.egress.mode}: a unix: (local socket) baseUrl cannot be ` +
-				`proxied — it is inherently local, so proxying it gives fake ` +
+				`proxied: it is inherently local, so proxying it gives fake ` +
 				`anonymity (SearXNG still crawls the web from your real IP). Set ` +
 				`egress=direct and proxy the backend itself (SearXNG's ` +
 				`outgoing.proxies), or use a remote backend. To proxy web_fetch while ` +

@@ -1,13 +1,13 @@
-// Extractor seam — turn a URL into clean, size-bounded markdown by calling
+// Extractor seam: turn a URL into clean, size-bounded markdown by calling
 // distilly's NETWORKED `urlToMarkdown` (the `distilly/fetch` entrypoint),
 // INJECTING webveil's egress-bound `fetch` as the only transport. distilly's
 // network Rules (github/mdn/react.dev/vuejs.org) rewrite a matching URL to its
-// raw `.md`/API source and fetch THAT over our egress — shorter, cleaner output;
+// raw `.md`/API source and fetch THAT over our egress (shorter, cleaner output);
 // non-matching URLs run through distilly's pure core. See docs/adr/0001.
 //
 // THE HARD INVARIANT (load-bearing for anonymity): webveil ALWAYS injects its
 // egress-bound `fetch` here and NEVER lets distilly use a global/default fetch.
-// distilly throws if none is injected — the desired fail-loud. And the egress
+// distilly throws if none is injected: the desired fail-loud. And the egress
 // fetch itself throws (before any I/O) when a configured proxy is unbuildable
 // (egress.ts), so a broken proxy can never become an un-proxied request.
 //

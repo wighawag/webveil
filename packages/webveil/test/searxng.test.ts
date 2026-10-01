@@ -20,7 +20,7 @@ const SEARXNG_PAYLOAD = {
 			url: 'https://example.com/a',
 			title: 'Result A',
 			content: 'Snippet for A',
-			engine: 'duckduckgo',
+			engine: 'engine-c',
 			score: 1.5,
 			category: 'general',
 		},
@@ -28,7 +28,7 @@ const SEARXNG_PAYLOAD = {
 			url: 'https://example.com/b',
 			title: 'Result B',
 			content: 'Snippet for B',
-			engine: 'google',
+			engine: 'engine-f',
 			score: 1.2,
 		},
 	],
@@ -134,7 +134,7 @@ describe('searxng backend', () => {
 
 	// Engine-degradation surfacing (live incident 2026-09-16: every curated
 	// engine refused or poisoned the box's egress IP; the response carried no
-	// usable degradation signal for clients). These tests use fixture payloads —
+	// usable degradation signal for clients). These tests use fixture payloads,
 	// never a live engine.
 	describe('unresponsive_engines', () => {
 		// Upstream shape (`searx/webutils.get_translated_errors`): a JSON pair
@@ -142,8 +142,8 @@ describe('searxng backend', () => {
 		const DEGRADED_PAYLOAD = {
 			...SEARXNG_PAYLOAD,
 			unresponsive_engines: [
-				['brave', 'Suspended: too many requests'],
-				['duckduckgo', 'CAPTCHA'],
+				['engine-b', 'Suspended: too many requests'],
+				['engine-c', 'CAPTCHA'],
 			],
 		};
 
@@ -153,7 +153,7 @@ describe('searxng backend', () => {
 			const results = await backend.search('webveil', http);
 			expect(results).toHaveLength(2);
 			for (const r of results)
-				expect(r.unresponsiveEngines).toEqual(['brave', 'duckduckgo']);
+				expect(r.unresponsiveEngines).toEqual(['engine-b', 'engine-c']);
 		});
 
 		it('keeps the annotation on clamped results', async () => {
@@ -161,7 +161,7 @@ describe('searxng backend', () => {
 			const backend = createSearxngBackend(config);
 			const results = await backend.search('webveil', http, {maxResults: 1});
 			expect(results).toHaveLength(1);
-			expect(results[0]!.unresponsiveEngines).toEqual(['brave', 'duckduckgo']);
+			expect(results[0]!.unresponsiveEngines).toEqual(['engine-b', 'engine-c']);
 		});
 
 		it('FAILS LOUD when no results came back and engines are unresponsive (full outage)', async () => {
@@ -169,18 +169,18 @@ describe('searxng backend', () => {
 				query: 'gfx1151 rocm',
 				results: [],
 				unresponsive_engines: [
-					['bing', 'HTTP 403'],
-					['brave', 'Suspended: too many requests'],
-					['duckduckgo', 'CAPTCHA'],
-					['mojeek', 'HTTP 403'],
-					['startpage', 'Suspended: CAPTCHA'],
+					['engine-a', 'HTTP 403'],
+					['engine-b', 'Suspended: too many requests'],
+					['engine-c', 'CAPTCHA'],
+					['engine-d', 'HTTP 403'],
+					['engine-e', 'Suspended: CAPTCHA'],
 				],
 			});
 			const backend = createSearxngBackend(config);
 			// The existing unavailable/fail-loud path: a thrown Error (like http
 			// failures), never a confident empty answer.
 			await expect(backend.search('gfx1151 rocm', http)).rejects.toThrow(
-				/searxng: no results and engines unresponsive \(bing, brave, duckduckgo, mojeek, startpage\).*docs\/searxng-setup\.md/,
+				/searxng: no results and engines unresponsive \(engine-a, engine-b, engine-c, engine-d, engine-e\).*docs\/searxng-setup\.md/,
 			);
 		});
 
@@ -201,19 +201,19 @@ describe('searxng backend', () => {
 			const {http} = fakeHttp({
 				results: [{url: 'https://example.com/a', title: 'Result A'}],
 				unresponsive_engines: [
-					'mojeek',
-					{name: 'brave', error: 'too many requests'},
+					'engine-d',
+					{name: 'engine-b', error: 'too many requests'},
 					{engine: 'shape-we-do-not-know'},
-					['duckduckgo', 'CAPTCHA'],
+					['engine-c', 'CAPTCHA'],
 					42,
 				],
 			});
 			const backend = createSearxngBackend(config);
 			const results = await backend.search('q', http);
 			expect(results[0]!.unresponsiveEngines).toEqual([
-				'mojeek',
-				'brave',
-				'duckduckgo',
+				'engine-d',
+				'engine-b',
+				'engine-c',
 			]);
 		});
 	});

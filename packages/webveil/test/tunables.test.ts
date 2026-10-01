@@ -261,7 +261,7 @@ describe('searchcast.decoyGuard: list or {include, exclude}, replaced whole', ()
 		resolveConfig({cwd: project, globalPath, env});
 
 	it('a project object replaces a global list whole (no mix of the two)', () => {
-		writeJson(globalPath, {searchcast: {decoyGuard: ['bing']}});
+		writeJson(globalPath, {searchcast: {decoyGuard: ['engine-a']}});
 		writeJson(join(project, 'webveil.json'), {
 			searchcast: {decoyGuard: {exclude: ['alpha']}},
 		});
@@ -271,17 +271,18 @@ describe('searchcast.decoyGuard: list or {include, exclude}, replaced whole', ()
 	it('env: WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE gives the object form', () => {
 		expect(
 			resolve({
-				WEBVEIL_SEARCHCAST_DECOY_GUARD: 'bing',
+				WEBVEIL_SEARCHCAST_DECOY_GUARD: 'engine-a',
 				WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: 'alpha, beta',
 			}).searchcast!.decoyGuard,
-		).toEqual({include: ['bing'], exclude: ['alpha', 'beta']});
+		).toEqual({include: ['engine-a'], exclude: ['alpha', 'beta']});
 		expect(
 			resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: 'alpha'}).searchcast!
 				.decoyGuard,
 		).toEqual({exclude: ['alpha']});
 		expect(
-			resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD: 'bing'}).searchcast!.decoyGuard,
-		).toEqual(['bing']);
+			resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD: 'engine-a'}).searchcast!
+				.decoyGuard,
+		).toEqual(['engine-a']);
 	});
 });
 
@@ -387,10 +388,14 @@ const BAD_SEARCH: [string, unknown, RegExp][] = [
 	],
 	[
 		'searchcast.decoyGuard',
-		{include: 'bing'},
+		{include: 'engine-a'},
 		/searchcast\.decoyGuard must be/,
 	],
-	['searchcast.decoyGuard', {only: ['bing']}, /searchcast\.decoyGuard must be/],
+	[
+		'searchcast.decoyGuard',
+		{only: ['engine-a']},
+		/searchcast\.decoyGuard must be/,
+	],
 	['searchcast.browser.timeoutMs', 0, /searchcast\.browser\.timeoutMs/],
 	['searchcast.browser.maxBodyBytes', -1, /searchcast\.browser\.maxBodyBytes/],
 	['searchcast.state', true, /searchcast\.state must be an object/],

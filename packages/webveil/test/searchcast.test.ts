@@ -92,7 +92,8 @@ function writeRecipe(path: string, name: string): void {
 
 /**
  * Host -> HTTP status the fake transport answers (200 renders one hit), or
- * `empty`, or `decoy` (five hits unrelated to any query, as Bing serves).
+ * `empty`, or `decoy` (five hits unrelated to any query, the page an engine
+ * that serves decoys answers).
  */
 type Behaviour = Record<string, number | 'empty' | 'decoy'>;
 
@@ -311,12 +312,12 @@ describe('searchcast backend: the decoy guard (searchcast.decoyGuard)', () => {
 		writeProject({searchcast: {decoyGuard: ['alpha']}});
 		const fake = fakeFactory();
 		await searchWith(fake.create, {
-			WEBVEIL_SEARCHCAST_DECOY_GUARD: 'bing, alpha,,',
+			WEBVEIL_SEARCHCAST_DECOY_GUARD: 'engine-a, alpha,,',
 		});
-		expect(fake.built[0]!.decoyGuard).toEqual(['bing', 'alpha']);
+		expect(fake.built[0]!.decoyGuard).toEqual(['engine-a', 'alpha']);
 	});
 
-	it.each([['bing'], [['bing', 3]], [{bing: true}]])(
+	it.each([['engine-a'], [['engine-a', 3]], [{'engine-a': true}]])(
 		'fails loud on a value that is not a list of names: %j',
 		async (decoyGuard) => {
 			writeProject({searchcast: {decoyGuard}});

@@ -118,12 +118,12 @@ describe('core.search()', () => {
 			{
 				title: 'A',
 				url: 'https://example.com/a',
-				unresponsiveEngines: ['brave', 'duckduckgo'],
+				unresponsiveEngines: ['engine-b', 'engine-c'],
 			},
 			{
 				title: 'A dup',
 				url: 'https://example.com/a',
-				unresponsiveEngines: ['brave', 'duckduckgo'],
+				unresponsiveEngines: ['engine-b', 'engine-c'],
 			},
 			{title: 'B', url: 'https://example.com/b'},
 		]);
@@ -132,7 +132,7 @@ describe('core.search()', () => {
 			{
 				title: 'A',
 				url: 'https://example.com/a',
-				unresponsiveEngines: ['brave', 'duckduckgo'],
+				unresponsiveEngines: ['engine-b', 'engine-c'],
 			},
 			{title: 'B', url: 'https://example.com/b'},
 		]);

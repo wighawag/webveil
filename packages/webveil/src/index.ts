@@ -1,11 +1,11 @@
-// webveil — anonymous-capable, self-hosted, account-free web search + fetch for agents.
+// webveil: anonymous-capable, self-hosted, account-free web search + fetch for agents.
 //
 // This is the public surface. The framework-agnostic core lives under src/core:
 //   - core/config.ts            : config seam (per-folder webveil.json + global + env)
 //   - core/layers.ts            : key-by-key layer merge + per-key provenance
 //   - core/spellings.ts         : the old serpcast spellings, rewritten per layer with a warning
 //   - core/trust.ts             : executable settings refused from a project webveil.json
-//   - core/egress.ts            : egress seam (direct | http | socks5/Tor) — dispatcher + egress fetch
+//   - core/egress.ts            : egress seam (direct | http | socks5/Tor): dispatcher + egress fetch
 //   - core/http.ts              : the proxied `http` helper handed to backends
 //   - core/extract.ts           : Extractor seam (distilly/fetch + injected egress fetch)
 //   - core/backends/types.ts    : backend seam (the Backend interface + result shapes)

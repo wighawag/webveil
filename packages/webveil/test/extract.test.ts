@@ -33,7 +33,7 @@ function spyUrlToMarkdown(result = {markdown: '# hi', truncated: false}) {
 }
 
 describe('extract (Extractor seam)', () => {
-	it('injects webveil egress fetch into distilly — never a global fetch', async () => {
+	it('injects webveil egress fetch into distilly, never a global fetch', async () => {
 		const fetch = spyEgressFetch();
 		const urlToMarkdown = spyUrlToMarkdown();
 		const deps: ExtractDeps = {

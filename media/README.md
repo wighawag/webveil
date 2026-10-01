@@ -96,13 +96,13 @@ Deliberately **not** Tor's `#7D4698`: webveil is not Tor-only, and borrowing it 
 
 So nobody re-proposes them cold. Every variant named below is a committed SVG in `concepts/`; render any of them with `sheet.sh`.
 
-- **Magnifying glass, globe, padlock, shield, eye, onion, mask, keyhole, fingerprint, incognito glasses** — blacklisted before sketching started.
-- **Trail with a dissolving tail** (`b-trail`) — a circle on the end of a diagonal stick *is* a magnifying glass, on a search tool. Fatal.
-- **Blank sender card** (`d-blanksender`) — the dashed field is the standard file drop-zone idiom; the card reads as an ID badge or a keyboard; mush at 32px.
-- **Broken ring with a straight centred bar** (`c-brokenring`) — the shape that started this, but `( | )` is the broadcast/signal icon, i.e. the opposite claim. The symmetry is *structural*: a straight bar through the centre exits at two opposite points, forcing equal mirrored arcs. Rotating it (`h2-rot`) turns the axis into a prohibition slash; moving it off-centre (`h3-chord`) reads as a letter D. Bending the bar was the fix.
-- **Refraction through a veil pane** (`g2-pane`) — the runner-up, and genuinely good: a ray displaced by passing through an accent pane. Dropped only because the jogged ring says the same thing in a stronger silhouette.
-- **Two panes for the two egress hops** (`f3-twohop`) — honest to `docs/adr/0003`, reads as venetian blinds, mush at 16px.
-- **Ring with a single gap and a ray leaving it** (`c2-gapring`) — the reload/refresh spinner.
+- **Magnifying glass, globe, padlock, shield, eye, onion, mask, keyhole, fingerprint, incognito glasses**: blacklisted before sketching started.
+- **Trail with a dissolving tail** (`b-trail`): a circle on the end of a diagonal stick *is* a magnifying glass, on a search tool. Fatal.
+- **Blank sender card** (`d-blanksender`): the dashed field is the standard file drop-zone idiom; the card reads as an ID badge or a keyboard; mush at 32px.
+- **Broken ring with a straight centred bar** (`c-brokenring`): the shape that started this, but `( | )` is the broadcast/signal icon, i.e. the opposite claim. The symmetry is *structural*: a straight bar through the centre exits at two opposite points, forcing equal mirrored arcs. Rotating it (`h2-rot`) turns the axis into a prohibition slash; moving it off-centre (`h3-chord`) reads as a letter D. Bending the bar was the fix.
+- **Refraction through a veil pane** (`g2-pane`): the runner-up, and genuinely good: a ray displaced by passing through an accent pane. Dropped only because the jogged ring says the same thing in a stronger silhouette.
+- **Two panes for the two egress hops** (`f3-twohop`): honest to `docs/adr/0003`, reads as venetian blinds, mush at 16px.
+- **Ring with a single gap and a ray leaving it** (`c2-gapring`): the reload/refresh spinner.
 
 ## Known gaps, accepted
 

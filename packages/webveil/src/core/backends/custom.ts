@@ -1,10 +1,10 @@
-// custom backend — the local-command escape hatch (contract lifted from
+// custom backend: the local-command escape hatch (contract lifted from
 // pi-web-providers' custom-wrapper). Instead of an HTTP source, it spawns a
 // configured local command, writes the request as JSON to its stdin, and parses
 // `SearchResult[]` from its stdout. This lets any local script be a backend.
 //
 // Egress note: this backend owns its own I/O (the spawned command does whatever
-// it wants), so the handed `http` helper is unused here — there is no outbound
+// it wants), so the handed `http` helper is unused here: there is no outbound
 // HTTP for webveil to proxy. It still returns the normalized SearchResult shape.
 //
 // Command source: the configured `baseUrl` carries the command line, parsed as a
@@ -28,7 +28,7 @@
 //   stdin  <- JSON: {"query": string, "maxResults"?: number}
 //   stdout -> JSON: SearchResult[]  (each {title, url, snippet?})
 // Malformed stdout (non-JSON, not an array, or entries missing url/title) FAILS
-// CLEARLY — it never silently returns an empty list.
+// CLEARLY: it never silently returns an empty list.
 
 import {spawn as defaultSpawn} from 'node:child_process';
 import type {Config} from '../config.js';
@@ -96,20 +96,20 @@ function resolveExecutable(
 
 /**
  * Normalize one stdout entry into a SearchResult, FAILING CLEARLY on a malformed
- * entry rather than dropping it — the custom contract is explicit, so a missing
+ * entry rather than dropping it: the custom contract is explicit, so a missing
  * url/title is a contract violation the user should see, not a silent skip.
  */
 function toResult(entry: unknown, index: number): SearchResult {
 	if (typeof entry !== 'object' || entry === null)
 		throw new Error(
-			`custom: malformed output — result[${index}] is not an object`,
+			`custom: malformed output: result[${index}] is not an object`,
 		);
 	const hit = entry as Record<string, unknown>;
 	const url = str(hit.url);
 	const title = str(hit.title);
 	if (!url || !title)
 		throw new Error(
-			`custom: malformed output — result[${index}] is missing a url or title`,
+			`custom: malformed output: result[${index}] is missing a url or title`,
 		);
 	const snippet = str(hit.snippet);
 	return snippet ? {title, url, snippet} : {title, url};
@@ -125,12 +125,12 @@ function parseOutput(stdout: string): SearchResult[] {
 		parsed = JSON.parse(trimmed);
 	} catch (cause) {
 		throw new Error(
-			`custom: malformed output — stdout is not valid JSON: ${(cause as Error).message}`,
+			`custom: malformed output: stdout is not valid JSON: ${(cause as Error).message}`,
 		);
 	}
 	if (!Array.isArray(parsed))
 		throw new Error(
-			'custom: malformed output — expected a JSON array of results',
+			'custom: malformed output: expected a JSON array of results',
 		);
 	return parsed.map(toResult);
 }

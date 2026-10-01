@@ -1,4 +1,4 @@
-// backend seam — the contract every result source (searxng | tavily-compat |
+// backend seam: the contract every result source (searxng | tavily-compat |
 // custom) implements. A Backend is HANDED a proxied `http` helper (bound to the
 // configured egress dispatcher) so it physically cannot bypass the egress.
 
@@ -11,7 +11,7 @@ export interface SearchResult {
 	 * Engines the backend reported as unresponsive for this query (SearXNG's
 	 * `unresponsive_engines`). Present ONLY when some engines failed while
 	 * others still answered: a partial, degraded result set. Its absence means
-	 * the backend reported no engine failures — a clean answer. webveil cannot
+	 * the backend reported no engine failures: a clean answer. webveil cannot
 	 * detect JUNK results (a decoy SERP parses like a real one), so this flag
 	 * means "fewer engines than usual answered", not "these results are good".
 	 */

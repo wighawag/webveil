@@ -93,7 +93,7 @@ Then list them in the global config, `~/.config/webveil/config.json`, most wante
 	"searchcast": {
 		"recipes": ["recipes"],
 		"codeRecipes": ["recipes/example-api.mjs"],
-		"engines": ["example-api", "example", "searchcast:example"]
+		"engines": ["example-api", "example", "browser:example"]
 	}
 }
 ```
@@ -230,14 +230,14 @@ Point webveil at an installed set with `set:<name>` in `searchcast.recipes` (its
 
 #### A browser engine as the fallback (searchcast)
 
-A **browser engine** runs a declarative recipe in searchcast's browser runner [`@searchcast/browser`](https://github.com/wighawag/searchcast/tree/main/packages/browser) (formerly the `searchcast` 0.1 package), a real browser, so it has a real browser's fingerprint and runs the page's JavaScript. It is the heaviest engine, so it usually goes last in the chain, to answer when the HTTP engines are blocked. Name it `searchcast:<recipe>` in `searchcast.engines`, so one chain mixes HTTP and browser engines and one recipe file can run both ways:
+A **browser engine** runs a declarative recipe in searchcast's browser runner [`@searchcast/browser`](https://github.com/wighawag/searchcast/tree/main/packages/browser) (formerly the `searchcast` 0.1 package), a real browser, so it has a real browser's fingerprint and runs the page's JavaScript. It is the heaviest engine, so it usually goes last in the chain, to answer when the HTTP engines are blocked. Name it `browser:<recipe>` in `searchcast.engines`, so one chain mixes HTTP and browser engines and one recipe file can run both ways:
 
 ```json
 {
 	"backend": "searchcast",
 	"searchcast": {
 		"recipes": ["recipes"],
-		"engines": ["web", "searchcast:web"],
+		"engines": ["web", "browser:web"],
 		"browser": {"mode": "library", "xvfb": "/usr/bin/Xvfb"}
 	}
 }
@@ -308,11 +308,12 @@ Up to webveil 0.10 this backend was called `serpcast`, after the library it ran 
 | `WEBVEIL_SERPCAST_SEARCHCAST_*` | `WEBVEIL_SEARCHCAST_BROWSER_*` |
 | `WEBVEIL_FETCH_SERPCAST_*` | `WEBVEIL_FETCH_SEARCHCAST_*` |
 | `WEBVEIL_BACKEND=serpcast` | `WEBVEIL_BACKEND=searchcast` |
+| browser engine `searchcast:<recipe>` (webveil 0.12, in `engines` and `decoyGuard`) | `browser:<recipe>` |
 
 - **Both spellings of one setting in one place is an error** naming both (for example `serpcast.engines` and `searchcast.engines` in the same file, or `WEBVEIL_SERPCAST_LIBCURL_PATH` and `WEBVEIL_SEARCHCAST_LIBCURL_PATH`), never a silent pick. Different settings may mix spellings, and across files and env the usual precedence (env > project > global) applies to the renamed setting.
 - **The trust rule does not depend on the spelling**: a project `webveil.json` cannot set `serpcast.codeRecipes`, `serpcast.libcurlPath` or `serpcast.searchcast.chrome` any more than their new names.
 - **The rename resets nothing**: the identity key of a config (its state directory and browser profile) is the same in either spelling, and the rename does not change it.
-- The browser engine names `searchcast:<recipe>` in `engines` are unchanged.
+- **The browser engine prefix was renamed later** (after webveil 0.12): a browser engine is now `browser:<recipe>`, since `searchcast:` had become the name of the whole backend. `searchcast:<recipe>` still works for one release, in `engines` and in `decoyGuard` (and `WEBVEIL_SEARCHCAST_DECOY_GUARD`), with one warning per file (or for env) naming each old name; both prefixes naming the same recipe in one list is an error naming both. The identity key is the same either way. A recipe may not be named `browser:...` (as it may not be named `searchcast:...`): that name would now mean a browser engine.
 
 ### With a local SearXNG
 
@@ -369,7 +370,7 @@ load-bearing consequence for SearXNG:
 
 **The searchcast backend has no such split: the search hop is webveil's own.** webveil itself sends every engine request (declarative recipes, code recipes, and the library-mode searchcast browser, which gets `egress` as its proxy), so `egress` governs exactly the traffic that reaches the search engines, and `egress: socks5` really anonymizes search. A SOCKS proxy is always handed over as `socks5h`, so host names are resolved at the proxy. The loopback guard above does not apply (searchcast has no `baseUrl` hop); it concerns SearXNG. searchcast has one case of the same trap, and webveil refuses it the same way:
 
-- **An external searchcast endpoint** (`searchcast.browser.mode: "endpoint"`) is a browser webveil does not run, so it reaches the engines from wherever it runs, outside webveil's egress. With a non-`direct` egress and a `searchcast:` engine in the chain, webveil refuses to search. Use library mode, or `egress: direct` with the searchcast server proxied by other means (anonctl, below).
+- **An external searchcast endpoint** (`searchcast.browser.mode: "endpoint"`) is a browser webveil does not run, so it reaches the engines from wherever it runs, outside webveil's egress. With a non-`direct` egress and a `browser:` engine in the chain, webveil refuses to search. Use library mode, or `egress: direct` with the searchcast server proxied by other means (anonctl, below).
 - Also refused, with a library-mode browser engine: a SOCKS `egress` URL with credentials. Chromium has no SOCKS authentication, so the credentials (and any Tor circuit isolation they select) would be silently dropped.
 
 **Under [anonctl](https://github.com/wighawag/anonctl)** (every connection of one Unix account forced through an anonymizer such as Tor by the kernel, fail-closed), run webveil as that account with `egress: direct`, the default. searchcast's engine requests, the library-mode browser and `web_fetch` all leave through the forced tunnel with no further configuration, and endpoint mode is allowed too (`direct`), provided the searchcast server runs under the forced account as well.

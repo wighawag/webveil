@@ -160,17 +160,21 @@ function writeProject(
 		backend: 'searchcast',
 		...extra,
 		searchcast: {
-			engines: ['alpha', 'searchcast:alpha'],
+			engines: ['alpha', 'browser:alpha'],
 			recipes: ['recipes'],
 			...searchcast,
 		},
 	});
 }
 
-function searchWith(deps: SearchcastDeps, env: Record<string, string> = {}) {
+function searchWith(
+	deps: SearchcastDeps,
+	env: Record<string, string> = {},
+	onWarning?: (message: string) => void,
+) {
 	return search(
 		'webveil',
-		{cwd, globalPath, env},
+		{cwd, globalPath, env, ...(onWarning && {onWarning})},
 		{
 			getBackend: (name, config) =>
 				name === 'searchcast'
@@ -286,18 +290,123 @@ describe('searchcast library mode', () => {
 		expect(fake.built[0]!.proxy).toBe('socks5h://user:pw@127.0.0.1:9050');
 	});
 
-	it('fails loud on a browser engine without a declarative recipe, and on the reserved prefix', async () => {
-		writeProject({engines: ['searchcast:nope']});
+	it('fails loud on a browser engine without a declarative recipe, and on the reserved prefixes', async () => {
+		writeProject({engines: ['browser:nope']});
 		await expect(searchWith(fakes().deps)).rejects.toThrow(
-			/browser engine 'searchcast:nope' needs a declarative recipe 'nope' \(loaded declarative recipes: alpha\)/,
+			/browser engine 'browser:nope' needs a declarative recipe 'nope' \(loaded declarative recipes: alpha\)/,
 		);
-		writeProject({engines: ['searchcast:']});
-		await expect(searchWith(fakes().deps)).rejects.toThrow(/names no recipe/);
-		writeRecipe(join(project, 'recipes', 'searchcast:alpha.json'));
+		for (const empty of ['browser:', 'searchcast:']) {
+			writeProject({engines: [empty]});
+			await expect(searchWith(fakes().deps)).rejects.toThrow(
+				/'browser:' names no recipe/,
+			);
+		}
+		for (const prefix of ['browser:', 'searchcast:']) {
+			const file = join(project, 'recipes', `${prefix}alpha.json`);
+			writeRecipe(file);
+			writeProject();
+			await expect(searchWith(fakes().deps)).rejects.toThrow(
+				`recipe name '${prefix}alpha' uses the reserved '${prefix}' prefix ` +
+					'(browser engines are named browser:<recipe>)',
+			);
+			rmSync(file);
+		}
+	});
+});
+
+describe('the old browser engine prefix searchcast:<recipe>', () => {
+	it('works as browser:<recipe>, with one warning', async () => {
+		writeProject({
+			engines: ['alpha', 'searchcast:alpha'],
+			decoyGuard: ['searchcast:alpha'],
+		});
+		const fake = fakes();
+		const warnings: string[] = [];
+		const results = await searchWith(fake.deps, {}, (m) => warnings.push(m));
+		expect(results).toEqual([
+			{
+				title: 'alpha browser hit',
+				url: 'https://b.example/webveil',
+				unresponsiveEngines: ['alpha'],
+			},
+		]);
+		expect(fake.built[0]!.searchcast?.module).toBe(fake.browser.module);
+		// the guard names the engine searchcast runs, so it still applies
+		expect(fake.built[0]!.decoyGuard).toEqual(['browser:alpha']);
+		expect(warnings).toEqual([
+			expect.stringContaining(
+				'`searchcast:alpha` in `searchcast.engines`, `searchcast:alpha` in ' +
+					'`searchcast.decoyGuard`',
+			),
+		]);
+		expect(warnings[0]).toContain(
+			'use `browser:alpha`, `browser:alpha` instead',
+		);
+	});
+
+	it('shares the cached instance and state partition of browser:<recipe>', async () => {
+		writeProject({engines: ['alpha', 'browser:alpha']});
+		const key = keyOf();
+		const fake = fakes();
+		await searchWith(fake.deps);
+		writeProject({engines: ['alpha', 'searchcast:alpha']});
+		expect(keyOf()).toBe(key);
+		await searchWith(fake.deps);
+		expect(fake.built).toHaveLength(1);
+	});
+
+	it('is an error next to browser:<recipe> for the same recipe', async () => {
+		writeProject({engines: ['searchcast:alpha', 'browser:alpha']});
+		const fake = fakes();
+		await expect(searchWith(fake.deps)).rejects.toThrow(
+			/`searchcast:alpha` and `browser:alpha` in `searchcast.engines`/,
+		);
+		expect(fake.built).toHaveLength(0);
+	});
+
+	it('names the new prefix when a hand-built config (no resolveConfig) still uses it', async () => {
 		writeProject();
-		await expect(searchWith(fakes().deps)).rejects.toThrow(
-			/recipe name 'searchcast:alpha' uses the reserved 'searchcast:' prefix/,
+		const config = resolveConfig({cwd, globalPath, env: {}});
+		config.searchcast = {...config.searchcast, engines: ['searchcast:alpha']};
+		const error = await createSearchcastBackend(config, fakes().deps)
+			.search('q', {} as never)
+			.catch((e: Error) => e);
+		expect((error as Error).message).toMatch(
+			/unknown engine 'searchcast:alpha' .*browser engines are named browser:<recipe>/,
 		);
+	});
+});
+
+describe('engine names around the browser prefix keep their behaviour', () => {
+	it('a recipe named `browser` is an ordinary engine, `browser:browser` its browser engine', async () => {
+		writeRecipe(join(project, 'recipes', 'browser.json'));
+		writeProject({engines: ['browser', 'browser:browser']});
+		const fake = fakes();
+		const results = await searchWith(fake.deps);
+		expect(results).toEqual([
+			{
+				title: 'browser browser hit',
+				url: 'https://b.example/webveil',
+				unresponsiveEngines: ['browser'],
+			},
+		]);
+	});
+
+	it('a code recipe whose name holds `:` elsewhere is an ordinary engine', async () => {
+		const file = join(root, 'code', 'colon.mjs');
+		mkdirSync(dirname(file), {recursive: true});
+		writeFileSync(
+			file,
+			"export default {name: 'foo:bar', async search(q) { return [{title: 'code ' + q, url: 'https://c.example/'}]; }};",
+		);
+		writeJson(globalPath, {searchcast: {codeRecipes: [file]}});
+		writeProject({engines: ['foo:bar']});
+		const warnings: string[] = [];
+		const results = await searchWith(fakes().deps, {}, (m) => warnings.push(m));
+		expect(results).toEqual([
+			{title: 'code webveil', url: 'https://c.example/'},
+		]);
+		expect(warnings).toEqual([]);
 	});
 });
 
@@ -569,6 +678,18 @@ describe('searchcast endpoint mode', () => {
 		await new Promise<void>((r) => server!.listen(socket, r));
 		return {socket, paths};
 	}
+
+	it('names the recipe on the server in either prefix (the old one with a warning)', async () => {
+		const {socket, paths} = await serve();
+		writeProject({
+			engines: ['searchcast:remote'],
+			browser: {mode: 'endpoint', endpoint: socket},
+		});
+		const warnings: string[] = [];
+		await searchWith(fakes().deps, {}, (m) => warnings.push(m));
+		expect(paths).toEqual(['/search?recipe=remote&q=webveil']);
+		expect(warnings).toEqual([expect.stringContaining('`browser:remote`')]);
+	});
 
 	it('works with egress direct (the recipe named on the server)', async () => {
 		const {socket, paths} = await serve();

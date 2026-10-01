@@ -84,12 +84,12 @@ const browser = {
 	timeoutMs: 9000,
 };
 const section = {
-	engines: ['alpha', 'searchcast:alpha'],
+	engines: ['alpha', 'browser:alpha'],
 	recipes: ['/abs/recipes'],
 	codeRecipes: ['/abs/code'],
 	libcurlPath: '/abs/libcurl.so',
 	sessionIdleMs: 1000,
-	decoyGuard: {include: ['alpha']},
+	decoyGuard: {include: ['alpha', 'browser:alpha']},
 	decoyRule: {top: 4},
 	state: {persist: true},
 };
@@ -106,7 +106,12 @@ const NEW = {
 const OLD = {
 	backend: 'serpcast',
 	fetchTransport: 'serpcast',
-	serpcast: {...section, searchcast: browser},
+	serpcast: {
+		...section,
+		engines: ['alpha', 'searchcast:alpha'],
+		decoyGuard: {include: ['alpha', 'searchcast:alpha']},
+		searchcast: browser,
+	},
 	fetchSerpcast: fetchSection,
 };
 
@@ -188,6 +193,11 @@ describe('the old spellings', () => {
 			['`serpcast`', '`searchcast`'],
 			['`serpcast.searchcast`', '`searchcast.browser`'],
 			['`fetchSerpcast`', '`fetchSearchcast`'],
+			[
+				'browser engine names `searchcast:alpha` in `searchcast.engines`, ' +
+					'`searchcast:alpha` in `searchcast.decoyGuard.include`',
+				'`browser:alpha`, `browser:alpha`',
+			],
 		]) {
 			const matching = warnings.filter((w) =>
 				w.startsWith(`webveil: ${old} (`),
@@ -197,7 +207,7 @@ describe('the old spellings', () => {
 			expect(matching[0]).toContain(`use ${now} instead`);
 			expect(matching[0]).toContain('removed in the next minor release');
 		}
-		expect(warnings).toHaveLength(5);
+		expect(warnings).toHaveLength(6);
 	});
 
 	it('resolve from env exactly as the new ones, with one warning per old prefix', () => {
@@ -454,12 +464,18 @@ describe('identity key', () => {
 		);
 	});
 
-	it('is the key webveil 0.10 computed (the browser subsection hashed as `searchcast`)', () => {
+	it('is the key webveil 0.10 computed (the browser subsection hashed as `searchcast`, browser engines as `searchcast:<recipe>`)', () => {
 		writeJson(globalPath, NEW);
 		const config = resolve();
 		const {browser: b, ...rest} = config.searchcast!;
+		expect(rest.engines).toEqual(['alpha', 'browser:alpha']);
 		expect(searchcastIdentityKey(config)).toBe(
-			identityKey(config.egress, {...rest, searchcast: b}),
+			identityKey(config.egress, {
+				...rest,
+				engines: ['alpha', 'searchcast:alpha'],
+				decoyGuard: {include: ['alpha', 'searchcast:alpha']},
+				searchcast: b,
+			}),
 		);
 	});
 });
@@ -507,6 +523,169 @@ describe('warnings reach the caller', () => {
 			write.mockRestore();
 		}
 	});
+});
+
+describe('the browser engine prefix (searchcast:<recipe> is now browser:<recipe>)', () => {
+	it('`browser:<recipe>` resolves with no warning', () => {
+		writeJson(projectFile, {searchcast: {engines: ['a', 'browser:a']}});
+		const config = resolve();
+		expect(config.searchcast?.engines).toEqual(['a', 'browser:a']);
+		expect(configDeprecations(config)).toEqual([]);
+	});
+
+	it('`searchcast:<recipe>` resolves as `browser:<recipe>` with one warning per file, naming each', () => {
+		writeJson(globalPath, {
+			searchcast: {decoyGuard: ['searchcast:g']},
+		});
+		writeJson(projectFile, {
+			searchcast: {
+				engines: ['a', 'searchcast:a', 'searchcast:b'],
+				decoyGuard: {include: ['searchcast:a'], exclude: ['searchcast:b']},
+			},
+		});
+		const config = resolve();
+		expect(config.searchcast?.engines).toEqual(['a', 'browser:a', 'browser:b']);
+		expect(config.searchcast?.decoyGuard).toEqual({
+			include: ['browser:a'],
+			exclude: ['browser:b'],
+		});
+		const warnings = configDeprecations(config);
+		expect(warnings).toHaveLength(2);
+		expect(warnings[0]).toBe(
+			`webveil: browser engine name \`searchcast:g\` in \`searchcast.decoyGuard\` (${globalPath}) ` +
+				'is a deprecated spelling, removed in the next minor release: use `browser:g` instead.',
+		);
+		expect(warnings[1]).toContain(projectFile);
+		for (const part of [
+			'`searchcast:a` in `searchcast.engines`',
+			'`searchcast:b` in `searchcast.engines`',
+			'`searchcast:a` in `searchcast.decoyGuard.include`',
+			'`searchcast:b` in `searchcast.decoyGuard.exclude`',
+			'use `browser:a`, `browser:b`, `browser:a`, `browser:b` instead',
+		])
+			expect(warnings[1]).toContain(part);
+	});
+
+	it('is rewritten inside an old `serpcast` section too', () => {
+		writeJson(projectFile, {serpcast: {engines: ['searchcast:a']}});
+		const config = resolve();
+		expect(config.searchcast?.engines).toEqual(['browser:a']);
+		expect(configDeprecations(config)).toEqual([
+			expect.stringContaining('use `searchcast` instead'),
+			expect.stringContaining('use `browser:a` instead'),
+		]);
+	});
+
+	it('in the env decoy guard lists, with one warning naming the variables', () => {
+		const config = resolve({
+			WEBVEIL_SEARCHCAST_DECOY_GUARD: 'a, searchcast:a',
+			WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: 'searchcast:b',
+		});
+		expect(config.searchcast?.decoyGuard).toEqual({
+			include: ['a', 'browser:a'],
+			exclude: ['browser:b'],
+		});
+		expect(configDeprecations(config)).toEqual([
+			'webveil: browser engine names searchcast:a in WEBVEIL_SEARCHCAST_DECOY_GUARD, ' +
+				'searchcast:b in WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE (env) is a deprecated ' +
+				'spelling, removed in the next minor release: use browser:a, browser:b instead.',
+		]);
+	});
+
+	it.each([
+		[{engines: ['searchcast:a', 'x', 'browser:a']}, '`searchcast.engines`'],
+		[{decoyGuard: ['browser:a', 'searchcast:a']}, '`searchcast.decoyGuard`'],
+		[
+			{decoyGuard: {exclude: ['searchcast:a', 'browser:a']}},
+			'`searchcast.decoyGuard.exclude`',
+		],
+	])(
+		'both spellings of one browser engine in one list is an error naming both (%#)',
+		(section, label) => {
+			writeJson(projectFile, {searchcast: section});
+			expect(() => resolve()).toThrow(
+				`webveil: \`searchcast:a\` and \`browser:a\` in ${label} (${projectFile}) ` +
+					'are two spellings of the same browser engine. Keep `browser:a` and ' +
+					'remove `searchcast:a` (the old spelling is removed in the next minor release).',
+			);
+		},
+	);
+
+	it('both spellings in an env list is an error naming both', () => {
+		expect(() =>
+			resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD: 'searchcast:a,browser:a'}),
+		).toThrow(
+			/`searchcast:a` and `browser:a` in WEBVEIL_SEARCHCAST_DECOY_GUARD \(env\)/,
+		);
+	});
+
+	it('different recipes in two spellings, or one spelling per layer, are no error', () => {
+		writeJson(globalPath, {searchcast: {engines: ['browser:a']}});
+		writeJson(projectFile, {
+			searchcast: {engines: ['searchcast:a', 'browser:b']},
+		});
+		expect(resolve().searchcast?.engines).toEqual(['browser:a', 'browser:b']);
+	});
+
+	it('leaves other values alone (a name holding `:` elsewhere, a non-string, a non-list)', () => {
+		const {value, deprecations} = normalizeFileLayer(
+			{searchcast: {engines: ['foo:bar', 'browser', 3], decoyGuard: 'x'}},
+			'f',
+		);
+		expect(value).toEqual({
+			searchcast: {engines: ['foo:bar', 'browser', 3], decoyGuard: 'x'},
+		});
+		expect(deprecations).toEqual([]);
+	});
+
+	it('gives the same identity key either way (file and env)', () => {
+		const chain = (prefix: string) => ({
+			searchcast: {
+				engines: ['alpha', `${prefix}alpha`],
+				decoyGuard: [`${prefix}alpha`],
+			},
+		});
+		writeJson(globalPath, chain('browser:'));
+		const key = searchcastIdentityKey(resolve());
+		writeJson(globalPath, chain('searchcast:'));
+		expect(searchcastIdentityKey(resolve())).toBe(key);
+		// and the key is the one webveil 0.12 computed for the old spelling
+		const old = resolve();
+		expect(key).toBe(
+			identityKey(old.egress, {
+				engines: ['alpha', 'searchcast:alpha'],
+				decoyGuard: ['searchcast:alpha'],
+			}),
+		);
+		writeJson(globalPath, {searchcast: {engines: ['browser:alpha']}});
+		const env = (guard: string) =>
+			searchcastIdentityKey(resolve({WEBVEIL_SEARCHCAST_DECOY_GUARD: guard}));
+		expect(env('searchcast:alpha')).toBe(env('browser:alpha'));
+	});
+
+	it.each(['browser:', 'searchcast:'])(
+		'keeps the trust rules with %s engines: a project cannot set the browser executables',
+		async (prefix) => {
+			for (const key of ['chrome', 'xvfb', 'chromeArgs']) {
+				writeJson(projectFile, {
+					searchcast: {
+						engines: [`${prefix}a`],
+						browser: {[key]: key === 'chromeArgs' ? ['--x'] : '/opt/x'},
+					},
+				});
+				const backend = createSearchcastBackend(resolve(), {
+					createSearchcast: () => {
+						throw new Error('an instance must not be built');
+					},
+				});
+				const error = await backend
+					.search('q', {} as Http)
+					.catch((e: Error) => e);
+				expect(error).toBeInstanceOf(TrustError);
+				expect((error as Error).message).toContain(`searchcast.browser.${key}`);
+			}
+		},
+	);
 });
 
 describe('normalizeEnv', () => {

@@ -17,5 +17,5 @@ The webveil 0.10 spellings keep working for one release, each with one warning n
 ## Consequences
 
 - Warnings are data on the resolved config: the CLI and MCP server print each once on stderr, pi-webveil shows each once (notification and tool result), and `webveil doctor` lists them as `deprecations`, a notice that does not make it unhealthy.
-- The browser engine names `searchcast:<recipe>` in `engines` are values, not keys, and are unchanged.
+- The browser engine names `searchcast:<recipe>` in `engines` are values, not keys, and are unchanged. (Later renamed `browser:<recipe>` by task browser-engine-prefix, through the same per-layer rewrite: `core/spellings.ts`.)
 - The exported library names (`createSerpcastBackend`, `SerpcastConfig`, ...) are renamed without aliases: they are code API, not configuration, and webveil is below 1.0.

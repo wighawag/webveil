@@ -18,6 +18,7 @@
 // | `WEBVEIL_SERPCAST_SEARCHCAST_*`    | `WEBVEIL_SEARCHCAST_BROWSER_*`      |
 // | `WEBVEIL_FETCH_SERPCAST_*`         | `WEBVEIL_FETCH_SEARCHCAST_*`        |
 // | `WEBVEIL_BACKEND=serpcast`         | `WEBVEIL_BACKEND=searchcast`        |
+// | engine name `searchcast:<recipe>`  | `browser:<recipe>`                  |
 //
 // Recorded decisions (task rename-serpcast-spellings):
 // - The browser-runner subsection is renamed `browser` (`searchcast.browser.*`,
@@ -29,7 +30,7 @@
 //   `WEBVEIL_SEARCHCAST_SEARCHCAST_*` (what a blind search-and-replace of
 //   `serpcast` produces) are accepted with the same warning, instead of being
 //   silently ignored. The browser ENGINE prefix `searchcast:<recipe>` in
-//   `engines` is a value, unchanged.
+//   `engines` is a value, unchanged (until task browser-engine-prefix, below).
 // - One warning per spelling per layer: the section, the nested browser key,
 //   `fetchSerpcast`, the `backend` value and the `fetchTransport` value each
 //   warn once per file that uses them (naming the file, where the user edits);
@@ -53,8 +54,40 @@
 //   still works). Alternative considered: printing inside `resolveConfig`,
 //   rejected because doctor and pi would then print to a terminal they do not
 //   own.
+//
+// Recorded decisions (task browser-engine-prefix):
+// - A browser engine is named `browser:<recipe>` (it was `searchcast:<recipe>`,
+//   which, once the backend, its section and every HTTP engine were
+//   "searchcast" too, no longer said "browser"). The old prefix is a VALUE,
+//   so it is rewritten here, per layer, like the `backend` value: everything
+//   downstream (the chain, doctor, unresponsiveEngines) sees `browser:` only.
+//   There is no separate endpoint spelling: endpoint mode uses the same
+//   engine names (backends/searchcast.ts).
+// - The values rewritten are the engine names in `searchcast.engines` AND in
+//   `searchcast.decoyGuard` (its list, `include` and `exclude`; env
+//   `WEBVEIL_SEARCHCAST_DECOY_GUARD` and `_EXCLUDE`): the guard matches
+//   engine names, and a name searchcast never sees is silently unguarded
+//   (config.ts), so rewriting only the chain would silently drop a guard on
+//   an old-spelled browser engine. Alternative considered: `engines` only, as
+//   the task text names it, rejected for that silent drop.
+// - One warning per layer for this spelling, listing every old name with its
+//   key path (a file) or variable (env). Both prefixes naming the same recipe
+//   in one list is an error naming both, never a silent dedupe.
+// - Identity keys: the backend hashes `browser:` names in their old spelling
+//   (`searchcastIdentityKey`), so a chain written either way keeps its state
+//   partition and browser profile. What does restart: a browser engine's
+//   COOLDOWN, which searchcast keys by engine name inside the partition; a
+//   blocked browser engine may thus be tried once more after the upgrade.
+//   Alternative considered: handing searchcast the old name, rejected because
+//   `unresponsiveEngines` and the errors would then show a name the user no
+//   longer writes.
 
 import {WHOLE_KEYS} from './layers.js';
+
+/** The engine-name prefix of a browser engine (backends/searchcast.ts). */
+export const BROWSER_PREFIX = 'browser:';
+/** Its webveil 0.12 spelling, accepted for one release (decisions above). */
+export const OLD_BROWSER_PREFIX = 'searchcast:';
 
 type Json = Record<string, unknown>;
 type Env = Record<string, string | undefined>;
@@ -171,6 +204,78 @@ function renameValue(
 	return {...layer, [key]: 'searchcast'};
 }
 
+/** `name` in the new browser prefix when it uses the old one, else undefined. */
+function renamedEngine(name: unknown): string | undefined {
+	if (typeof name !== 'string' || !name.startsWith(OLD_BROWSER_PREFIX))
+		return undefined;
+	return BROWSER_PREFIX + name.slice(OLD_BROWSER_PREFIX.length);
+}
+
+/**
+ * A list of engine names with every old browser prefix rewritten. `found`
+ * receives `[old, new]` for each; throws when both prefixes name one recipe.
+ * Anything that is not a list of strings is returned as is (validation
+ * names it later).
+ */
+function renameEngineList(
+	list: unknown,
+	label: string,
+	where: string,
+	found: [string, string, string][],
+): unknown {
+	if (!Array.isArray(list)) return list;
+	return list.map((name: unknown) => {
+		const now = renamedEngine(name);
+		if (now === undefined) return name;
+		if (list.includes(now))
+			throw new Error(
+				`webveil: \`${name as string}\` and \`${now}\` in ${label} (${where}) ` +
+					'are two spellings of the same browser engine. Keep ' +
+					`\`${now}\` and remove \`${name as string}\` (the old spelling is ${NEXT}).`,
+			);
+		found.push([name as string, now, label]);
+		return now;
+	});
+}
+
+/** The one warning for every old browser engine name of a layer. */
+function engineWarning(
+	found: [string, string, string][],
+	show: (name: string) => string,
+	where: string,
+): string {
+	const what =
+		found.length > 1 ? 'browser engine names' : 'browser engine name';
+	const old = found.map(([name, , label]) => `${show(name)} in ${label}`);
+	const now = found.map(([, name]) => show(name));
+	return warning(`${what} ${old.join(', ')}`, now.join(', '), where);
+}
+
+/** The section's engine names (`engines`, `decoyGuard`) in the new browser prefix. */
+function renameEngines(layer: Json, where: string, warnings: string[]): Json {
+	const section = layer.searchcast;
+	if (!isPlainObject(section)) return layer;
+	const found: [string, string, string][] = [];
+	const label = (key: string) => `\`searchcast.${key}\``;
+	const next: Json = {...section};
+	const list = (key: string, value: unknown) =>
+		renameEngineList(value, label(key), where, found);
+	if (Object.hasOwn(section, 'engines'))
+		next.engines = list('engines', section.engines);
+	const guard = section.decoyGuard;
+	if (Array.isArray(guard)) next.decoyGuard = list('decoyGuard', guard);
+	else if (isPlainObject(guard)) {
+		const object: Json = {...guard};
+		for (const key of ['include', 'exclude'])
+			if (Object.hasOwn(guard, key))
+				object[key] = list(`decoyGuard.${key}`, guard[key]);
+		next.decoyGuard = object;
+	}
+	if (found.length === 0) return layer;
+	warnings.push(engineWarning(found, (name) => `\`${name}\``, where));
+	return {...layer, searchcast: next};
+}
+
 /**
  * A config file's JSON with every old spelling rewritten (see the table
  * above), and the warnings for the ones it used. Throws when a setting is
@@ -209,6 +314,7 @@ export function normalizeFileLayer(
 	);
 	layer = renameValue(layer, 'backend', where, warnings);
 	layer = renameValue(layer, 'fetchTransport', where, warnings);
+	layer = renameEngines(layer, where, warnings);
 	return {value: layer, deprecations: warnings};
 }
 
@@ -289,6 +395,20 @@ export function normalizeEnv(env: Env): {env: Env; deprecations: string[]} {
 			deprecations.push(warning(`${key}=serpcast`, `${key}=searchcast`, 'env'));
 			out[key] = 'searchcast';
 		}
+	// Engine names in the decoy guard lists (comma-separated, config.ts).
+	const found: [string, string, string][] = [];
+	for (const key of [
+		'WEBVEIL_SEARCHCAST_DECOY_GUARD',
+		'WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE',
+	]) {
+		if (!out[key]) continue;
+		const names = out[key].split(',').map((name) => name.trim());
+		const before = found.length;
+		const renamed = renameEngineList(names, key, 'env', found) as string[];
+		if (found.length > before) out[key] = renamed.join(',');
+	}
+	if (found.length > 0)
+		deprecations.push(engineWarning(found, (name) => name, 'env'));
 	return {env: out, deprecations};
 }
 

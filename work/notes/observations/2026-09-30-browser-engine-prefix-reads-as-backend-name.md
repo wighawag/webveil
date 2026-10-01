@@ -1,3 +1,0 @@
-# The browser engine prefix `searchcast:` now reads like the backend name (2026-09-30)
-
-Noticed while building `rename-serpcast-spellings`: a browser engine is named `searchcast:<recipe>` in `searchcast.engines` (`BROWSER` in `packages/webveil/src/core/backends/searchcast.ts`). Under the old `serpcast` backend the prefix told browser engines apart; now that the backend, its section and every HTTP engine are "searchcast" too, `searchcast:web` no longer says "browser" to a reader. Left unchanged (it is a value in user configs and mirrors searchcast's own `searchcast` engine field); a later task could add a `browser:<recipe>` spelling if the owner wants one.

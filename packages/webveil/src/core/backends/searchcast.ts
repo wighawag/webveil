@@ -37,7 +37,8 @@
 //
 // Recorded decisions (task searchcast-fallback-and-guard; keys: config.ts,
 // profile layout and idle clock: state.ts):
-// - A browser engine is named `searchcast:<recipe>` in `searchcast.engines`, so
+// - A browser engine is named `searchcast:<recipe>` (`browser:<recipe>` since
+//   task browser-engine-prefix, below) in `searchcast.engines`, so
 //   ONE ordered chain mixes HTTP and browser engines and the same recipe JSON
 //   can run both ways (`engine-a` over HTTP, `searchcast:engine-a` in the
 //   browser). A loaded recipe whose own name starts with `searchcast:` is an error (the
@@ -245,6 +246,29 @@
 //   would make two different chains share one partition.
 // - `usesDefaultSearchcastChain` is exported for `webveil doctor`
 //   (setup.ts), which adds a `defaultChain` notice when this chain is in use.
+//
+// Recorded decisions (task browser-engine-prefix; the old spelling and its
+// warning: spellings.ts):
+// - A browser engine is named `browser:<recipe>`. The old `searchcast:<recipe>`
+//   is rewritten per config layer before the merge (spellings.ts), so this
+//   module parses `browser:` only. Endpoint mode has no form of its own: its
+//   engines carry the same prefix, `<recipe>` naming the recipe on the server.
+// - Both prefixes stay RESERVED for loaded recipe names: a recipe named
+//   `searchcast:x` is still an error (as before), and one named `browser:x`
+//   is now one too (it used to be an ordinary HTTP engine). Unavoidable: in
+//   `engines`, `browser:x` now means the browser engine of recipe `x`, so such
+//   a recipe could only be shadowed silently, which the reserved-prefix rule
+//   exists to prevent. Every other name keeps its behaviour: a recipe named
+//   `browser` (no colon) is an ordinary engine `browser` (and `browser:browser`
+//   its browser engine), and a code recipe whose name holds a `:` elsewhere
+//   (`foo:bar`) is an ordinary engine, as before.
+// - Identity keys: `searchcastIdentityKey` hashes browser engine names in
+//   `engines` and `decoyGuard` under their old prefix `searchcast:`, as it
+//   hashes the `browser` subsection under its old key, so the rename keeps
+//   every state partition and browser profile.
+// - A config built by hand (not by `resolveConfig`) that still says
+//   `searchcast:x` gets the unknown-engine error, with a hint naming the new
+//   prefix: library callers are not rewritten, like the other old spellings.
 
 import {existsSync, readdirSync, statSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -279,7 +303,11 @@ import type {
 } from '../config.js';
 import {EgressError} from '../egress.js';
 import {identityKey} from '../identity.js';
-import {reportDeprecations} from '../spellings.js';
+import {
+	BROWSER_PREFIX,
+	OLD_BROWSER_PREFIX,
+	reportDeprecations,
+} from '../spellings.js';
 import {
 	clearState,
 	createStateStore,
@@ -308,7 +336,9 @@ const EXECUTABLE_KEYS = [
 	'searchcast.browser.chromeArgs',
 ];
 /** The engine-name prefix of a browser engine (see the decisions above). */
-const BROWSER = 'searchcast:';
+const BROWSER = BROWSER_PREFIX;
+/** Prefixes a loaded recipe's name may not use: the browser prefix, in both spellings. */
+const RESERVED = [BROWSER_PREFIX, OLD_BROWSER_PREFIX];
 /** The prefix of an installed recipe set entry in `recipes`/`codeRecipes`. */
 const SET = 'set:';
 /** What `install-recipes` writes beside a set's recipes. */
@@ -566,7 +596,7 @@ function assertBrowserEgress(egress: Egress, mode: string | undefined): void {
 		);
 }
 
-/** A `searchcast:<recipe>` engine for the configured mode. */
+/** A `browser:<recipe>` engine for the configured mode. */
 function browserEngine(
 	name: string,
 	recipes: Map<string, Engine>,
@@ -607,12 +637,13 @@ function importBrowser(): Promise<SearchcastModule> {
 	return import(name) as Promise<SearchcastModule>;
 }
 
-/** Fail loud on a recipe named like a browser engine (the prefix is reserved). */
+/** Fail loud on a recipe named like a browser engine (the prefixes are reserved). */
 function reserved(name: string, where: string): void {
-	if (name.startsWith(BROWSER))
+	const prefix = RESERVED.find((p) => name.startsWith(p));
+	if (prefix)
 		throw new Error(
 			`searchcast: ${where}: recipe name '${name}' uses the reserved ` +
-				`'${BROWSER}' prefix (browser engines are named ${BROWSER}<recipe>)`,
+				`'${prefix}' prefix (browser engines are named ${BROWSER}<recipe>)`,
 		);
 }
 
@@ -661,9 +692,12 @@ function chain(s: SearchcastConfig, recipes: Map<string, Engine>): Engine[] {
 			return browserEngine(name, recipes, s.browser);
 		const recipe = recipes.get(name);
 		if (recipe) return recipe;
+		const hint = name.startsWith(OLD_BROWSER_PREFIX)
+			? `; browser engines are named ${BROWSER}<recipe>`
+			: '';
 		throw new Error(
 			`searchcast: unknown engine '${name}' (loaded recipes: ` +
-				`${[...recipes.keys()].join(', ') || 'none'})`,
+				`${[...recipes.keys()].join(', ') || 'none'}${hint})`,
 		);
 	});
 }
@@ -702,16 +736,42 @@ export async function describeSearchcastEngines(
 	});
 }
 
+/** An engine name as webveil 0.12 spelled it (`browser:x` as `searchcast:x`). */
+function oldEngineName(name: string): string {
+	return name.startsWith(BROWSER)
+		? OLD_BROWSER_PREFIX + name.slice(BROWSER.length)
+		: name;
+}
+
+/** The engine names of a `decoyGuard` in their webveil 0.12 spelling. */
+function oldDecoyGuard(
+	guard: SearchcastConfig['decoyGuard'],
+): SearchcastConfig['decoyGuard'] {
+	const names = (list: unknown) =>
+		isList(list) ? list.map(oldEngineName) : list;
+	if (Array.isArray(guard)) return names(guard) as string[];
+	if (!isObject(guard)) return guard;
+	const object = {...guard} as Record<string, unknown>;
+	for (const key of ['include', 'exclude'])
+		if (key in object) object[key] = names(object[key]);
+	return object as SearchcastConfig['decoyGuard'];
+}
+
 /**
  * This backend's identity key (identity.ts): egress + resolved section, the
- * `browser` subsection hashed under its webveil 0.10 name `searchcast` so the
- * rename keeps every identity key (see the decisions above).
+ * `browser` subsection hashed under its webveil 0.10 name `searchcast`, and
+ * browser engine names (in `engines` and `decoyGuard`) under their webveil
+ * 0.12 prefix `searchcast:`, so neither rename moves an identity key (see the
+ * decisions above).
  */
 export function searchcastIdentityKey(
 	config: Config,
 	resolved = settings(config),
 ) {
 	const {browser, ...section} = resolved;
+	if (section.engines) section.engines = section.engines.map(oldEngineName);
+	if (section.decoyGuard !== undefined)
+		section.decoyGuard = oldDecoyGuard(section.decoyGuard);
 	return identityKey(
 		config.egress,
 		browser === undefined ? section : {...section, searchcast: browser},

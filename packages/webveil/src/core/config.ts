@@ -121,7 +121,7 @@ export interface SearchcastConfig {
 	preflightCache?: boolean;
 	maxPreflightAgeS?: number;
 	maxRedirects?: number;
-	/** The searchcast browser fallback (engines named `searchcast:<recipe>`). */
+	/** The searchcast browser fallback (engines named `browser:<recipe>`). */
 	browser?: BrowserConfig;
 	/** Where searchcast state lives (state.ts). */
 	state?: StateConfig;

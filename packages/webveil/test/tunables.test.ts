@@ -460,7 +460,7 @@ describe('searchcast pass-throughs reach createSearchcast', () => {
 
 	it('the endpoint limits go on each endpoint engine, only when set', async () => {
 		const endpoint = {mode: 'endpoint', endpoint: 'http://127.0.0.1:1'};
-		const engines = ['alpha', 'searchcast:web'];
+		const engines = ['alpha', 'browser:web'];
 		writeJson(
 			join(project, 'webveil.json'),
 			searchcastProject({searchcast: {engines, browser: endpoint}}),
@@ -468,7 +468,7 @@ describe('searchcast pass-throughs reach createSearchcast', () => {
 		let fake = fakeFactory();
 		await searchWith(fake.create);
 		expect(fake.chains[0]![1]).toEqual({
-			name: 'searchcast:web',
+			name: 'browser:web',
 			searchcast: {endpoint: 'http://127.0.0.1:1', recipe: 'web'},
 		});
 		await closeSearchcastInstances();

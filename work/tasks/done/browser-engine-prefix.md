@@ -35,3 +35,13 @@ Goal: a config reads as what it does. Read `spellings.ts` and the backend's engi
 - Security properties stay tested and unchanged: SSRF guard on every hop, trust layers, per-identity state, egress on every hop, strict impersonation, no runtime download.
 - No em dashes anywhere; do not hard-wrap Markdown paragraphs.
 - Bound shell commands (`timeout`), cap output, never grep `node_modules`, `dist` or `.git`. No network in tests.
+
+## Decisions
+
+These are recorded as JSDoc decision blocks headed "task browser-engine-prefix" in `packages/webveil/src/core/spellings.ts` and `packages/webveil/src/core/backends/searchcast.ts`.
+1. **`decoyGuard` names are rewritten too**, as described above. The alternative was to rewrite `engines` only, which leaves the guard silently off for old-spelled engines.
+2. **A recipe named `browser:...` is now an error.** It used to work as an ordinary engine, but in `engines` that name now means a browser engine, so it would be silently hidden. This follows the existing reserved-prefix rule. Other names behave exactly as before, and tests cover them:
+   - a recipe named `browser` is an ordinary engine, and `browser:browser` is its browser engine;
+   - a code recipe named something like `foo:bar` is an ordinary engine.
+3. **A browser engine's cooldown restarts once after upgrading.** The library stores cooldowns under the engine name, which changes. The alternative was to keep passing it the old name, but then `unresponsiveEngines` and error messages would show a name the user no longer writes. The state partition and browser profile are unaffected.
+4. **One warning per file (or for env) covers all old names**, listing each one. Both prefixes in one list is an error even inside `decoyGuard`, where it would be harmless, to match the rule that two spellings at once are never silently accepted.

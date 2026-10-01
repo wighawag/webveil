@@ -1,4 +1,4 @@
-// trust — the ONE place that decides whether an executable setting may be used.
+// trust: the ONE place that decides whether an executable setting may be used.
 // Config is discovered by walking up from the cwd (docs/adr/0002), so a
 // `webveil.json` in any cloned repository is read automatically; a setting that
 // makes webveil run code (the `custom` backend command, searchcast code recipes,

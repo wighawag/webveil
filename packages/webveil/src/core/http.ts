@@ -1,4 +1,4 @@
-// http helper — the proxied `http` handed to backends. fetchJson / fetchText
+// http helper: the proxied `http` handed to backends. fetchJson / fetchText
 // apply the egress dispatcher + a per-request timeout + abort. Distinct from the
 // egress-bound WHATWG `fetch` (egress.ts), but bound to the SAME dispatcher, so
 // a backend physically cannot bypass the configured egress.

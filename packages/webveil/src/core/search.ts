@@ -1,4 +1,4 @@
-// core search — the plain, framework-agnostic `search()` BOTH frontends (the
+// core search: the plain, framework-agnostic `search()` BOTH frontends (the
 // incur CLI/MCP and the pi extension) call. It owns the wiring and the
 // caller-facing post-processing; the per-source parsing lives in the backend.
 //

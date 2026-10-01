@@ -1,4 +1,4 @@
-// searxng backend — the keyless, self-hosted metasearch default. Queries a
+// searxng backend: the keyless, self-hosted metasearch default. Queries a
 // SearXNG instance's JSON API (`/search?format=json`) THROUGH the handed `http`
 // helper (never a direct fetch, so egress is not bypassable) and normalizes the
 // response into SearchResult[]. The response's `unresponsive_engines` is
@@ -87,7 +87,7 @@ export function createSearxngBackend(config: Config): Backend {
 			const unresponsive = unresponsiveNames(body.unresponsive_engines);
 			// Engine-degradation surfacing (live incident 2026-09-16): engines that
 			// hard-fail appear in `unresponsive_engines`, so a healthy-vs-degraded
-			// answer is distinguishable — UNLESS zero results came back, in which
+			// answer is distinguishable, UNLESS zero results came back, in which
 			// case the failures are the only signal left. The JSON response does not
 			// report the instance's full engine list, so "zero results + failures"
 			// is treated as an all-engines-down outage (the fail-loud path, like any
@@ -96,7 +96,7 @@ export function createSearxngBackend(config: Config): Backend {
 			// all, so degradation is ANNOTATED below, never detected as junk.
 			if (unresponsive.length > 0 && results.length === 0)
 				throw new Error(
-					`searxng: no results and engines unresponsive (${unresponsive.join(', ')}) — ` +
+					`searxng: no results and engines unresponsive (${unresponsive.join(', ')}): ` +
 						'the instance cannot answer from this egress (engines refusing the ' +
 						'egress IP, or a full outage); see docs/searxng-setup.md',
 				);
@@ -104,7 +104,7 @@ export function createSearxngBackend(config: Config): Backend {
 				.map(toResult)
 				.filter((r): r is SearchResult => r !== undefined);
 			// Partial degradation: some engines down, others still answered. Do NOT
-			// fail (partial results are still useful) — annotate every hit so no
+			// fail (partial results are still useful); annotate every hit so no
 			// consumer can mistake the degraded set for a clean one.
 			if (unresponsive.length > 0)
 				for (const r of normalized) r.unresponsiveEngines = unresponsive;

@@ -1,4 +1,4 @@
-// backend registry — a tiny `name -> Backend` dispatcher (concept trimmed from
+// backend registry: a tiny `name -> Backend` dispatcher (concept trimmed from
 // pi-search-hub's registry). Each backend registers a factory keyed by its config
 // `backend` name; `getBackend` resolves the name to a constructed Backend (handed
 // the resolved config so it knows its instance baseUrl / apiKey) and fails clearly

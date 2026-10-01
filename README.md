@@ -186,7 +186,7 @@ webveil doctor                                             # library, config, en
 What to expect:
 
 - **A failing engine hands over to the next one.** An engine that is blocked, times out, or returns a page that no longer fits its recipe is skipped for the next engine in the chain, and the results then carry `unresponsiveEngines`, naming the engines that failed first, so a fallback answer never passes for the first choice. An engine that answered `blocked` cools down: it is skipped for `searchcast.cooldownMs` (default 5 minutes).
-- **Decoy guard (for Bing and the like).** Some engines, Bing above all, answer many queries (about half of realistic ones, measured in September 2026) with a well-formed page of results unrelated to the query: a **decoy**. searchcast checks the answers of a guarded engine: a page where at most one of the top 5 results mentions two of the query's content words counts as a decoy, which fails that engine (named in `unresponsiveEngines`, and listed as `decoy` if every engine fails) and hands over to the next one, with no cooldown. An engine is guarded when its recipe declares `"decoyProne": true` (the recipe's author knows the site serves decoys, so nothing is needed in your config), or when you list it in `searchcast.decoyGuard` (for example `"decoyGuard": ["bing"]`, any config layer, or `WEBVEIL_SEARCHCAST_DECOY_GUARD=bing`, comma-separated). `decoyGuard` is therefore only needed for a recipe that does not declare it; it adds to the recipes' own declarations and cannot switch a declared one off. An engine that is neither is never judged. The rule is searchcast's `isDecoy`: see [searchcast's decoy guard](https://github.com/wighawag/searchcast#decoy-guard).
+- **Decoy guard (for engines that serve decoys).** Some engines answer many queries (for the worst one, about half of realistic queries, measured in September 2026) with a well-formed page of results unrelated to the query: a **decoy**. searchcast checks the answers of a guarded engine: a page where at most one of the top 5 results mentions two of the query's content words counts as a decoy, which fails that engine (named in `unresponsiveEngines`, and listed as `decoy` if every engine fails) and hands over to the next one, with no cooldown. An engine is guarded when its recipe declares `"decoyProne": true` (the recipe's author knows the site serves decoys, so nothing is needed in your config), or when you list it in `searchcast.decoyGuard` (for example `"decoyGuard": ["engine-a"]`, any config layer, or `WEBVEIL_SEARCHCAST_DECOY_GUARD=engine-a`, comma-separated). `decoyGuard` is therefore only needed for a recipe that does not declare it; it adds to the recipes' own declarations and cannot switch a declared one off. An engine that is neither is never judged. The rule is searchcast's `isDecoy`: see [searchcast's decoy guard](https://github.com/wighawag/searchcast#decoy-guard).
 - **Every engine failed: an error, never an empty list.** The error lists each engine's failure. An empty result list means an engine's `empty` selector matched: the engine really found nothing.
 - **No fingerprint, no search.** Impersonation is always strict: if libcurl-impersonate is missing or not the right library, webveil refuses to search and says how to fix it. It never sends a request with a non-browser fingerprint.
 - **Sessions persist.** Engine cookies (such as a challenge clearance) and cooldowns are kept between calls in `~/.local/state/webveil/`, one directory per identity (egress plus searchcast settings), and expire after `searchcast.sessionIdleMs` (default 10 minutes) of disuse. `"searchcast": {"state": {"persist": false}}` keeps them in memory instead, for the life of the process, and writes nothing there. `webveil state clear` drops the current identity's state, `--all` every identity's. See *searchcast state on disk* under [How it works](#how-it-works-seams).
@@ -356,7 +356,7 @@ uwsgi-vs-`http-socket` catch), see **[SearXNG setup (detailed)](docs/searxng-set
 `web_fetch` → the target URL). It does NOT anonymize what a backend does next. This has a
 load-bearing consequence for SearXNG:
 
-- A **local** SearXNG makes its actual search-engine requests (→ Google/Bing/…) from
+- A **local** SearXNG makes its actual search-engine requests from
   **its own process, on your machine, with your real IP**. That hop is OUTSIDE webveil's
   egress. So setting `WEBVEIL_EGRESS=socks5` while `baseUrl` is `127.0.0.1` does **NOT**
   make your searches anonymous, webveil would just be proxying a pointless localhost call,
@@ -438,7 +438,7 @@ identity. Chain them so neither adversary sees both ends:
 The whole chain can live inside ONE local SOCKS5 listener (e.g. a sing-box unit whose
 SOCKS inbound detours through its WireGuard outbound: SOCKS → Mullvad → residential
 exit), so the chain looks like any other SOCKS endpoint. **webveil's own hops are
-unchanged by this** — a chain is just another SOCKS5 listener to webveil, it needs no
+unchanged by this**: a chain is just another SOCKS5 listener to webveil, it needs no
 special mode:
 
 - **`fetchEgress` points at the chain's port like any `socks5h://` URL**
@@ -447,13 +447,13 @@ special mode:
   backend-hop guard still rejects proxying it); SearXNG carries its own engine crawl
   through the same chain via its `outgoing.proxies`.
 
-**Tor cannot be a chain base.** Tor's exit path is fixed to Tor relays — there is no
-"Tor exits into a paid SOCKS" direction — so Tor can carry the whole path or nothing. A
+**Tor cannot be a chain base.** Tor's exit path is fixed to Tor relays (there is no
+"Tor exits into a paid SOCKS" direction), so Tor can carry the whole path or nothing. A
 chain that needs a controlled exit identity starts from a WireGuard base (Mullvad), not
 Tor.
 
 A chain (or any egress rotation) is also the repair when engines flag your direct IP and
-serve irrelevant-but-confident results — that fix lives in SearXNG's `outgoing.proxies`,
+serve irrelevant-but-confident results; that fix lives in SearXNG's `outgoing.proxies`,
 never in webveil: see
 [Troubleshooting: irrelevant-but-confident results](docs/searxng-setup.md#troubleshooting-irrelevant-but-confident-results-flagged-egress-ip).
 
@@ -467,10 +467,10 @@ never in webveil: see
   search engines from recipes over libcurl-impersonate, no SearXNG; webveil's `egress`
   is its search egress; the default backend, with the bundled Mwmbl and Marginalia chain). The backend is handed a
   proxied `http` helper so it cannot bypass egress. The searxng backend also surfaces
-  engine degradation from the response's `unresponsive_engines` — partial failures
+  engine degradation from the response's `unresponsive_engines`: partial failures
   **annotate** the results (`unresponsiveEngines`, so a degraded answer never masquerades
   as a clean one), a probable full outage **fails loud**. Honest limit: it cannot detect
-  junk results — a 200 "decoy SERP" parses like a real one at this layer — see
+  junk results (a 200 "decoy SERP" parses like a real one at this layer); see
   [SearXNG troubleshooting](docs/searxng-setup.md#troubleshooting-irrelevant-but-confident-results-flagged-egress-ip).
 - **egress seam**, how outbound HTTP leaves the machine: `direct`, `http` (undici
   `ProxyAgent`), or `socks5` (Tor `127.0.0.1:9050`, Mullvad `10.64.0.1:1080`). SOCKS5 is
@@ -767,7 +767,7 @@ UDP path.)
          all://:
            - socks5://127.0.0.1:1080
      ```
-     This routes SearXNG's engine requests (→ Google/Bing/…) through Proton; webveil's
+     This routes SearXNG's requests to the search engines through Proton; webveil's
      local hop to SearXNG stays direct. (`WEBVEIL_EGRESS=socks5` with a local `baseUrl` is
      rejected; proxy SEARCH on SearXNG, and proxy `web_fetch` via `WEBVEIL_FETCH_EGRESS`.)
 

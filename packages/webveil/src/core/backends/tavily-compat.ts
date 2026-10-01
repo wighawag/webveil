@@ -1,4 +1,4 @@
-// tavily-compat backend — a generic Tavily-shaped client (POST `/search` and an
+// tavily-compat backend: a generic Tavily-shaped client (POST `/search` and an
 // optional POST `/extract`) selected purely by `baseUrl`, so it covers
 // orio-search / searcharvester / agent-search and any other Tavily-API-shaped
 // instance. Both endpoints go THROUGH the handed `http` helper (never a direct

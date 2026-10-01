@@ -1,4 +1,4 @@
-// baseUrl transport parsing — the small, transport-AWARE helper that classifies
+// baseUrl transport parsing: the small, transport-AWARE helper that classifies
 // a resolved `baseUrl` into either a normal TCP HTTP base or a Unix-domain-socket
 // form, and (for the socket form) rewrites it into a synthetic `http://localhost`
 // base that the transport-UNAWARE backends can build their request URL on top of.
@@ -58,7 +58,7 @@ export function parseUnixBaseUrl(baseUrl: string): UnixBaseUrl {
 	const rawHttpPath = sep === -1 ? '' : rest.slice(sep + 1);
 	if (!socketPath)
 		throw new Error(
-			`webveil: malformed unix baseUrl ${JSON.stringify(baseUrl)} — ` +
+			`webveil: malformed unix baseUrl ${JSON.stringify(baseUrl)}: ` +
 				`expected unix:<socketPath>[:<httpPath>] with a non-empty socket path`,
 		);
 	const httpPath = rawHttpPath
@@ -85,10 +85,10 @@ export interface BackendTransport {
 /**
  * Resolve a `baseUrl` into a backend-hop transport. For a `unix:` baseUrl this
  * builds a socket-bound `Agent({connect:{socketPath}})` and a synthetic
- * `http://localhost<httpPath>` base (the URL host is irrelevant to routing — the
- * socket decides — and only becomes the `Host` header). For any other baseUrl it
- * returns the baseUrl unchanged with NO dispatcher (the caller keeps using the
- * shared config-wide egress dispatcher).
+ * `http://localhost<httpPath>` base (the socket decides the routing, so the URL
+ * host is irrelevant to it and only becomes the `Host` header). For any other
+ * baseUrl it returns the baseUrl unchanged with NO dispatcher (the caller keeps
+ * using the shared config-wide egress dispatcher).
  *
  * NOTE: this is the BACKEND-hop transport only. It is never bound into the
  * shared egress dispatcher, so `web_fetch`/SSRF egress is unaffected.

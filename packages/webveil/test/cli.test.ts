@@ -44,7 +44,7 @@ const page: FetchResult = {
 	truncated: false,
 };
 
-describe('webveil CLI — search command', () => {
+describe('webveil CLI: search command', () => {
 	it('calls core.search with the positional query and returns its results', async () => {
 		const search = vi.fn(async () => [hit]);
 		const cli = createCli({search});
@@ -86,15 +86,15 @@ describe('webveil CLI — search command', () => {
 		// Partial engine failure: results come back annotated, and the CLI
 		// hoists the flag to the top level so MCP/terminal consumers see it.
 		const search = vi.fn(async () => [
-			{...hit, unresponsiveEngines: ['brave', 'duckduckgo']},
+			{...hit, unresponsiveEngines: ['engine-b', 'engine-c']},
 		]);
 		const out = await run(createCli({search}), ['search', 'q']);
-		expect(out).toContain('brave');
-		expect(out).toContain('duckduckgo');
+		expect(out).toContain('engine-b');
+		expect(out).toContain('engine-c');
 	});
 });
 
-describe('webveil CLI — fetch command', () => {
+describe('webveil CLI: fetch command', () => {
 	it('calls core.fetch with the positional url and returns its markdown', async () => {
 		const fetch = vi.fn(async () => page);
 		const out = await run(createCli({fetch}), [
@@ -145,7 +145,7 @@ describe('webveil CLI — fetch command', () => {
 	});
 });
 
-// The built bin (`dist/cli.js`) — the `webveil` entry the package.json `bin`
+// The built bin (`dist/cli.js`): the `webveil` entry the package.json `bin`
 // points at. The verify gate runs `build` before `test`, so it exists; if a bare
 // `vitest` runs without a prior build we skip rather than false-fail.
 const BIN = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -154,7 +154,7 @@ const BIN = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
  * Run the built bin as an MCP stdio server, do the JSON-RPC handshake, and
  * return the tool names from `tools/list`. This exercises the REAL `--mcp` path
  * end-to-end (the same definition served as an MCP server), over the bin's own
- * stdin/stdout — no network, no live backend (we never call a tool).
+ * stdin/stdout: no network, no live backend (we never call a tool).
  */
 function mcpToolNames(): Promise<string[]> {
 	return new Promise((resolve, reject) => {
@@ -226,7 +226,7 @@ describe('webveil CLI: state clear command', () => {
 	});
 });
 
-describe('webveil CLI — MCP frontend (--mcp)', () => {
+describe('webveil CLI: MCP frontend (--mcp)', () => {
 	it.skipIf(!existsSync(BIN))(
 		'exposes the same definition as an MCP server with search + fetch tools',
 		async () => {
@@ -244,7 +244,7 @@ describe('webveil CLI — MCP frontend (--mcp)', () => {
 // symlinks on both sides; this asserts the bin serves when launched via a
 // symlink. We use `--help` so it needs no network/backend, only that the CLI
 // actually runs (non-empty stdout).
-describe('webveil CLI — bin entry through a symlink (isMain)', () => {
+describe('webveil CLI: bin entry through a symlink (isMain)', () => {
 	let dir: string;
 	afterEach(() => {
 		if (dir) rmSync(dir, {recursive: true, force: true});

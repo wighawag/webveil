@@ -75,7 +75,7 @@ function fakeHttp(payload: unknown): {
 	return {http, calls};
 }
 
-describe('tavily-compat backend — /search', () => {
+describe('tavily-compat backend: /search', () => {
 	it('parses a realistic Tavily /search response into SearchResult[]', async () => {
 		const {http} = fakeHttp(SEARCH_PAYLOAD);
 		const backend = createTavilyCompatBackend(config);
@@ -181,7 +181,7 @@ describe('tavily-compat backend — /search', () => {
 	});
 });
 
-describe('tavily-compat backend — /extract (optional Backend.fetch)', () => {
+describe('tavily-compat backend: /extract (optional Backend.fetch)', () => {
 	it('exposes fetch (the optional Backend.fetch)', () => {
 		const backend = createTavilyCompatBackend(config);
 		expect(typeof backend.fetch).toBe('function');

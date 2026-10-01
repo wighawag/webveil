@@ -59,7 +59,7 @@ function unusedHttp(): Http {
 	};
 }
 
-describe('custom backend — JSON stdin/stdout round-trip', () => {
+describe('custom backend: JSON stdin/stdout round-trip', () => {
 	it('writes the request JSON to stdin and parses SearchResult[] from stdout', async () => {
 		// The fixture captures the raw stdin to a file (so the test can assert the
 		// exact request JSON the contract delivered) and echoes the parsed query
@@ -114,7 +114,7 @@ printf '[{"title":"arg=%s","url":"https://example.com/a"}]' "$1"`,
 	});
 });
 
-describe('custom backend — malformed output fails clearly (never silent empty)', () => {
+describe('custom backend: malformed output fails clearly (never silent empty)', () => {
 	it('throws when stdout is not valid JSON', async () => {
 		const script = writeScript('not-json.sh', `cat >/dev/null\nprintf 'oops'`);
 		const backend = createCustomBackend(cfg(script));
@@ -178,7 +178,7 @@ describe('custom backend — malformed output fails clearly (never silent empty)
 	});
 });
 
-describe('custom backend — isolation (writes nothing outside its temp fixtures)', () => {
+describe('custom backend: isolation (writes nothing outside its temp fixtures)', () => {
 	it('does not write any shared/global location; only the temp dir is touched', async () => {
 		// Snapshot the temp dir contents before the run, then assert the run added
 		// nothing (the fixture writes only to stdout, never to disk).

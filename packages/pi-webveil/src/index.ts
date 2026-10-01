@@ -1,4 +1,4 @@
-// pi-webveil — a pi extension exposing `web_search` and `web_fetch` tools backed
+// pi-webveil: a pi extension exposing `web_search` and `web_fetch` tools backed
 // by webveil's core. A drop-in, anonymity-capable replacement for Ollama's
 // web_search/web_fetch: the tool NAMES are deliberately `web_search` and
 // `web_fetch` (the Ollama drop-in), so installing this replaces
@@ -104,7 +104,7 @@ function renderSearch(results: SearchResult[]): string {
 		})
 		.join('\n');
 	// Engine-degradation surfacing: some engines were down while others
-	// answered. Say so in the text the model reads — partial results are still
+	// answered. Say so in the text the model reads: partial results are still
 	// useful, but they must not read as a clean answer. Honest limit: webveil
 	// cannot detect junk results (a decoy SERP parses like a real one), so this
 	// warns "fewer engines answered", not "these results are good".
@@ -112,7 +112,7 @@ function renderSearch(results: SearchResult[]): string {
 		(r) => r.unresponsiveEngines !== undefined,
 	)?.unresponsiveEngines;
 	return unresponsiveEngines
-		? `${body}\n\n[warning] search degraded — unresponsive engines: ${unresponsiveEngines.join(', ')}. Results come from the remaining engines only and may be skewed or junk.`
+		? `${body}\n\n[warning] search degraded (unresponsive engines: ${unresponsiveEngines.join(', ')}). Results come from the remaining engines only and may be skewed or junk.`
 		: body;
 }
 

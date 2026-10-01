@@ -850,7 +850,8 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 		);
 		const web = rawFile(RECIPE);
 		const dir = directory({'manifest.json': manifest, 'web.json': web});
-		served.set(carPath(dir.id), car(dir, [dir, manifest, web]));
+		served.set(carPath(dir.id), car(dir, [dir]));
+		served.set(carPath(dir.id, '', 'all'), car(dir, [dir, manifest, web]));
 		return {cid: dir.id};
 	}
 
@@ -992,6 +993,175 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 		expect(JSON.parse(res.out).code).toBe('ROUTE_REQUIRED');
 		expect(calls.recipes).toHaveLength(0);
 		expect(requested).toEqual([]);
+	});
+
+	describe('a release folder (not a set): webveil commands, never searchcast', () => {
+		/**
+		 * A release folder on IPFS: the archive, its `.sha256`, a README and the
+		 * set as a subdirectory; each path answered as a gateway would.
+		 */
+		function serveReleaseFolder() {
+			const {archive, sha} = serveSet();
+			const tarball = rawFile(archive);
+			const manifest = rawFile(
+				JSON.stringify({name: 'my-set', version: '2.0.0'}),
+			);
+			const web = rawFile(RECIPE);
+			const set = directory({'manifest.json': manifest, 'web.json': web});
+			const entries = {
+				'README.txt': rawFile('read me'),
+				'my-set': set,
+				'my-set-1.2.0.tar.gz': tarball,
+				'my-set-1.2.0.tar.gz.sha256': rawFile(`${sha}\n`),
+			};
+			const root = directory(entries);
+			const id = root.id;
+			served.set(carPath(id), car(root, [root]));
+			const archivePath = 'my-set-1.2.0.tar.gz';
+			served.set(carPath(id, archivePath), car(root, [root, tarball]));
+			served.set(carPath(id, 'my-set'), car(root, [root, set]));
+			served.set(
+				carPath(id, 'my-set', 'all'),
+				car(root, [root, set, manifest, web]),
+			);
+			return {
+				cid: id,
+				sha,
+				archive: `ipfs://${id}/${archivePath}`,
+				set: `ipfs://${id}/my-set`,
+			};
+		}
+
+		/** The refusal's message (exit 1), checked for what every case shares. */
+		function refusal(res: {out: string; code: number}, cid: string) {
+			expect(res.code).toBe(1);
+			const error = JSON.parse(res.out);
+			expect(error.code).toBe('UNKNOWN');
+			const message: string = error.message;
+			expect(message).not.toMatch(/searchcast install-recipes/);
+			expect(message).toMatch(
+				new RegExp(
+					`^webveil install-recipes: .*ipfs://${cid} is not a recipe set directory; ` +
+						'it holds "README.txt", "my-set", "my-set-1.2.0.tar.gz", ' +
+						'"my-set-1.2.0.tar.gz.sha256". Nothing was installed. Try one of:\n',
+				),
+			);
+			expect(existsSync(setDir())).toBe(false);
+			return message.split('\n').slice(1);
+		}
+
+		it('--egress: each suggestion is a webveil command through the egress, after one listing request', async () => {
+			torEgress();
+			const {cid, archive, set} = serveReleaseFolder();
+			const {api} = installApi();
+			const res = await run(
+				['install-recipes', `ipfs://${cid}`, '--egress'],
+				deps(api),
+			);
+			expect(refusal(res, cid)).toEqual([
+				`  webveil install-recipes ${archive} --egress   # a release archive`,
+				`  webveil install-recipes ${set} --egress   # may be a set directory`,
+			]);
+			expect(requested).toEqual([carPath(cid)]);
+			expect(socks.seen).toEqual([{target: authority()}]);
+		});
+
+		it('--proxy: suggests `--proxy <url>`, never the typed URL or its credentials', async () => {
+			torEgress();
+			const {cid, archive, set} = serveReleaseFolder();
+			const typed = socks.url.replace('socks5://', 'socks5h://user:secret@');
+			const {api} = installApi();
+			const res = await run(
+				['install-recipes', `ipfs://${cid}`, '--proxy', typed],
+				deps(api),
+			);
+			expect(res.out).not.toContain('secret');
+			expect(res.out).not.toContain(new URL(socks.url).host);
+			expect(refusal(res, cid)).toEqual([
+				`  webveil install-recipes ${archive} --proxy <url>   # a release archive`,
+				`  webveil install-recipes ${set} --proxy <url>   # may be a set directory`,
+				'(give your proxy URL in place of <url>)',
+			]);
+			expect(socks.seen).toEqual([
+				{target: authority(), user: 'user', password: 'secret'},
+			]);
+		});
+
+		it('--direct with typed gateways, --name and --force: repeated as typed', async () => {
+			const {cid, archive, set} = serveReleaseFolder();
+			const {api} = installApi();
+			const res = await run(
+				[
+					'install-recipes',
+					`ipfs://${cid}`,
+					'--direct',
+					'--ipfs-gateway',
+					gateway(),
+					'--name',
+					'release',
+					'--force',
+				],
+				deps(api),
+			);
+			const flags = `--direct --ipfs-gateway ${gateway()} --name release --force`;
+			expect(refusal(res, cid)).toEqual([
+				`  webveil install-recipes ${archive} ${flags}   # a release archive`,
+				`  webveil install-recipes ${set} ${flags}   # may be a set directory`,
+			]);
+			expect(socks.seen).toEqual([]);
+		});
+
+		it('--sha256: kept on the archive suggestion only', async () => {
+			torEgress();
+			const {cid, sha, archive, set} = serveReleaseFolder();
+			const {api} = installApi();
+			const res = await run(
+				['install-recipes', `ipfs://${cid}`, '--egress', '--sha256', sha],
+				deps(api),
+			);
+			expect(refusal(res, cid)).toEqual([
+				`  webveil install-recipes ${archive} --sha256 ${sha} --egress   # a release archive`,
+				`  webveil install-recipes ${set} --egress   # may be a set directory`,
+			]);
+		});
+
+		it('a suggested command installs the set, through the egress', async () => {
+			torEgress();
+			const {cid, sha} = serveReleaseFolder();
+			const {api} = installApi();
+			const lines = refusal(
+				await run(
+					['install-recipes', `ipfs://${cid}`, '--egress', '--sha256', sha],
+					deps(api),
+				),
+				cid,
+			);
+			for (const line of lines) {
+				rmSync(dataHome, {recursive: true, force: true});
+				const argv = line.split('#')[0]!.trim().split(/\s+/).slice(1);
+				const res = await run(argv, deps(api));
+				expect(res.out).toMatch(/"status": "installed"/);
+				expect(readFileSync(join(setDir(), 'web.json'), 'utf8')).toBe(RECIPE);
+			}
+			expect(socks.seen.length).toBeGreaterThan(1);
+			expect(socks.seen.every(({target}) => target === authority())).toBe(true);
+		});
+
+		it('another refusal (--sha256 on a set directory) is unchanged', async () => {
+			torEgress();
+			const {set} = serveReleaseFolder();
+			const {api} = installApi();
+			const res = await run(
+				['install-recipes', set, '--egress', '--sha256', '0'.repeat(64)],
+				deps(api),
+			);
+			expect(res.code).toBe(1);
+			const {message} = JSON.parse(res.out);
+			expect(message).toMatch(
+				/^--sha256 pins .*ipfs:\/\/.* leave --sha256 out/,
+			);
+			expect(message).not.toMatch(/webveil install-recipes|Try/);
+		});
 	});
 
 	describe('gateways', () => {

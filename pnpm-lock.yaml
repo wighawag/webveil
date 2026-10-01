@@ -61,8 +61,8 @@ importers:
         specifier: 0.4.10
         version: 0.4.10
       searchcast:
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.4.2
+        version: 0.4.2
       undici:
         specifier: ^7.28.0
         version: 7.28.0
@@ -1486,8 +1486,8 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
-  searchcast@0.4.0:
-    resolution: {integrity: sha512-R6eRk6EdSbUFDDUFYUCfsrzIurWfsGeyI4bqAboRX4sD+P3Z8OengMqbmMgY3rh63J7dH+eKJiHTC6ymvPxMYQ==}
+  searchcast@0.4.2:
+    resolution: {integrity: sha512-dFzxIdpgUor2oflBvwVnTFRjHHX9b1i+WydvISpiQ1o8rfnCycgcpCRQg9ZZ1az/9pHG7RzXNMTb1rqpz5L00Q==}
     hasBin: true
     peerDependencies:
       '@searchcast/browser': '>=0.1.0 <0.2.0'
@@ -3330,7 +3330,7 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  searchcast@0.4.0:
+  searchcast@0.4.2:
     dependencies:
       '@ipld/car': 5.4.7
       '@ipld/dag-pb': 4.2.0

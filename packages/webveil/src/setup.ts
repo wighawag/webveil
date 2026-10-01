@@ -110,6 +110,32 @@
 //   has one (absent for an IPFS set directory). `doctor` adds each installed
 //   `set:` entry's `source`.
 //
+// Recorded decisions (task ipfs-install-suggestions, searchcast 0.4.2): an
+// `ipfs://` directory that cannot be a recipe set is refused by searchcast
+// with `InstallError.suggestions`; webveil rethrows it (same class, so the
+// exit code and error code are unchanged; `cause` and `suggestions` kept)
+// with webveil commands instead of searchcast's, so the user is never told
+// to run searchcast directly, outside webveil's egress (`notASetMessage`).
+// - Kept: searchcast's listing, the message up to its LAST ". Try: " (an
+//   entry name could hold that text, a suggested URL cannot: it is
+//   percent-encoded); a generic "<source> is not a recipe set" if it is not
+//   found, so "searchcast install-recipes" is never printed. Alternative:
+//   rebuilding the listing (searchcast does not expose the entry names).
+// - Repeated per command, as typed: the route flag (`--egress`, `--direct`,
+//   or `--proxy <url>` as a PLACEHOLDER, never the typed URL, which may hold
+//   credentials, with a line saying to put it back), each `--ipfs-gateway`
+//   (a gateway base URL carries no credentials, searchcast refuses them),
+//   `--name` and `--force`; `--sha256` only from the suggestion (searchcast
+//   keeps it on archive suggestions only). No route flag typed (a direct
+//   egress) means none suggested: the user's command worked without one.
+//   Configured gateways are not repeated (the config gives them again).
+//   Alternative considered: suggesting the configured `--egress` whenever
+//   the egress is a proxy (rejected: the user already chose the route).
+// - Each command on its own line, its kind as a trailing shell comment
+//   (`# a release archive`), so a line pastes as is; a value with any
+//   character outside `[\w@%+=:,./-]` is single-quoted for the shell.
+// - Any other error, or this refusal without suggestions, is unchanged.
+//
 // - No `--dir` for `install-recipes`: webveil resolves `set:<name>` in
 //   searchcast's recipes directory only (backends/searchcast.ts), so a set
 //   installed elsewhere could not be named. The plain searchcast CLI still has
@@ -497,14 +523,69 @@ export async function installRecipes(
 		typed ??
 		(ipfs ? configuredIpfsGateways(config(), deps.log ?? stderr) : undefined);
 	const api = await (deps.loadInstall ?? loadInstallApi)();
-	return api.installRecipes(source, {
-		...(options.sha256 !== undefined && {sha256: options.sha256}),
-		...(ipfsGateways && {ipfsGateways}),
-		...(options.name && {name: options.name}),
-		...(proxy && {proxy}),
-		force: options.force ?? false,
-		log: deps.log ?? stderr,
+	try {
+		return await api.installRecipes(source, {
+			...(options.sha256 !== undefined && {sha256: options.sha256}),
+			...(ipfsGateways && {ipfsGateways}),
+			...(options.name && {name: options.name}),
+			...(proxy && {proxy}),
+			force: options.force ?? false,
+			log: deps.log ?? stderr,
+		});
+	} catch (error) {
+		if (!(error instanceof api.InstallError) || !error.suggestions?.length)
+			throw error;
+		throw new api.InstallError(notASetMessage(source, error, options), {
+			cause: error,
+			suggestions: error.suggestions,
+		});
+	}
+}
+
+/** A shell word as typed, single-quoted when it holds anything else. */
+const shellWord = (word: string) =>
+	/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * searchcast's not-a-set refusal, retold with `webveil install-recipes`
+ * commands carrying the user's own flags (see the decisions above): its
+ * listing (the part before "Try:"), then one command per suggestion.
+ */
+function notASetMessage(
+	source: string,
+	error: InstanceType<InstallApi['InstallError']>,
+	options: InstallRecipesFlags,
+): string {
+	const at = error.message.lastIndexOf('. Try: ');
+	const listing =
+		at >= 0 ? error.message.slice(0, at) : `${source} is not a recipe set`;
+	const flags = [
+		...(options.egress ? ['--egress'] : []),
+		...(options.proxy ? ['--proxy <url>'] : []),
+		...(options.direct ? ['--direct'] : []),
+		...(options.ipfsGateway ?? []).flatMap((g) => [
+			'--ipfs-gateway',
+			shellWord(g),
+		]),
+		...(options.name ? ['--name', shellWord(options.name)] : []),
+		...(options.force ? ['--force'] : []),
+	];
+	const commands = error.suggestions!.map(({source, kind, sha256}) => {
+		const words = [
+			'webveil install-recipes',
+			shellWord(source),
+			...(sha256 !== undefined ? ['--sha256', shellWord(sha256)] : []),
+			...flags,
+		];
+		const what =
+			kind === 'archive' ? 'a release archive' : 'may be a set directory';
+		return `  ${words.join(' ')}   # ${what}`;
 	});
+	return (
+		`webveil install-recipes: ${listing}. Nothing was installed. ` +
+		`Try one of:\n${commands.join('\n')}` +
+		(options.proxy ? '\n(give your proxy URL in place of <url>)' : '')
+	);
 }
 
 /** One installed set as `webveil recipes` lists it. */

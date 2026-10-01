@@ -59,7 +59,7 @@ describe('webveil depends on searchcast, not serpcast', () => {
 			...pkg.optionalDependencies,
 		};
 		expect(Object.keys(all).filter((name) => OLD.test(name))).toEqual([]);
-		expect(pkg.dependencies.searchcast).toBe('^0.4.0');
+		expect(pkg.dependencies.searchcast).toBe('^0.4.2');
 		expect(pkg.dependencies['@searchcast/recipe']).toBe('^0.1.0');
 		expect(pkg.peerDependencies).toEqual({
 			'@searchcast/browser': '>=0.1.0 <0.2.0',

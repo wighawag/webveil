@@ -109,6 +109,13 @@ export function car(root: Block, blocks: Block[]): Buffer {
 	return Buffer.concat(parts);
 }
 
-/** The path a trustless gateway is asked for (searchcast's request). */
-export const carPath = (cid: string, path = '') =>
-	`/ipfs/${cid}${path ? `/${path}` : ''}?format=car&dag-scope=all`;
+/**
+ * The path a trustless gateway is asked for (searchcast's request). Since
+ * searchcast 0.4.1 it asks `dag-scope=entity` first (a file is complete in
+ * that answer, a directory's is its listing), then `all` for a directory.
+ */
+export const carPath = (
+	cid: string,
+	path = '',
+	scope: 'entity' | 'all' = 'entity',
+) => `/ipfs/${cid}${path ? `/${path}` : ''}?format=car&dag-scope=${scope}`;

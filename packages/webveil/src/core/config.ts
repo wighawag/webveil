@@ -95,6 +95,29 @@ export type Egress =
  * `WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE` (comma-separated) gives the object
  * form. An env switch is `true` or `false`; anything else is kept as given so
  * validation names it, never silently read as off.
+ *
+ * Recorded decisions (task install-recipes-from-ipfs): `ipfsGateways` lists
+ * the trustless gateways (base URLs) `webveil install-recipes ipfs://...`
+ * asks, in order, REPLACING searchcast's `DEFAULT_IPFS_GATEWAYS` (to keep
+ * them, list them too); `--ipfs-gateway` wins over it whole (setup.ts).
+ * - Any layer may set it, a project `webveil.json` included, like every
+ *   network destination (`egress`, `fetchEgress`, `baseUrl` of SearXNG,
+ *   `browser.endpoint`): it is not an executable setting (docs/adr/0004),
+ *   because every block is verified against the CID the user typed, so a
+ *   gateway decides only where verified bytes come from, never what is
+ *   installed. It is used only by a command the user types, through the
+ *   route they choose, and the progress line names the layer (a project file
+ *   by its path) that set it. Alternative considered: trusted layers only
+ *   (rejected: it would protect no integrity property, and the project layer
+ *   is where per-folder network settings live).
+ * - It is the one key of the section that is NOT part of the search identity
+ *   (backends/searchcast.ts `settings` drops it): no search uses it, so
+ *   setting it must not start a fresh identity. Alternative considered: a
+ *   top-level `ipfsGateways` key (rejected: the gateways feed searchcast's
+ *   installer, and the task named the key `searchcast.ipfsGateways`).
+ * - Env `WEBVEIL_SEARCHCAST_IPFS_GATEWAYS` is split on commas (spaces around
+ *   each trimmed), like `WEBVEIL_SEARCHCAST_DECOY_GUARD`: a gateway base URL
+ *   has no query or fragment, so it never needs a comma.
  */
 export interface SearchcastConfig {
 	/** Engine names, tried in order (each names a loaded recipe). */
@@ -125,6 +148,8 @@ export interface SearchcastConfig {
 	browser?: BrowserConfig;
 	/** Where searchcast state lives (state.ts). */
 	state?: StateConfig;
+	/** Trustless gateways for `install-recipes ipfs://...`, in order (not search identity). */
+	ipfsGateways?: string[];
 }
 
 /** The searchcast state store's switches (state.ts). */
@@ -431,7 +456,9 @@ function readSearchcastEnv(env: Env): SearchcastConfig {
 		WEBVEIL_SEARCHCAST_BROWSER_CHROME_ARGS: args,
 		WEBVEIL_SEARCHCAST_DECOY_GUARD: decoy,
 		WEBVEIL_SEARCHCAST_DECOY_GUARD_EXCLUDE: exclude,
+		WEBVEIL_SEARCHCAST_IPFS_GATEWAYS: gateways,
 	} = env;
+	if (gateways?.trim()) section.ipfsGateways = envNames(gateways);
 	const browser = readKeys(env, `${P}BROWSER_`, {
 		timeoutMs: ['TIMEOUT_MS', envNumber],
 		maxBodyBytes: ['MAX_BODY_BYTES', envNumber],

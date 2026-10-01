@@ -592,6 +592,18 @@ describe('searchcast backend: one cached instance per identity', () => {
 		);
 	});
 
+	it('keeps the identity key when only searchcast.ipfsGateways (install-only) is set', () => {
+		writeProject({});
+		const config = resolveConfig({cwd, globalPath, env: {}});
+		const gateways = resolveConfig({
+			cwd,
+			globalPath,
+			env: {WEBVEIL_SEARCHCAST_IPFS_GATEWAYS: 'https://a.test'},
+		});
+		expect(gateways.searchcast?.ipfsGateways).toEqual(['https://a.test']);
+		expect(searchcastIdentityKey(gateways)).toBe(searchcastIdentityKey(config));
+	});
+
 	it('reuses the instance across two MCP tool calls (nothing closed by the handler)', async () => {
 		writeProject({});
 		const fake = fakeFactory({alpha: 403});

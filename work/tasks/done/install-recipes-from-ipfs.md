@@ -38,3 +38,15 @@ Goal: one command installs a recipe set by CID, anonymously when the egress is T
 - Security properties stay tested and unchanged: SSRF guard on every hop, trust layers, per-identity state, egress on every hop, strict impersonation, no runtime download.
 - No em dashes anywhere; do not hard-wrap Markdown paragraphs.
 - Bound shell commands (`timeout`), cap output, never grep `node_modules`, `dist` or `.git`. No network in tests.
+
+## Decisions
+
+These are recorded in code: the header of `packages/webveil/src/setup.ts` and the `SearchcastConfig` notes in `packages/webveil/src/core/config.ts`.
+
+1. **A project `webveil.json` may set `searchcast.ipfsGateways`.** It is treated like the other network settings (`egress`, a SearXNG `baseUrl`, `browser.endpoint`), not as an executable setting. Every block is checked against the CID you typed, so a gateway only decides where the verified bytes come from, not what gets installed. The progress line names the project file when it set them. The alternative was global config and env only.
+2. **`ipfsGateways` is the one `searchcast` key left out of the search identity.** No search uses it, so setting it shouldn't start a fresh identity with new engine sessions. The README sentence saying "every key of the `searchcast` section is part of the identity" now names this exception.
+3. **Configured gateways replace searchcast's defaults instead of adding to them.** To keep the defaults, list them too. The env form splits on commas, like `WEBVEIL_SEARCHCAST_DECOY_GUARD`.
+4. **One user-visible change: a URL or file without `--sha256` now fails with exit 2 instead of 1.** The schema had to make `--sha256` optional, so webveil now checks it itself as `SHA256_REQUIRED` (exit 2, before the config or install code is loaded). Before, it was incur's `VALIDATION_ERROR` (exit 1). The changeset says so.
+5. **One narrow edge case.** For an `ipfs://` source without `--ipfs-gateway`, the config is read for the gateways even when `--proxy` or `--direct` is given. In a folder whose config doesn't parse, only that case now fails; passing `--ipfs-gateway` avoids it.
+
+The working tree holds only this task's changes.

@@ -33,6 +33,7 @@ import {createCli} from '../src/cli.js';
 import {resolveConfig} from '../src/core/config.js';
 import type {InstallApi, SetupDeps} from '../src/setup.js';
 import {redactUrl} from '../src/setup.js';
+import {car, carPath, directory, rawFile} from './ipfs-fixture.js';
 
 // ---- isolation: a temporary XDG_DATA_HOME, the real one untouched ----------
 
@@ -798,6 +799,336 @@ describe('the download route under a proxy egress', () => {
 	});
 });
 
+describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () => {
+	let project: string;
+	let globalPath: string;
+	let socks: SocksProxy;
+	/** The local gateway: the release server, which answers CARs too. */
+	const gateway = () => base.replace(/\/$/, '');
+	const authority = () => new URL(base).host;
+
+	beforeAll(async () => {
+		socks = await socksProxy();
+		project = join(root, 'ipfs-repo');
+		globalPath = join(root, 'ipfs-xdg', 'webveil', 'config.json');
+	});
+
+	afterAll(async () => {
+		await socks.close();
+	});
+
+	afterEach(() => {
+		rmSync(project, {recursive: true, force: true});
+		rmSync(dirname(globalPath), {recursive: true, force: true});
+		socks.seen.length = 0;
+	});
+
+	function write(path: string, value: unknown) {
+		mkdirSync(dirname(path), {recursive: true});
+		writeFileSync(path, JSON.stringify(value));
+	}
+
+	function deps(api: InstallApi, env: Record<string, string> = {}): SetupDeps {
+		return {
+			loadInstall: async () => api,
+			resolveConfig: () => resolveConfig({cwd: project, globalPath, env}),
+		};
+	}
+
+	/** Serve the set archive on IPFS (one raw leaf); returns its CID and sha256. */
+	function serveIpfsArchive() {
+		const {archive, sha} = serveSet();
+		const file = rawFile(archive);
+		served.set(carPath(file.id), car(file, [file]));
+		return {cid: file.id, sha};
+	}
+
+	/** Serve the set as an IPFS directory (manifest and one recipe). */
+	function serveIpfsDirectory() {
+		const manifest = rawFile(
+			JSON.stringify({name: 'my-set', version: '2.0.0'}),
+		);
+		const web = rawFile(RECIPE);
+		const dir = directory({'manifest.json': manifest, 'web.json': web});
+		served.set(carPath(dir.id), car(dir, [dir, manifest, web]));
+		return {cid: dir.id};
+	}
+
+	/** A socks5 Tor-like egress in the project config, gateways in the global one. */
+	function torEgress() {
+		write(join(project, 'webveil.json'), {
+			egress: {mode: 'socks5', url: socks.url},
+		});
+		write(globalPath, {searchcast: {ipfsGateways: [gateway()]}});
+	}
+
+	const setDir = () => join(dataHome, 'searchcast', 'recipes', 'my-set');
+
+	it('installs an archive by CID through the egress, verified, without --sha256', async () => {
+		torEgress();
+		const {cid, sha} = serveIpfsArchive();
+		const {api, calls} = installApi();
+		const res = await run(
+			['install-recipes', `ipfs://${cid}`, '--egress'],
+			deps(api),
+		);
+		expect(res.code).toBe(0);
+		expect(JSON.parse(res.out)).toMatchObject({
+			name: 'my-set',
+			status: 'installed',
+		});
+		expect(readFileSync(join(setDir(), 'web.json'), 'utf8')).toBe(RECIPE);
+		// Through the egress (as socks5h), at the configured gateway only.
+		expect(calls.recipes[0]).toMatchObject({
+			proxy: socks.url.replace('socks5:', 'socks5h:'),
+			ipfsGateways: [gateway()],
+		});
+		expect(calls.recipes[0]).not.toHaveProperty('sha256');
+		expect(socks.seen).toEqual([{target: authority()}]);
+		expect(requested).toEqual([carPath(cid)]);
+		const log = res.log.join('\n');
+		expect(log).toContain(
+			`IPFS gateways from searchcast.ipfsGateways (global config ${globalPath})`,
+		);
+		expect(log).toMatch(/verified .* against its CID/);
+		// `recipes` shows where it came from.
+		const listed = JSON.parse((await run(['recipes'], deps(api))).out);
+		expect(listed.sets).toEqual([
+			expect.objectContaining({
+				name: 'my-set',
+				source: `ipfs://${cid}`,
+				cid,
+				gateway: gateway(),
+				sha256: sha,
+			}),
+		]);
+	});
+
+	it('checks --sha256 when given: installs on a match, nothing on a mismatch', async () => {
+		torEgress();
+		const {cid, sha} = serveIpfsArchive();
+		const {api} = installApi();
+		const wrong = await run(
+			[
+				'install-recipes',
+				`ipfs://${cid}`,
+				'--egress',
+				'--sha256',
+				'0'.repeat(64),
+			],
+			deps(api),
+		);
+		expect(wrong.code).toBe(1);
+		expect(wrong.out).toMatch(/checksum mismatch/);
+		expect(existsSync(setDir())).toBe(false);
+		const right = await run(
+			['install-recipes', `ipfs://${cid}`, '--egress', '--sha256', sha],
+			deps(api),
+		);
+		expect(right.code).toBe(0);
+		expect(readFileSync(join(setDir(), 'web.json'), 'utf8')).toBe(RECIPE);
+		expect(socks.seen).toHaveLength(2);
+	});
+
+	it('installs nothing when the gateway serves content that is not the CID', async () => {
+		torEgress();
+		const {cid} = serveIpfsArchive();
+		const other = rawFile('not the set');
+		served.set(carPath(cid), car(other, [other]));
+		const {api} = installApi();
+		const res = await run(
+			['install-recipes', `ipfs://${cid}`, '--egress'],
+			deps(api),
+		);
+		expect(res.code).toBe(1);
+		expect(res.out).toMatch(/verified against its CID/);
+		expect(existsSync(setDir())).toBe(false);
+	});
+
+	it('installs a set directory; recipes and doctor show its ipfs:// source, with no sha256', async () => {
+		torEgress();
+		const {cid} = serveIpfsDirectory();
+		const {api} = installApi();
+		const res = await run(
+			['install-recipes', `ipfs://${cid}`, '--egress'],
+			deps(api),
+		);
+		expect(res.code).toBe(0);
+		expect(readFileSync(join(setDir(), 'web.json'), 'utf8')).toBe(RECIPE);
+		const listed = JSON.parse((await run(['recipes'], deps(api))).out);
+		expect(listed.sets[0]).toMatchObject({
+			source: `ipfs://${cid}`,
+			cid,
+			gateway: gateway(),
+			version: '2.0.0',
+		});
+		expect(listed.sets[0]).not.toHaveProperty('sha256');
+		write(join(project, 'webveil.json'), {
+			backend: 'searchcast',
+			searchcast: {recipes: ['set:my-set'], engines: ['web']},
+		});
+		const doctor = await run(['doctor'], deps(realInstall));
+		const report = JSON.parse(
+			doctor.code === 0
+				? doctor.out
+				: JSON.parse(doctor.out).message.replace(/^[^\n]*\n/, ''),
+		);
+		expect(report.sets).toEqual([
+			{
+				entry: 'set:my-set',
+				installed: true,
+				dir: setDir(),
+				source: `ipfs://${cid}`,
+			},
+		]);
+	});
+
+	it('requires an explicit route under a proxy egress, before any request', async () => {
+		torEgress();
+		const {cid} = serveIpfsArchive();
+		const {api, calls} = installApi();
+		const res = await run(['install-recipes', `ipfs://${cid}`], deps(api));
+		expect(res.code).toBe(2);
+		expect(JSON.parse(res.out).code).toBe('ROUTE_REQUIRED');
+		expect(calls.recipes).toHaveLength(0);
+		expect(requested).toEqual([]);
+	});
+
+	describe('gateways', () => {
+		/** An install API that records the options and downloads nothing. */
+		function recording() {
+			const seen: {source: string; options: InstallRecipesOptions}[] = [];
+			const api: InstallApi = {
+				...realInstall,
+				installRecipes: async (source, options) => {
+					seen.push({source, options});
+					return {name: 'x', dir: '/x', files: {}, status: 'unchanged'};
+				},
+			};
+			return {api, seen};
+		}
+		const CID = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy';
+
+		it("passes none by default: searchcast's DEFAULT_IPFS_GATEWAYS apply", async () => {
+			const {api, seen} = recording();
+			const res = await run(['install-recipes', `ipfs://${CID}`], deps(api));
+			expect(res.code).toBe(0);
+			expect(seen[0]!.options).not.toHaveProperty('ipfsGateways');
+			expect(seen[0]!.options).not.toHaveProperty('sha256');
+			expect(realInstall.DEFAULT_IPFS_GATEWAYS.length).toBeGreaterThan(0);
+		});
+
+		it('takes them from a project webveil.json (not an executable setting), naming the file', async () => {
+			const path = join(project, 'webveil.json');
+			write(path, {
+				searchcast: {ipfsGateways: ['https://a.test', 'https://b.test']},
+			});
+			const {api, seen} = recording();
+			const res = await run(['install-recipes', `ipfs://${CID}`], deps(api));
+			expect(res.code).toBe(0);
+			expect(seen[0]!.options.ipfsGateways).toEqual([
+				'https://a.test',
+				'https://b.test',
+			]);
+			expect(res.log.join('\n')).toContain(
+				`(project config ${path}): https://a.test, https://b.test`,
+			);
+		});
+
+		it('takes them from env, comma-separated', async () => {
+			write(globalPath, {searchcast: {ipfsGateways: ['https://global.test']}});
+			const {api, seen} = recording();
+			const env = {
+				WEBVEIL_SEARCHCAST_IPFS_GATEWAYS: 'https://a.test, https://b.test',
+			};
+			await run(['install-recipes', `ipfs://${CID}`], deps(api, env));
+			expect(seen[0]!.options.ipfsGateways).toEqual([
+				'https://a.test',
+				'https://b.test',
+			]);
+		});
+
+		it('--ipfs-gateway (repeatable) wins over the config, which is then not even read', async () => {
+			const {api, seen} = recording();
+			const res = await run(
+				[
+					'install-recipes',
+					`ipfs://${CID}`,
+					'--direct',
+					'--ipfs-gateway',
+					'https://x.test',
+					'--ipfs-gateway',
+					'https://y.test',
+				],
+				{
+					loadInstall: async () => api,
+					resolveConfig: () => {
+						throw new Error('the config was resolved');
+					},
+				},
+			);
+			expect(res.code).toBe(0);
+			expect(seen[0]!.options.ipfsGateways).toEqual([
+				'https://x.test',
+				'https://y.test',
+			]);
+		});
+
+		it('refuses a malformed searchcast.ipfsGateways before anything is loaded', async () => {
+			write(globalPath, {searchcast: {ipfsGateways: 'https://a.test'}});
+			const {api, seen} = recording();
+			const res = await run(['install-recipes', `ipfs://${CID}`], deps(api));
+			expect(res.code).toBe(1);
+			expect(res.out).toMatch(
+				/searchcast\.ipfsGateways must be a non-empty list/,
+			);
+			expect(seen).toHaveLength(0);
+		});
+
+		it("passes configured gateways for an ipfs:// source only; a typed one stays searchcast's error elsewhere", async () => {
+			write(globalPath, {searchcast: {ipfsGateways: ['https://a.test']}});
+			const {url, sha} = serveSet();
+			const {api, seen} = recording();
+			expect(
+				(await run(['install-recipes', url, '--sha256', sha], deps(api))).code,
+			).toBe(0);
+			expect(seen[0]!.options).not.toHaveProperty('ipfsGateways');
+			const typed = installApi();
+			const res = await run(
+				[
+					'install-recipes',
+					url,
+					'--sha256',
+					sha,
+					'--ipfs-gateway',
+					'https://x.test',
+				],
+				deps(typed.api),
+			);
+			expect(res.code).toBe(1);
+			expect(res.out).toMatch(/applies to an ipfs:\/\/ source only/);
+			expect(requested).toEqual([]);
+		});
+	});
+
+	it('still requires --sha256 for a URL or a file (exit 2, before anything is resolved)', async () => {
+		const {url} = serveSet();
+		const {api, calls} = installApi();
+		const res = await run(['install-recipes', url], {
+			loadInstall: async () => api,
+			resolveConfig: () => {
+				throw new Error('the config was resolved');
+			},
+		});
+		expect(res.code).toBe(2);
+		const error = JSON.parse(res.out);
+		expect(error.code).toBe('SHA256_REQUIRED');
+		expect(error.message).toMatch(/ipfs:\/\//);
+		expect(calls.recipes).toHaveLength(0);
+		expect(requested).toEqual([]);
+	});
+});
+
 interface SocksProxy {
 	url: string;
 	/** Each CONNECT: its target, and the credentials when the client sent them. */
@@ -958,7 +1289,7 @@ describe('webveil doctor', () => {
 					file: join(dataHome, 'searchcast', 'recipes', 'my-set', 'web.json'),
 				},
 			],
-			sets: [{entry: 'set:my-set', installed: true}],
+			sets: [{entry: 'set:my-set', installed: true, source: file}],
 		});
 		expect(report.problems).toHaveLength(1);
 		expect(report.problems[0]).toMatch(/webveil install-libcurl/);

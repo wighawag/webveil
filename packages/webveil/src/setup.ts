@@ -79,6 +79,37 @@
 //   A local file for `install-recipes`: `--egress` is accepted and ignored,
 //   like `--direct`, and the config is not resolved.
 //
+// Recorded decisions (task install-recipes-from-ipfs, searchcast 0.4):
+// - An `ipfs://<cid>[/<path>]` source is a DOWNLOAD like an http(s) URL: the
+//   same explicit-route rule (`--egress` / `--proxy` / `--direct`, refused
+//   without one under a proxy egress), and searchcast sends every gateway
+//   request through that proxy (a loopback gateway too). Unchanged otherwise.
+// - `--sha256` is optional for `ipfs://` (the CID pins it; searchcast checks
+//   it against an IPFS archive when given, and refuses it for an IPFS set
+//   directory). For any other source its absence is now webveil's
+//   `UsageError` `SHA256_REQUIRED` (exit 2, before anything is resolved or
+//   loaded), no longer incur's `VALIDATION_ERROR` (exit 1): the option had to
+//   become optional in the schema, and exit 2 is this module's convention for
+//   a usage error. Alternative considered: leaving it to searchcast's
+//   InstallError (exit 1), rejected because the route would be resolved
+//   (and could be refused) before the real problem was named.
+// - Gateways: `--ipfs-gateway` (repeatable) wins whole; else
+//   `searchcast.ipfsGateways` (config.ts: any layer, env
+//   `WEBVEIL_SEARCHCAST_IPFS_GATEWAYS`), announced on the progress sink with
+//   the layer that set it; else searchcast's `DEFAULT_IPFS_GATEWAYS`. The
+//   configured ones are passed for an `ipfs://` source ONLY (searchcast
+//   refuses gateways for any other source); typed ones are passed as typed,
+//   so `--ipfs-gateway` with a URL or file stays searchcast's own error, like
+//   `--proxy` with a file.
+// - For an `ipfs://` source without `--ipfs-gateway`, the config is resolved
+//   for the gateways even with `--proxy` or `--direct`, so there (only) a
+//   folder whose config does not parse fails the command; `--ipfs-gateway`
+//   avoids it. One lazy resolution serves the route and the gateways.
+// - `recipes` shows an IPFS set's `source` (the ipfs:// URL), `cid` and
+//   `gateway` (whose CAR verified), and `sha256` only when `.source.json`
+//   has one (absent for an IPFS set directory). `doctor` adds each installed
+//   `set:` entry's `source`.
+//
 // - No `--dir` for `install-recipes`: webveil resolves `set:<name>` in
 //   searchcast's recipes directory only (backends/searchcast.ts), so a set
 //   installed elsewhere could not be named. The plain searchcast CLI still has
@@ -140,7 +171,7 @@
 // healthy. Alternative considered: printing it on every search, rejected as
 // noise (the README carries the message for new users).
 
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import type {DoctorReport, OldDataDirHits, RecipeSet} from 'searchcast/install';
 import {
 	DEFAULT_BACKEND_NOTE,
@@ -151,6 +182,7 @@ import type {Config, Egress, ResolveOptions} from './core/config.js';
 import {EgressError, fetchEgressConfig} from './core/egress.js';
 import {resolveFetchTransport} from './core/fetch-transport.js';
 import {configDeprecations, reportDeprecations} from './core/spellings.js';
+import {sourceOf} from './core/trust.js';
 import {
 	DEFAULT_CHAIN_NOTE,
 	describeSearchcastEngines,
@@ -191,7 +223,7 @@ export interface RouteOptions {
 export class UsageError extends Error {
 	readonly exitCode = 2;
 	constructor(
-		readonly code: 'ROUTE_REQUIRED' | 'CONFLICTING_OPTIONS',
+		readonly code: 'ROUTE_REQUIRED' | 'CONFLICTING_OPTIONS' | 'SHA256_REQUIRED',
 		message: string,
 	) {
 		super(message);
@@ -347,22 +379,67 @@ export function downloadRoute(
 	);
 }
 
-/** The route for `command`, resolving the config only when it is needed. */
-function route(command: string, options: RouteOptions, deps: SetupDeps) {
-	return downloadRoute(
-		command,
-		options,
-		() => {
-			const config = (deps.resolveConfig ?? realResolveConfig)();
-			reportDeprecations(config, deps.log);
-			return config;
-		},
-		deps.log ?? stderr,
-	);
+/**
+ * This folder's config, resolved on the first call only (its deprecations
+ * reported once), so the route and the IPFS gateways share one resolution.
+ */
+function lazyConfig(deps: SetupDeps): () => Config {
+	let config: Config | undefined;
+	return () => {
+		if (config) return config;
+		config = (deps.resolveConfig ?? realResolveConfig)();
+		reportDeprecations(config, deps.log);
+		return config;
+	};
 }
 
+/** The route for `command`, resolving the config only when it is needed. */
+function route(
+	command: string,
+	options: RouteOptions,
+	deps: SetupDeps,
+	config: () => Config = lazyConfig(deps),
+) {
+	return downloadRoute(command, options, config, deps.log ?? stderr);
+}
+
+/** True when `source` is an `ipfs://<cid>[/<path>]` URL. */
+const isIpfs = (source: string) => /^ipfs:\/\//i.test(source);
+
 /** True when `install-recipes` downloads `source` (else: a local file). */
-const isDownload = (source: string) => /^https?:\/\//i.test(source);
+const isDownload = (source: string) =>
+	/^https?:\/\//i.test(source) || isIpfs(source);
+
+/**
+ * The configured `searchcast.ipfsGateways` (validated), or undefined when no
+ * layer sets it (searchcast's `DEFAULT_IPFS_GATEWAYS` then apply). Says on
+ * `log` which layer named them, a project file by its path.
+ */
+export function configuredIpfsGateways(
+	config: Config,
+	log: (line: string) => void = () => {},
+): string[] | undefined {
+	const gateways: unknown = config.searchcast?.ipfsGateways;
+	if (gateways === undefined) return undefined;
+	if (
+		!Array.isArray(gateways) ||
+		gateways.length === 0 ||
+		!gateways.every((g) => typeof g === 'string' && g !== '')
+	)
+		throw new Error(
+			'webveil: searchcast.ipfsGateways must be a non-empty list of gateway ' +
+				'base URLs (https://...)',
+		);
+	const source = sourceOf(config, 'searchcast.ipfsGateways');
+	const from = source
+		? `${source.layer}${'path' in source ? ` config ${source.path}` : ''}`
+		: 'code';
+	log(
+		`webveil install-recipes: IPFS gateways from searchcast.ipfsGateways ` +
+			`(${from}): ${gateways.join(', ')}`,
+	);
+	return gateways as string[];
+}
 
 /** `webveil install-libcurl`: the pinned libcurl-impersonate, checksum verified. */
 export async function installLibcurl(
@@ -378,21 +455,51 @@ export async function installLibcurl(
 	});
 }
 
-/** `webveil install-recipes`: a checksum-pinned recipe set. */
+/** `webveil install-recipes` options (see cli.ts). */
+export interface InstallRecipesFlags extends RouteOptions {
+	/** The archive's sha256: required, except for an `ipfs://` source (the CID pins it). */
+	sha256?: string;
+	name?: string;
+	force?: boolean;
+	/** `--ipfs-gateway`, repeatable: wins over `searchcast.ipfsGateways`. */
+	ipfsGateway?: string[];
+}
+
+/**
+ * `webveil install-recipes`: a recipe set pinned by its sha256, or by its CID
+ * for an `ipfs://` source (see the decisions above).
+ */
 export async function installRecipes(
 	source: string,
-	options: {sha256: string; name?: string; force?: boolean} & RouteOptions,
+	options: InstallRecipesFlags,
 	deps: SetupDeps = {},
 ) {
+	const ipfs = isIpfs(source);
+	if (!ipfs && options.sha256 === undefined)
+		throw new UsageError(
+			'SHA256_REQUIRED',
+			`webveil install-recipes: --sha256 <hex> is required for ${source}: ` +
+				"the archive's sha256 is your trust decision (a set may hold code " +
+				'recipes). Only an ipfs:// source may leave it out (the CID pins it). ' +
+				'Nothing was downloaded.',
+		);
+	const config = lazyConfig(deps);
 	// A local file makes no request: no route to require (`--direct` and
 	// `--egress` are ignored, `--proxy` stays searchcast's own error for a file),
 	// but conflicting flags are still refused.
 	const proxy = isDownload(source)
-		? route('install-recipes', options, deps)
+		? route('install-recipes', options, deps, config)
 		: (assertOneRoute('install-recipes', options), options.proxy);
+	// Typed gateways go to searchcast as typed (it refuses them for a non-IPFS
+	// source); configured ones only for an ipfs:// source.
+	const typed = options.ipfsGateway?.length ? options.ipfsGateway : undefined;
+	const ipfsGateways =
+		typed ??
+		(ipfs ? configuredIpfsGateways(config(), deps.log ?? stderr) : undefined);
 	const api = await (deps.loadInstall ?? loadInstallApi)();
 	return api.installRecipes(source, {
-		sha256: options.sha256,
+		...(options.sha256 !== undefined && {sha256: options.sha256}),
+		...(ipfsGateways && {ipfsGateways}),
 		...(options.name && {name: options.name}),
 		...(proxy && {proxy}),
 		force: options.force ?? false,
@@ -409,7 +516,9 @@ function describeSet(set: RecipeSet) {
 			version: set.source.manifest.version,
 		}),
 		source: set.source?.source ?? 'unknown (no .source.json)',
-		...(set.source && {sha256: set.source.sha256}),
+		...(set.source?.cid && {cid: set.source.cid}),
+		...(set.source?.gateway && {gateway: set.source.gateway}),
+		...(set.source?.sha256 && {sha256: set.source.sha256}),
 		files: set.files.map((file) => {
 			const sha256 = set.source?.files[file];
 			return sha256 ? `${file} sha256 ${sha256}` : file;
@@ -493,7 +602,8 @@ export interface DoctorResult {
 	 */
 	defaultChain?: string;
 	engines?: EngineDescription[];
-	sets?: {entry: string; installed: boolean; dir: string}[];
+	/** Each configured `set:` entry; `source` is where it was installed from (`.source.json`). */
+	sets?: {entry: string; installed: boolean; dir: string; source?: string}[];
 }
 
 /** Run `fn`, recording its error message in `problems` instead of throwing. */
@@ -566,12 +676,23 @@ export async function doctor(
 		result.sets = setEntries(config).map((entry) => {
 			const name = entry.slice('set:'.length).split('/')[0]!;
 			const found = api.recipeSetDir(name);
-			if (!found)
+			if (!found) {
 				problems.push(
 					`recipe set '${name}' (${entry}) is not installed in ${dir}: ` +
-						'webveil install-recipes <archive> --sha256 <hex>',
+						'webveil install-recipes <archive> --sha256 <hex> (or ' +
+						'ipfs://<cid>)',
 				);
-			return {entry, installed: !!found, dir: found ?? join(dir, name)};
+				return {entry, installed: false, dir: join(dir, name)};
+			}
+			const set = api
+				.listRecipeSets(dirname(found))
+				.find((s: RecipeSet) => s.name === name);
+			return {
+				entry,
+				installed: true,
+				dir: found,
+				...(set?.source && {source: set.source.source}),
+			};
 		});
 		// A missing set is already reported; resolving the chain would only
 		// report it again.

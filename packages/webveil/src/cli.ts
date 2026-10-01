@@ -200,14 +200,34 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 		.command('install-recipes', {
 			description:
 				'Install a recipe set from a release archive (URL or file), pinned by ' +
-				'its sha256, into ~/.local/share/searchcast/recipes/<set>; name it in ' +
-				'config as set:<set>. A set may hold code recipes: the pin is your ' +
-				'trust decision.',
+				'its sha256, or from IPFS (ipfs://<cid>[/<path>], an archive or a set ' +
+				'directory), pinned by its CID and verified block by block, into ' +
+				'~/.local/share/searchcast/recipes/<set>; name it in config as ' +
+				'set:<set>. A set may hold code recipes: the pin is your trust decision.',
 			args: z.object({
-				source: z.string().describe('The archive: an http(s) URL or a file'),
+				source: z
+					.string()
+					.describe(
+						'The archive: an http(s) URL or a file; or ipfs://<cid>[/<path>]',
+					),
 			}),
 			options: z.object({
-				sha256: z.string().describe("The archive's sha256 (hex), required"),
+				sha256: z
+					.string()
+					.optional()
+					.describe(
+						"The archive's sha256 (hex): required for a URL or a file; " +
+							'optional for ipfs:// (the CID pins it; if given it must match ' +
+							'an IPFS archive too)',
+					),
+				ipfsGateway: z
+					.array(z.string())
+					.optional()
+					.describe(
+						'A trustless IPFS gateway (base URL) for an ipfs:// source, ' +
+							'repeatable, tried in order; default searchcast.ipfsGateways, ' +
+							"else searchcast's defaults",
+					),
 				name: z
 					.string()
 					.optional()

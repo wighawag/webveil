@@ -535,7 +535,9 @@ function browserSettings(
 /** The section validated, its paths resolved (trust-checked first). */
 function settings(config: Config): SearchcastConfig {
 	assertTrusted(config, EXECUTABLE_KEYS);
-	const s: SearchcastConfig = {...config.searchcast};
+	// `ipfsGateways` is install-only, never part of a search (config.ts).
+	const {ipfsGateways: _install, ...section} = config.searchcast ?? {};
+	const s: SearchcastConfig = section;
 	const fallback = usesDefaultChain(s);
 	if (fallback) s.engines = [...DEFAULT_ENGINES];
 	if (!isList(s.engines) || s.engines.length === 0)

@@ -18,9 +18,12 @@ allowBuilds:
 # release-age window: pinned exact versions, as was done for serpcast.
 # searchcast 0.3.0 (code recipes' author headers, task
 # marginalia-key-via-header) was published the same day.
+# searchcast 0.4.0 (ipfs:// recipe sets, task install-recipes-from-ipfs) was
+# published 2026-10-01, inside the window too.
 minimumReleaseAgeExclude:
   - searchcast@0.2.0
   - searchcast@0.3.0
+  - searchcast@0.4.0
   - '@searchcast/recipe@0.1.0'
   - '@searchcast/libcurl-linux-x64@0.1.0'
   - '@searchcast/libcurl-linux-arm64@0.1.0'

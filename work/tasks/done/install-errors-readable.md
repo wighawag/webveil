@@ -44,3 +44,11 @@ Goal: a refusal reads cleanly in a terminal and parses cleanly for an agent. Rea
 - Make NO live network request.
 - No em dashes anywhere; do not hard-wrap Markdown paragraphs. Public repo: no real search engine named except Mwmbl and Marginalia.
 - Bound shell commands (`timeout`), cap output, never grep `node_modules`, `dist` or `.git`. No network in tests.
+
+## Decisions
+
+These are recorded in JSDoc in `packages/webveil/src/cli.ts`, on `runInstall` and `notASetCta`.
+1. **Which errors get which code:** only searchcast's `InstallError` gets one of the new codes; config and egress errors still throw as `UNKNOWN`. I rejected a single code for every install error, because an agent can act on `NOT_A_RECIPE_SET` (it comes with commands) and not on the others. This also applies to `install-libcurl`.
+2. **How `InstallError` is recognised:** with `instanceof` against the install API loaded on demand, so `cli.ts` still has no static import of download code (an existing test checks this).
+3. **The list's label:** `Next:` as the task asked. With `--proxy` it becomes `Next (put your proxy URL in place of <url>):`, which replaces the old message's last line. I rejected putting that sentence in the message, because the library message no longer names any command.
+4. **No MCP form:** `install-recipes` is not an MCP tool, and incur sends only an error's message over MCP, dropping its call-to-actions. If it were ever served over MCP, the commands would have to go back into the message for that mode.

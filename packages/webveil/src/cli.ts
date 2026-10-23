@@ -33,8 +33,10 @@ import {
 	installLibcurl,
 	installRecipes,
 	listRecipes,
+	loadInstallApi,
 } from './setup.js';
-import type {SetupDeps} from './setup.js';
+import type {InstallRecipesFlags, SetupDeps} from './setup.js';
+import type {InstallSuggestion} from 'searchcast/install';
 
 /**
  * The two core functions the frontend wraps, seamed so tests can inject fakes.
@@ -74,23 +76,135 @@ const EGRESS_HELP =
 	'else fetchEgress when only that one is a proxy; SOCKS as socks5h://), ' +
 	'credentials included but never printed. Direct when every hop is direct';
 
-/** Run an install command, turning a `UsageError` into an exit-2 error. */
-async function withUsage<T>(
-	c: {
-		error(e: {code: string; message: string; exitCode: number}): never;
-	},
+/** incur call-to-actions: commands without the CLI name (incur prefixes it). */
+interface Cta {
+	description: string;
+	commands: {command: string; description: string}[];
+}
+
+/** How an install command fails: incur's `c.error` options. */
+interface InstallFailure {
+	code: string;
+	message: string;
+	exitCode: number;
+	cta?: Cta;
+}
+
+/** True when `error` is searchcast's `InstallError` (loading the API lazily). */
+async function isInstallError(
+	error: unknown,
+	setup: SetupDeps,
+): Promise<boolean> {
+	try {
+		const api = await (setup.loadInstall ?? loadInstallApi)();
+		return error instanceof api.InstallError;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Run an install command, giving its known failures their own error code.
+ *
+ * Recorded decisions (task install-errors-readable):
+ * - A `UsageError` keeps its code and exit 2. searchcast's `InstallError`
+ *   exits 1 with `NOT_A_RECIPE_SET` when it carries `suggestions` (the
+ *   not-a-set refusal of `install-recipes`, given `notASet`), else
+ *   `INSTALL_FAILED` (`install-libcurl` too). Its message is unchanged.
+ *   Any other error (a config or egress error, say) still throws, so incur
+ *   reports it as `UNKNOWN`, as before. Alternative considered: one code
+ *   for every install error, rejected because an agent can act on
+ *   `NOT_A_RECIPE_SET` (its call-to-actions) and not on the others.
+ * - The class is checked with `instanceof` against the lazily loaded install
+ *   API (already loaded when an `InstallError` can exist), so this module
+ *   still imports no download code (test/setup.test.ts walks the imports).
+ */
+async function runInstall<T>(
+	c: {error(e: InstallFailure): never},
+	setup: SetupDeps,
 	fn: () => Promise<T>,
+	notASet?: (suggestions: readonly InstallSuggestion[]) => Cta,
 ): Promise<T> {
 	try {
 		return await fn();
 	} catch (error) {
-		if (!(error instanceof UsageError)) throw error;
-		return c.error({
-			code: error.code,
-			message: error.message,
-			exitCode: error.exitCode,
-		});
+		if (error instanceof UsageError)
+			return c.error({
+				code: error.code,
+				message: error.message,
+				exitCode: error.exitCode,
+			});
+		if (!(await isInstallError(error, setup))) throw error;
+		const {message, suggestions} = error as Error & {
+			suggestions?: readonly InstallSuggestion[];
+		};
+		if (notASet && suggestions?.length)
+			return c.error({
+				code: 'NOT_A_RECIPE_SET',
+				message,
+				exitCode: 1,
+				cta: notASet(suggestions),
+			});
+		return c.error({code: 'INSTALL_FAILED', message, exitCode: 1});
 	}
+}
+
+/** A shell word as typed, single-quoted when it holds anything else. */
+const shellWord = (word: string) =>
+	/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The not-a-set refusal's suggestions as `webveil install-recipes`
+ * call-to-actions carrying the user's own flags (the rules are setup.ts's
+ * recorded decisions, task ipfs-install-suggestions): `--proxy <url>` is a
+ * placeholder, never the typed URL or its credentials.
+ *
+ * Recorded decisions (task install-errors-readable):
+ * - Each command is a call-to-action of incur's `c.error`, its kind as the
+ *   description. incur prefixes the CLI name, so the command starts at
+ *   `install-recipes`. With TOON or JSON output (an agent, a pipe) they are
+ *   data under `cta.commands` beside `code` and the one-line `message`; in
+ *   a terminal incur prints `Error (NOT_A_RECIPE_SET): ...` then the list,
+ *   one command per line, its kind as a trailing `# ...` comment.
+ * - The label is `Next:`; with `--proxy` it is `Next (put your proxy URL in
+ *   place of <url>):`, the old message's last line, kept beside the
+ *   commands it is about. Alternative considered: that sentence in the
+ *   message, rejected as the library message (setup.ts) names no command.
+ * - No MCP form: the setup commands are not MCP tools (setup.ts), and incur
+ *   drops an error's call-to-actions over MCP anyway (only its message is
+ *   sent). Were `install-recipes` ever served over MCP, the commands would
+ *   have to go back into the message for that mode.
+ */
+function notASetCta(
+	suggestions: readonly InstallSuggestion[],
+	options: InstallRecipesFlags,
+): Cta {
+	const flags = [
+		...(options.egress ? ['--egress'] : []),
+		...(options.proxy ? ['--proxy <url>'] : []),
+		...(options.direct ? ['--direct'] : []),
+		...(options.ipfsGateway ?? []).flatMap((g) => [
+			'--ipfs-gateway',
+			shellWord(g),
+		]),
+		...(options.name ? ['--name', shellWord(options.name)] : []),
+		...(options.force ? ['--force'] : []),
+	];
+	return {
+		description: options.proxy
+			? 'Next (put your proxy URL in place of <url>):'
+			: 'Next:',
+		commands: suggestions.map(({source, kind, sha256}) => ({
+			command: [
+				'install-recipes',
+				shellWord(source),
+				...(sha256 !== undefined ? ['--sha256', shellWord(sha256)] : []),
+				...flags,
+			].join(' '),
+			description:
+				kind === 'archive' ? 'a release archive' : 'may be a set directory',
+		})),
+	};
 }
 
 /** The size presets `fetch` accepts, mirroring the core's `FetchSize`. */
@@ -194,7 +308,7 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 					.describe('Replace a differing library already installed'),
 			}),
 			async run(c) {
-				return withUsage(c, () => installLibcurl(c.options, setup));
+				return runInstall(c, setup, () => installLibcurl(c.options, setup));
 			},
 		})
 		.command('install-recipes', {
@@ -249,8 +363,11 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 					.describe('Replace a differing set already installed'),
 			}),
 			async run(c) {
-				return withUsage(c, () =>
-					installRecipes(c.args.source, c.options, setup),
+				return runInstall(
+					c,
+					setup,
+					() => installRecipes(c.args.source, c.options, setup),
+					(suggestions) => notASetCta(suggestions, c.options),
 				);
 			},
 		})

@@ -32,7 +32,7 @@ import type {InstallOptions, InstallRecipesOptions} from 'searchcast/install';
 import {createCli} from '../src/cli.js';
 import {resolveConfig} from '../src/core/config.js';
 import type {InstallApi, SetupDeps} from '../src/setup.js';
-import {redactUrl} from '../src/setup.js';
+import {installRecipes, redactUrl} from '../src/setup.js';
 import {car, carPath, directory, rawFile} from './ipfs-fixture.js';
 
 // ---- isolation: a temporary XDG_DATA_HOME, the real one untouched ----------
@@ -156,22 +156,41 @@ function installApi(release?: realInstall.Release) {
 const directConfig = () =>
 	resolveConfig({cwd: root, globalPath: join(root, 'no-config.json'), env: {}});
 
-/** Serve the CLI; returns stdout, the exit code and the progress lines. */
-async function run(argv: string[], setup: SetupDeps) {
+/**
+ * Serve the CLI; returns stdout, the exit code and the progress lines. Output
+ * is `--format json` unless `format` says otherwise; `tty` serves it as to a
+ * terminal (incur's human mode: `process.stdout.isTTY`, no `--format`).
+ */
+async function run(
+	argv: string[],
+	setup: SetupDeps,
+	{format = 'json', tty = false}: {format?: string; tty?: boolean} = {},
+) {
 	const log: string[] = [];
 	const cli = createCli({
 		setup: {log: (l) => log.push(l), resolveConfig: directConfig, ...setup},
 	});
 	let out = '';
 	let code = 0;
-	await cli.serve([...argv, '--format', 'json'], {
-		stdout(s) {
-			out += s;
-		},
-		exit(c) {
-			code = c;
-		},
-	});
+	const isTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+	if (tty)
+		Object.defineProperty(process.stdout, 'isTTY', {
+			value: true,
+			configurable: true,
+		});
+	try {
+		await cli.serve(tty ? argv : [...argv, '--format', format], {
+			stdout(s) {
+				out += s;
+			},
+			exit(c) {
+				code = c;
+			},
+		});
+	} finally {
+		if (isTTY) Object.defineProperty(process.stdout, 'isTTY', isTTY);
+		else delete (process.stdout as {isTTY?: boolean}).isTTY;
+	}
 	return {out, code, log};
 }
 
@@ -212,6 +231,7 @@ describe('webveil install-libcurl', () => {
 			loadInstall: async () => api,
 		});
 		expect(refused.code).toBe(1);
+		expect(JSON.parse(refused.out).code).toBe('INSTALL_FAILED');
 		expect(refused.out).toMatch(/--force/);
 		expect(readFileSync(libraryPath(), 'utf8')).toBe('LIBRARY v1');
 		const forced = await run(['install-libcurl', '--force'], {
@@ -236,6 +256,8 @@ describe('webveil install-libcurl', () => {
 		const {api} = installApi(bad);
 		const res = await run(['install-libcurl'], {loadInstall: async () => api});
 		expect(res.code).toBe(1);
+		expect(JSON.parse(res.out)).toMatchObject({code: 'INSTALL_FAILED'});
+		expect(JSON.parse(res.out)).not.toHaveProperty('cta');
 		expect(res.out).toMatch(/checksum mismatch/);
 		expect(existsSync(join(dataHome, 'searchcast'))).toBe(false);
 	});
@@ -331,6 +353,7 @@ describe('webveil install-recipes and webveil recipes', () => {
 			{loadInstall: async () => api},
 		);
 		expect(wrong.code).toBe(1);
+		expect(JSON.parse(wrong.out).code).toBe('INSTALL_FAILED');
 		expect(existsSync(join(dataHome, 'searchcast', 'recipes', 'my-set'))).toBe(
 			false,
 		);
@@ -741,6 +764,8 @@ describe('the download route under a proxy egress', () => {
 				const {api, calls} = installApi(serveRelease('LIBRARY v1'));
 				for (const res of await installBoth(['--egress'], deps(api))) {
 					expect(res.code).toBe(1);
+					// Not an install error: still thrown, as before.
+					expect(JSON.parse(res.out).code).toBe('UNKNOWN');
 					expect(res.out).toMatch(/Nothing was downloaded/);
 					expect(res.out + res.log.join('\n')).not.toContain('secret');
 				}
@@ -1032,25 +1057,42 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 			};
 		}
 
-		/** The refusal's message (exit 1), checked for what every case shares. */
+		const LISTING =
+			'it holds "README.txt", "my-set", "my-set-1.2.0.tar.gz", ' +
+			'"my-set-1.2.0.tar.gz.sha256". Nothing was installed.';
+
+		/**
+		 * The refusal (JSON output): exit 1, code NOT_A_RECIPE_SET, a one-line
+		 * message without any command, nothing installed; returns its
+		 * call-to-actions (label and commands).
+		 */
 		function refusal(res: {out: string; code: number}, cid: string) {
 			expect(res.code).toBe(1);
 			const error = JSON.parse(res.out);
-			expect(error.code).toBe('UNKNOWN');
+			expect(error.code).toBe('NOT_A_RECIPE_SET');
 			const message: string = error.message;
-			expect(message).not.toMatch(/searchcast install-recipes/);
+			expect(message).not.toContain('\n');
+			expect(message).not.toMatch(/install-recipes ipfs|Try/);
 			expect(message).toMatch(
 				new RegExp(
 					`^webveil install-recipes: .*ipfs://${cid} is not a recipe set directory; ` +
-						'it holds "README.txt", "my-set", "my-set-1.2.0.tar.gz", ' +
-						'"my-set-1.2.0.tar.gz.sha256". Nothing was installed. Try one of:\n',
+						`${LISTING.replace(/[.]/g, '\\.')}$`,
 				),
 			);
 			expect(existsSync(setDir())).toBe(false);
-			return message.split('\n').slice(1);
+			return error.cta as {
+				description: string;
+				commands: {command: string; description: string}[];
+			};
 		}
 
-		it('--egress: each suggestion is a webveil command through the egress, after one listing request', async () => {
+		/** One call-to-action as incur formats it (the CLI name prefixed once). */
+		const cta = (args: string, archive: boolean) => ({
+			command: `webveil install-recipes ${args}`,
+			description: archive ? 'a release archive' : 'may be a set directory',
+		});
+
+		it('--egress: each suggestion is a webveil call-to-action through the egress, after one listing request', async () => {
 			torEgress();
 			const {cid, archive, set} = serveReleaseFolder();
 			const {api} = installApi();
@@ -1058,33 +1100,99 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 				['install-recipes', `ipfs://${cid}`, '--egress'],
 				deps(api),
 			);
-			expect(refusal(res, cid)).toEqual([
-				`  webveil install-recipes ${archive} --egress   # a release archive`,
-				`  webveil install-recipes ${set} --egress   # may be a set directory`,
-			]);
+			expect(refusal(res, cid)).toEqual({
+				description: 'Next:',
+				commands: [
+					cta(`${archive} --egress`, true),
+					cta(`${set} --egress`, false),
+				],
+			});
 			expect(requested).toEqual([carPath(cid)]);
 			expect(socks.seen).toEqual([{target: authority()}]);
 		});
 
-		it('--proxy: suggests `--proxy <url>`, never the typed URL or its credentials', async () => {
+		it('TOON output (the default off a terminal): the code, a one-line message, the commands as data', async () => {
+			torEgress();
+			const {cid, archive, set} = serveReleaseFolder();
+			const {api} = installApi();
+			const res = await run(
+				['install-recipes', `ipfs://${cid}`, '--egress'],
+				deps(api),
+				{format: 'toon'},
+			);
+			expect(res.code).toBe(1);
+			const lines = res.out.trimEnd().split('\n');
+			expect(lines[0]).toBe('code: NOT_A_RECIPE_SET');
+			// The message on one line, with no escaped newline in it.
+			const message = lines.filter((l) => l.startsWith('message: '));
+			expect(message).toHaveLength(1);
+			expect(message[0]).toMatch(
+				/^message: "webveil install-recipes: .* is not a recipe set directory; it holds .*\. Nothing was installed\."$/,
+			);
+			expect(res.out).not.toContain('\\n');
+			// The call-to-actions: a TOON table, one row per command.
+			expect(lines.slice(2)).toEqual([
+				'cta:',
+				'  description: "Next:"',
+				'  commands[2]{command,description}:',
+				`    "webveil install-recipes ${archive} --egress",a release archive`,
+				`    "webveil install-recipes ${set} --egress",may be a set directory`,
+			]);
+		});
+
+		it('in a terminal: "Error (NOT_A_RECIPE_SET): ..." then a Next: list, one command per line', async () => {
+			torEgress();
+			const {cid, archive, set} = serveReleaseFolder();
+			const {api} = installApi();
+			const res = await run(
+				['install-recipes', `ipfs://${cid}`, '--egress'],
+				deps(api),
+				{tty: true},
+			);
+			expect(res.code).toBe(1);
+			const lines = res.out.trimEnd().split('\n');
+			expect(lines[0]).toMatch(
+				/^Error \(NOT_A_RECIPE_SET\): webveil install-recipes: .* is not a recipe set directory; /,
+			);
+			expect(lines[0]).toContain(LISTING);
+			const a = `webveil install-recipes ${archive} --egress`;
+			const s = `webveil install-recipes ${set} --egress`;
+			const width = Math.max(a.length, s.length);
+			expect(lines.slice(1)).toEqual([
+				'',
+				'Next:',
+				`  ${a.padEnd(width)}  # a release archive`,
+				`  ${s.padEnd(width)}  # may be a set directory`,
+			]);
+		});
+
+		it('--proxy: suggests `--proxy <url>`, never the typed URL or its credentials, in any output', async () => {
 			torEgress();
 			const {cid, archive, set} = serveReleaseFolder();
 			const typed = socks.url.replace('socks5://', 'socks5h://user:secret@');
 			const {api} = installApi();
-			const res = await run(
-				['install-recipes', `ipfs://${cid}`, '--proxy', typed],
-				deps(api),
+			const argv = ['install-recipes', `ipfs://${cid}`, '--proxy', typed];
+			const res = await run(argv, deps(api));
+			expect(refusal(res, cid)).toEqual({
+				description: 'Next (put your proxy URL in place of <url>):',
+				commands: [
+					cta(`${archive} --proxy <url>`, true),
+					cta(`${set} --proxy <url>`, false),
+				],
+			});
+			const others = [
+				await run(argv, deps(api), {format: 'toon'}),
+				await run(argv, deps(api), {tty: true}),
+			];
+			for (const {out, code, log} of [res, ...others]) {
+				expect(code).toBe(1);
+				expect(out).toContain('--proxy <url>');
+				expect(out + log.join('\n')).not.toContain('secret');
+				expect(out).not.toContain(new URL(socks.url).host);
+			}
+			expect(socks.seen).toEqual(
+				Array(3).fill({target: authority(), user: 'user', password: 'secret'}),
 			);
-			expect(res.out).not.toContain('secret');
-			expect(res.out).not.toContain(new URL(socks.url).host);
-			expect(refusal(res, cid)).toEqual([
-				`  webveil install-recipes ${archive} --proxy <url>   # a release archive`,
-				`  webveil install-recipes ${set} --proxy <url>   # may be a set directory`,
-				'(give your proxy URL in place of <url>)',
-			]);
-			expect(socks.seen).toEqual([
-				{target: authority(), user: 'user', password: 'secret'},
-			]);
 		});
 
 		it('--direct with typed gateways, --name and --force: repeated as typed', async () => {
@@ -1104,10 +1212,13 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 				deps(api),
 			);
 			const flags = `--direct --ipfs-gateway ${gateway()} --name release --force`;
-			expect(refusal(res, cid)).toEqual([
-				`  webveil install-recipes ${archive} ${flags}   # a release archive`,
-				`  webveil install-recipes ${set} ${flags}   # may be a set directory`,
-			]);
+			expect(refusal(res, cid)).toEqual({
+				description: 'Next:',
+				commands: [
+					cta(`${archive} ${flags}`, true),
+					cta(`${set} ${flags}`, false),
+				],
+			});
 			expect(socks.seen).toEqual([]);
 		});
 
@@ -1119,9 +1230,9 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 				['install-recipes', `ipfs://${cid}`, '--egress', '--sha256', sha],
 				deps(api),
 			);
-			expect(refusal(res, cid)).toEqual([
-				`  webveil install-recipes ${archive} --sha256 ${sha} --egress   # a release archive`,
-				`  webveil install-recipes ${set} --egress   # may be a set directory`,
+			expect(refusal(res, cid).commands).toEqual([
+				cta(`${archive} --sha256 ${sha} --egress`, true),
+				cta(`${set} --egress`, false),
 			]);
 		});
 
@@ -1129,16 +1240,17 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 			torEgress();
 			const {cid, sha} = serveReleaseFolder();
 			const {api} = installApi();
-			const lines = refusal(
+			const {commands} = refusal(
 				await run(
 					['install-recipes', `ipfs://${cid}`, '--egress', '--sha256', sha],
 					deps(api),
 				),
 				cid,
 			);
-			for (const line of lines) {
+			expect(commands).toHaveLength(2);
+			for (const {command} of commands) {
 				rmSync(dataHome, {recursive: true, force: true});
-				const argv = line.split('#')[0]!.trim().split(/\s+/).slice(1);
+				const argv = command.split(/\s+/).slice(1);
 				const res = await run(argv, deps(api));
 				expect(res.out).toMatch(/"status": "installed"/);
 				expect(readFileSync(join(setDir(), 'web.json'), 'utf8')).toBe(RECIPE);
@@ -1147,7 +1259,26 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 			expect(socks.seen.every(({target}) => target === authority())).toBe(true);
 		});
 
-		it('another refusal (--sha256 on a set directory) is unchanged', async () => {
+		it('the library API still throws an InstallError with the suggestions, its message naming no command', async () => {
+			torEgress();
+			const {cid, archive, set} = serveReleaseFolder();
+			const {api} = installApi();
+			const error = await installRecipes(
+				`ipfs://${cid}`,
+				{egress: true},
+				{...deps(api), log: () => {}},
+			).catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(realInstall.InstallError);
+			const {message, suggestions} = error as realInstall.InstallError;
+			expect(message).toMatch(/^webveil install-recipes: /);
+			expect(message.endsWith(LISTING)).toBe(true);
+			expect(suggestions).toEqual([
+				{source: archive, kind: 'archive'},
+				{source: set, kind: 'set-directory'},
+			]);
+		});
+
+		it('another refusal (--sha256 on a set directory) is INSTALL_FAILED, without call-to-actions', async () => {
 			torEgress();
 			const {set} = serveReleaseFolder();
 			const {api} = installApi();
@@ -1156,11 +1287,13 @@ describe('webveil install-recipes ipfs:// (a local fake trustless gateway)', () 
 				deps(api),
 			);
 			expect(res.code).toBe(1);
-			const {message} = JSON.parse(res.out);
-			expect(message).toMatch(
+			const error = JSON.parse(res.out);
+			expect(error.code).toBe('INSTALL_FAILED');
+			expect(error).not.toHaveProperty('cta');
+			expect(error.message).toMatch(
 				/^--sha256 pins .*ipfs:\/\/.* leave --sha256 out/,
 			);
-			expect(message).not.toMatch(/webveil install-recipes|Try/);
+			expect(error.message).not.toMatch(/webveil install-recipes|Try/);
 		});
 	});
 

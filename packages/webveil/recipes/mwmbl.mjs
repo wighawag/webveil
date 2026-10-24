@@ -16,8 +16,8 @@
 // (they name the URL): keep that in mind when you log failures.
 //
 // Bundled with webveil as the first engine of the default chain
-// (`["mwmbl", "marginalia"]`, used when no engines, recipes or code recipes
-// are configured; owner-approved on 2026-09-30). Source: a copy of searchcast's
+// (`["mwmbl", "marginalia", "wiby"]` since 2026-10-24, used when no engines,
+// recipes or code recipes are configured; owner-approved on 2026-09-30). Source: a copy of searchcast's
 // examples/recipes/mwmbl.mjs at commit
 // 7b0dbde7daf7b50cf99f6b7846b75e34db18602f
 // (https://github.com/wighawag/searchcast/blob/7b0dbde7daf7b50cf99f6b7846b75e34db18602f/examples/recipes/mwmbl.mjs).

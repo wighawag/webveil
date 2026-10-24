@@ -247,6 +247,27 @@
 // - `usesDefaultSearchcastChain` is exported for `webveil doctor`
 //   (setup.ts), which adds a `defaultChain` notice when this chain is in use.
 //
+// Recorded decisions (task bundled-wiby-wikipedia; owner approval 2026-10-24
+// to name Wiby and Wikipedia):
+// - The default chain is `["mwmbl", "marginalia", "wiby"]`, from three
+//   bundled code recipes (`recipes/wiby.mjs` added last). Wikipedia is NOT
+//   bundled: the Wikimedia Foundation API Usage Guidelines require operators
+//   to follow the User-Agent policy, which says "Do not copy a browser's user
+//   agent for your bot", while searchcast's strict impersonation sends
+//   exactly a browser's. The policy's exception covers JavaScript that runs
+//   inside a browser, which webveil is not, so the request is not clearly
+//   within the policy, and strict impersonation is never weakened to fit one.
+//   Alternative considered: a `kind: 'fetch'` from en.wikipedia.org with an
+//   `Api-User-Agent` author header (what the policy asks of in-browser
+//   scripts); rejected, since the User-Agent would still be a copied
+//   browser's (see work/notes/observations/2026-10-24-wikipedia-user-agent-policy.md).
+// - `recipes/wiby.mjs` is webveil's own (searchcast has no Wiby example), so
+//   its header records the documents it was written from instead of a
+//   searchcast commit.
+// - The identity key of the default chain hashes the three files and the new
+//   `engines`, so a user of the previous default starts one fresh state
+//   partition, as in task default-chain-mwmbl.
+//
 // Recorded decisions (task browser-engine-prefix; the old spelling and its
 // warning: spellings.ts):
 // - A browser engine is named `browser:<recipe>`. The old `searchcast:<recipe>`
@@ -371,23 +392,29 @@ const bundled = (file: string) =>
 /**
  * The code recipes of the default chain, shipped in the webveil package
  * (`recipes/mwmbl.mjs` and `recipes/marginalia.mjs`, copies of searchcast's
- * examples). Trusted because they ship with webveil.
+ * examples, and `recipes/wiby.mjs`, webveil's own). Trusted because they ship
+ * with webveil.
  */
 export const BUNDLED_RECIPES: readonly string[] = [
 	bundled('mwmbl.mjs'),
 	bundled('marginalia.mjs'),
+	bundled('wiby.mjs'),
 ];
 /** The default engine chain: the bundled recipes' engines, in order. */
-export const DEFAULT_ENGINES: readonly string[] = ['mwmbl', 'marginalia'];
+export const DEFAULT_ENGINES: readonly string[] = [
+	'mwmbl',
+	'marginalia',
+	'wiby',
+];
 
 /**
  * What `webveil doctor` says while the default chain is in use: a notice, not
  * a problem (the default works), pointing to recipes.
  */
 export const DEFAULT_CHAIN_NOTE =
-	'the default engine chain is in use (mwmbl, then marginalia: two small ' +
-	'independent indexes through their keyless public APIs, with per-IP ' +
-	'quotas). It is a floor: webveil does much more with recipes (any ' +
+	'the default engine chain is in use (mwmbl, then marginalia, then wiby: ' +
+	'three small independent indexes through their keyless public APIs, ' +
+	'two of them with per-IP quotas). It is a floor: webveil does much more with recipes (any ' +
 	"site's search as an engine, code recipes, a browser fallback). Install " +
 	'a recipe set with `webveil install-recipes <url> --sha256 <hex>` or ' +
 	'write your own: https://github.com/wighawag/webveil#the-default-engines-and-what-recipes-add';

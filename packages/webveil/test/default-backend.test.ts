@@ -1,11 +1,12 @@
 // The default backend (task default-backend-searchcast): a fresh config is
 // the searchcast backend on `direct` egress with the bundled default chain
-// (Mwmbl then Marginalia since task default-chain-mwmbl);
+// (Mwmbl then Marginalia since task default-chain-mwmbl, then Wiby since task
+// bundled-wiby-wikipedia);
 // any user engine setting replaces that chain whole; no trust rule changes;
 // a missing library fails loud (search and fetch); a failed search and
 // `webveil doctor` say the default changed. The chain runs for real (real
-// searchcast, the real bundled recipes) against LOCAL fakes of the Mwmbl and
-// Marginalia APIs: no network.
+// searchcast, the real bundled recipes) against LOCAL fakes of the Mwmbl,
+// Marginalia and Wiby APIs: no network.
 
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {
@@ -66,10 +67,13 @@ const MARGINALIA_API = 'https://api.marginalia.nu';
 const MARGINALIA_API2 = 'https://api2.marginalia-search.com';
 const MWMBL_RECIPE = join(pkgDir, 'recipes', 'mwmbl.mjs');
 const MARGINALIA_RECIPE = join(pkgDir, 'recipes', 'marginalia.mjs');
+const WIBY_API = 'https://wiby.me/json/';
+const WIBY_RECIPE = join(pkgDir, 'recipes', 'wiby.mjs');
 /** What `describeSearchcastEngines` lists for the default chain. */
 const DEFAULT_CHAIN = [
 	{name: 'mwmbl', kind: 'code', file: MWMBL_RECIPE},
 	{name: 'marginalia', kind: 'code', file: MARGINALIA_RECIPE},
+	{name: 'wiby', kind: 'code', file: WIBY_RECIPE},
 ];
 
 let root: string;
@@ -137,19 +141,35 @@ describe('the default config', () => {
 		expect(resolveFetchTransport(config)).toBe('searchcast');
 	});
 
-	it('runs the bundled chain, Mwmbl then Marginalia, from code recipes shipped in the package', async () => {
-		expect(DEFAULT_ENGINES).toEqual(['mwmbl', 'marginalia']);
-		expect(BUNDLED_RECIPES).toEqual([MWMBL_RECIPE, MARGINALIA_RECIPE]);
+	it('runs the bundled chain, Mwmbl then Marginalia then Wiby, from code recipes shipped in the package', async () => {
+		expect(DEFAULT_ENGINES).toEqual(['mwmbl', 'marginalia', 'wiby']);
+		expect(BUNDLED_RECIPES).toEqual([
+			MWMBL_RECIPE,
+			MARGINALIA_RECIPE,
+			WIBY_RECIPE,
+		]);
 		for (const file of BUNDLED_RECIPES) expect(existsSync(file)).toBe(true);
 		expect(usesDefaultSearchcastChain(fresh())).toBe(true);
 		expect(await describeSearchcastEngines(fresh())).toEqual(DEFAULT_CHAIN);
 	});
 
-	it('records the searchcast commit each bundled recipe was copied from', () => {
-		for (const file of BUNDLED_RECIPES)
+	it('records the searchcast commit each copied recipe was copied from', () => {
+		for (const file of [MWMBL_RECIPE, MARGINALIA_RECIPE])
 			expect(readFileSync(file, 'utf8')).toMatch(
 				/github\.com\/wighawag\/searchcast\/blob\/[0-9a-f]{40}\/examples\/recipes\//,
 			);
+	});
+
+	it("records the documents and terms webveil's own Wiby recipe was written from", () => {
+		const header = readFileSync(WIBY_RECIPE, 'utf8');
+		for (const doc of [
+			'https://wiby.me/about/',
+			'https://wiby.me/json/',
+			'https://wiby.me/about/pp.html',
+		])
+			expect(header).toContain(doc);
+		expect(header).toMatch(/Read \d{4}-\d{2}-\d{2}/);
+		expect(header).toContain('Provide a link to wiby.me with the results');
 	});
 
 	it('takes a proxy egress: the unused loopback baseUrl does not trip the local-backend guard', () => {
@@ -240,7 +260,7 @@ describe('user engine settings replace the default chain whole', () => {
 		writeJson(globalPath, {searchcast: {cooldownMs: 1000}});
 		expect(
 			(await describeSearchcastEngines(fresh())).map((e) => e.name),
-		).toEqual(['mwmbl', 'marginalia']);
+		).toEqual(['mwmbl', 'marginalia', 'wiby']);
 	});
 });
 
@@ -249,6 +269,7 @@ describe('no trust rule relaxed', () => {
 		for (const codeRecipes of [
 			[MWMBL_RECIPE],
 			[MARGINALIA_RECIPE],
+			[WIBY_RECIPE],
 			['./mine.mjs'],
 		]) {
 			writeJson(join(project, 'webveil.json'), {
@@ -266,7 +287,7 @@ describe('no trust rule relaxed', () => {
 	});
 });
 
-// ---- the chain against local fakes of the Mwmbl and Marginalia APIs -------
+// ---- the chain against local fakes of the Mwmbl, Marginalia and Wiby APIs --
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -278,19 +299,38 @@ afterEach(async () => {
  * Local fakes of the APIs on one server: Mwmbl's (`/mwmbl?q=<query>`,
  * results with `content`) and Marginalia's two, the URL-keyed one
  * (`/marginalia/<key>/search/<query>`) and the current one
- * (`/marginalia2/search?query=<query>`), both with results with `description`;
+ * (`/marginalia2/search?query=<query>`), both with results with `description`,
+ * and Wiby's (`/wiby/?q=<query>`, a bare array of `{URL, Title, Snippet}`);
  * each answers 200 with results, or its given status. Returns the base URL and
  * the paths requested, in order.
  */
-async function fakeApis(status: {mwmbl?: number; marginalia?: number} = {}) {
+async function fakeApis(
+	status: {mwmbl?: number; marginalia?: number; wiby?: number} = {},
+) {
 	const paths: string[] = [];
 	server = createServer((req, res) => {
 		const path = req.url ?? '';
 		paths.push(path);
 		const url = new URL(path, 'http://fake');
 		const mwmbl = url.pathname === '/mwmbl';
-		res.statusCode = (mwmbl ? status.mwmbl : status.marginalia) ?? 200;
+		const wiby = url.pathname === '/wiby/';
+		res.statusCode =
+			(mwmbl ? status.mwmbl : wiby ? status.wiby : status.marginalia) ?? 200;
 		res.setHeader('content-type', 'application/json');
+		if (wiby) {
+			const query = url.searchParams.get('q');
+			res.end(
+				JSON.stringify([
+					{
+						URL: 'https://w.example/',
+						Title: `W about ${query}`,
+						Snippet: 'from wiby',
+						Description: '',
+					},
+				]),
+			);
+			return;
+		}
 		if (mwmbl) {
 			const query = url.searchParams.get('q');
 			res.end(
@@ -346,6 +386,8 @@ function redirectTo(
 			return `${base}/marginalia${url.slice(MARGINALIA_API.length)}`;
 		if (url.startsWith(`${MARGINALIA_API2}/`))
 			return `${base}/marginalia2${url.slice(MARGINALIA_API2.length)}`;
+		if (url.startsWith(WIBY_API))
+			return `${base}/wiby/${url.slice(WIBY_API.length)}`;
 		throw new Error(`unexpected request ${url}`);
 	};
 	return {
@@ -470,21 +512,44 @@ describe('a search through the default chain (local fake APIs, no network)', () 
 		expect(requests.at(-1)?.url).not.toContain('my');
 	});
 
-	it('a failed search names both engines, and says the default changed and how to restore SearXNG', async () => {
-		const api = await fakeApis({mwmbl: 503, marginalia: 503});
+	it('falls through to Wiby, a document request with no author headers, when Mwmbl and Marginalia fail', async () => {
+		const api = await fakeApis({mwmbl: 429, marginalia: 503});
+		const requests: {url: string; options: RequestOptions}[] = [];
+		const results = await searchFresh(redirectTo(api.base, requests));
+		expect(results).toEqual([
+			{
+				title: 'W about hello world',
+				url: 'https://w.example/',
+				snippet: 'from wiby (via Wiby, https://wiby.me/)',
+				unresponsiveEngines: ['mwmbl', 'marginalia'],
+			},
+		]);
+		expect(api.paths).toEqual([
+			'/mwmbl?q=hello%20world',
+			'/marginalia/public/search/hello%20world',
+			'/wiby/?q=hello%20world',
+		]);
+		expect(requests.at(-1)?.url).toBe(`${WIBY_API}?q=hello%20world`);
+		expect(requests.at(-1)?.options.kind).toBe('document');
+		expect(requests.at(-1)?.options.headers).toBeUndefined();
+	});
+
+	it('a failed search names every engine, and says the default changed and how to restore SearXNG', async () => {
+		const api = await fakeApis({mwmbl: 503, marginalia: 503, wiby: 503});
 		const error = await searchFresh(redirectTo(api.base)).catch(
 			(e: Error) => e,
 		);
 		expect(error).toBeInstanceOf(Error);
 		expect((error as Error).message).toMatch(/every engine failed: mwmbl/);
 		expect((error as Error).message).toMatch(/marginalia/);
+		expect((error as Error).message).toMatch(/wiby/);
 		expect((error as Error).message).toContain(DEFAULT_BACKEND_NOTE);
 		expect(DEFAULT_BACKEND_NOTE).toContain('"backend": "searxng"');
 	});
 
 	it('an explicitly chosen backend gets no such note', async () => {
 		writeJson(globalPath, {backend: 'searchcast'});
-		const api = await fakeApis({mwmbl: 503, marginalia: 503});
+		const api = await fakeApis({mwmbl: 503, marginalia: 503, wiby: 503});
 		const error = await searchFresh(redirectTo(api.base)).catch(
 			(e: Error) => e,
 		);
@@ -607,7 +672,7 @@ describe('webveil doctor with the default chain', () => {
 // ---- the published tarball ------------------------------------------------
 
 describe('the webveil tarball', () => {
-	it('ships both bundled recipes', () => {
+	it('ships every bundled recipe', () => {
 		const res = spawnSync(
 			'npm',
 			['pack', '--dry-run', '--json', '--ignore-scripts'],
@@ -618,5 +683,6 @@ describe('the webveil tarball', () => {
 		const files = pack.files.map((f) => f.path);
 		expect(files).toContain('recipes/mwmbl.mjs');
 		expect(files).toContain('recipes/marginalia.mjs');
+		expect(files).toContain('recipes/wiby.mjs');
 	});
 });

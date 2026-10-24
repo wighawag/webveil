@@ -2,8 +2,10 @@
 // Text rules for the public repo, checked over every tracked file:
 //
 //   1. No em dash (U+2014) anywhere.
-//   2. No real search engine named, except the two bundled default engines
-//      (Mwmbl and Marginalia). Examples use placeholders such as `engine-a`.
+//   2. No real search engine named, except the owner-approved ones: the
+//      bundled default engines (Mwmbl, Marginalia and Wiby) and Wikipedia
+//      (approved 2026-10-24, not bundled: see task bundled-wiby-wikipedia).
+//      Examples use placeholders such as `engine-a`.
 //
 // `work/` (notes, task records: history) and every `CHANGELOG.md` (release
 // history) are exempt, as is this file from rule 2, since it has to spell the
@@ -35,8 +37,8 @@ export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** The em dash, written as an escape so this file does not contain one. */
 export const EM_DASH = '\u2014';
 
-/** Search engines the repo may name: the bundled default engines. */
-export const APPROVED_ENGINES = ['mwmbl', 'marginalia'];
+/** Search engines the repo may name: the bundled default engines, and Wikipedia. */
+export const APPROVED_ENGINES = ['mwmbl', 'marginalia', 'wiby', 'wikipedia'];
 
 /** Search engines the repo must not name (see the decisions above). */
 export const ENGINE_DENYLIST = [

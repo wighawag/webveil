@@ -274,7 +274,8 @@ export interface ResolveOptions {
  * - The default `backend` is `searchcast` (it was `searxng`), still on
  *   `direct` egress. Its engine chain, when the user sets none, is the
  *   bundled code recipes (Mwmbl then Marginalia since task
- *   default-chain-mwmbl), filled in by the backend, not here
+ *   default-chain-mwmbl, then Wiby since task bundled-wiby-wikipedia),
+ *   filled in by the backend, not here
  *   (backends/searchcast.ts explains why: a key-by-key merge would mix a
  *   user's chain with the default one).
  * - `baseUrl` keeps its old default `http://127.0.0.1:8080`: searchcast does

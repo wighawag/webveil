@@ -39,7 +39,7 @@ describe('text rules: findViolations', () => {
 		expect(findViolations('a.md', `"${engine}", ${engine}.`)).toHaveLength(2);
 	});
 
-	it('allows the two approved engines and placeholders', () => {
+	it('allows the approved engines and placeholders', () => {
 		const text = `${(APPROVED_ENGINES as string[]).join(', ')}, engine-a, SearXNG`;
 		expect(findViolations('README.md', text)).toEqual([]);
 	});

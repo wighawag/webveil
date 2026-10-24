@@ -21,10 +21,10 @@
 // since it travels in the header.
 //
 // Bundled with webveil as the second engine of the default chain
-// (`["mwmbl", "marginalia"]`, used when no engines, recipes or code recipes
-// are configured; owner-approved on 2026-09-29 and 2026-09-30). Source: a copy
-// of searchcast's examples/recipes/marginalia.mjs at commit
-// 701584826ee5d50177c8df667329f27e949fd4aa
+// (`["mwmbl", "marginalia", "wiby"]` since 2026-10-24, used when no engines,
+// recipes or code recipes are configured; owner-approved on 2026-09-29 and
+// 2026-09-30). Source: a copy of searchcast's examples/recipes/marginalia.mjs
+// at commit 701584826ee5d50177c8df667329f27e949fd4aa
 // (https://github.com/wighawag/searchcast/blob/701584826ee5d50177c8df667329f27e949fd4aa/examples/recipes/marginalia.mjs),
 // which needs searchcast 0.3 (author headers on a `fetch` request).
 // It is trusted because it ships in the webveil package, not because of any

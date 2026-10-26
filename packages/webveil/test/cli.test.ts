@@ -7,6 +7,8 @@
 
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {spawn, spawnSync} from 'node:child_process';
+import {createServer, type Server} from 'node:http';
+import type {AddressInfo} from 'node:net';
 import {
 	existsSync,
 	mkdirSync,
@@ -151,37 +153,46 @@ describe('webveil CLI: fetch command', () => {
 const BIN = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
 /**
- * Run the built bin as an MCP stdio server, do the JSON-RPC handshake, and
- * return the tool names from `tools/list`. This exercises the REAL `--mcp` path
- * end-to-end (the same definition served as an MCP server), over the bin's own
- * stdin/stdout: no network, no live backend (we never call a tool).
+ * Run the built bin as an MCP stdio server, do the JSON-RPC handshake, send
+ * `requests` (ids 2, 3, ...) and resolve with their results in order. This
+ * exercises the REAL `--mcp` path end-to-end (the same definition served as an
+ * MCP server), over the bin's own stdin/stdout.
  */
-function mcpToolNames(): Promise<string[]> {
+function mcpExchange(
+	requests: {method: string; params?: unknown}[],
+	options: {cwd?: string; env?: NodeJS.ProcessEnv} = {},
+): Promise<unknown[]> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [BIN, '--mcp'], {
 			stdio: ['pipe', 'pipe', 'inherit'],
+			cwd: options.cwd,
+			env: options.env ?? process.env,
 		});
-		let raw = '';
+		const results = new Map<number, unknown>();
+		let buffer = '';
 		const timer = setTimeout(() => {
 			child.kill();
 			reject(new Error('--mcp server did not respond in time'));
 		}, 10_000);
 		child.stdout.on('data', (chunk: Buffer) => {
-			raw += chunk.toString();
-			for (const line of raw.split('\n')) {
+			buffer += chunk.toString();
+			const lines = buffer.split('\n');
+			buffer = lines.pop()!;
+			for (const line of lines) {
 				if (!line.trim()) continue;
-				let msg: {id?: number; result?: {tools?: {name: string}[]}};
+				let msg: {id?: number; result?: unknown; error?: unknown};
 				try {
 					msg = JSON.parse(line);
 				} catch {
 					continue;
 				}
-				if (msg.id === 2) {
-					clearTimeout(timer);
-					child.kill();
-					resolve((msg.result?.tools ?? []).map((t) => t.name));
-					return;
-				}
+				if (msg.id === undefined || msg.id < 2) continue;
+				results.set(msg.id, msg.result ?? {error: msg.error});
+			}
+			if (results.size === requests.length) {
+				clearTimeout(timer);
+				child.kill();
+				resolve(requests.map((_, i) => results.get(i + 2)));
 			}
 		});
 		child.on('error', (err) => {
@@ -201,8 +212,37 @@ function mcpToolNames(): Promise<string[]> {
 			},
 		});
 		send({jsonrpc: '2.0', method: 'notifications/initialized'});
-		send({jsonrpc: '2.0', id: 2, method: 'tools/list'});
+		requests.forEach((request, i) =>
+			send({jsonrpc: '2.0', id: i + 2, ...request}),
+		);
 	});
+}
+
+/** The tool names from `tools/list` (no tool is called: no backend needed). */
+async function mcpToolNames(): Promise<string[]> {
+	const [list] = (await mcpExchange([{method: 'tools/list'}])) as [
+		{tools?: {name: string}[]},
+	];
+	return (list.tools ?? []).map((t) => t.name);
+}
+
+/** A local HTTP server answering every request with `body` (JSON); logs URLs. */
+async function fakeServer(
+	body: unknown,
+): Promise<{url: string; requests: string[]; close(): Promise<void>}> {
+	const requests: string[] = [];
+	const server: Server = createServer((req, res) => {
+		requests.push(req.url ?? '');
+		res.writeHead(200, {'content-type': 'application/json'});
+		res.end(JSON.stringify(body));
+	});
+	await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+	const {port} = server.address() as AddressInfo;
+	return {
+		url: `http://127.0.0.1:${port}`,
+		requests,
+		close: () => new Promise<void>((r) => server.close(() => r())),
+	};
 }
 
 describe('webveil CLI: state clear command', () => {
@@ -233,6 +273,139 @@ describe('webveil CLI: MCP frontend (--mcp)', () => {
 			const names = await mcpToolNames();
 			expect(names).toContain('search');
 			expect(names).toContain('fetch');
+		},
+	);
+
+	// incur >= 0.4.15 defaults to progressive discovery (`search_tools`, ...);
+	// webveil keeps each command as its own tool (cli.ts, `discovery: 'direct'`).
+	it.skipIf(!existsSync(BIN))(
+		'serves each command as its own tool, not incur discovery tools',
+		async () => {
+			expect((await mcpToolNames()).sort()).toEqual([
+				'fetch',
+				'search',
+				'state_clear',
+			]);
+		},
+	);
+
+	let dir: string | undefined;
+	let backend: Awaited<ReturnType<typeof fakeServer>> | undefined;
+	afterEach(async () => {
+		await backend?.close();
+		if (dir) rmSync(dir, {recursive: true, force: true});
+		backend = dir = undefined;
+	});
+
+	it.skipIf(!existsSync(BIN))(
+		'answers a `search` tool call from the configured backend (a fake SearXNG)',
+		async () => {
+			backend = await fakeServer({
+				results: [
+					{url: 'https://example.com/mcp-hit', title: 'MCP hit', content: 'x'},
+				],
+			});
+			dir = mkdtempSync(join(tmpdir(), 'webveil-mcp-'));
+			writeFileSync(
+				join(dir, 'webveil.json'),
+				JSON.stringify({backend: 'searxng', baseUrl: backend.url}),
+			);
+			const env = Object.fromEntries(
+				Object.entries(process.env).filter(([k]) => !k.startsWith('WEBVEIL_')),
+			);
+			const [result] = (await mcpExchange(
+				[
+					{
+						method: 'tools/call',
+						params: {name: 'search', arguments: {query: 'webveil mcp'}},
+					},
+				],
+				{
+					cwd: dir,
+					env: {
+						...env,
+						XDG_CONFIG_HOME: join(dir, 'xdg'),
+						XDG_STATE_HOME: join(dir, 'state'),
+					},
+				},
+			)) as [{isError?: boolean; content?: {text: string}[]}];
+			expect(result.isError).not.toBe(true);
+			expect(JSON.stringify(result.content)).toContain(
+				'https://example.com/mcp-hit',
+			);
+			expect(backend.requests).toHaveLength(1);
+			expect(backend.requests[0]).toContain('q=webveil+mcp');
+		},
+	);
+});
+
+// The incur surfaces besides the commands, on the built bin: help, the LLM
+// manifest, the skills listing, and no update check of its own.
+describe('webveil CLI: incur built-ins', () => {
+	const bin = (args: string[], env: NodeJS.ProcessEnv = process.env) =>
+		spawnSync(process.execPath, [BIN, ...args], {
+			encoding: 'utf8',
+			timeout: 10_000,
+			env,
+		});
+
+	it.skipIf(!existsSync(BIN))('--help lists the commands', () => {
+		const res = bin(['--help']);
+		expect(res.status).toBe(0);
+		for (const name of ['search', 'fetch', 'state', 'doctor'])
+			expect(res.stdout).toMatch(new RegExp(`^\\s+${name}\\s`, 'm'));
+		const search = bin(['search', '--help']);
+		expect(search.status).toBe(0);
+		expect(search.stdout).toContain('Usage: webveil search <query>');
+	});
+
+	it.skipIf(!existsSync(BIN))('--llms prints the manifest', () => {
+		const res = bin(['--llms']);
+		expect(res.status).toBe(0);
+		expect(res.stdout).toContain('`webveil search <query>`');
+		expect(res.stdout).toContain('`webveil fetch <url>`');
+		expect(res.stdout).toContain('`webveil state clear`');
+	});
+
+	it.skipIf(!existsSync(BIN))('skills list names the generated skills', () => {
+		const res = bin(['skills', 'list']);
+		expect(res.status).toBe(0);
+		expect(res.stdout).toContain('webveil-search');
+		expect(res.stdout).toContain('webveil-fetch');
+	});
+
+	// incur >= 0.4.21 refreshes its update cache in a detached copy of the bin
+	// started with this hidden flag; it would ask the npm registry directly,
+	// outside the egress. webveil turns it off (cli.ts, `update: false`).
+	let registry: Awaited<ReturnType<typeof fakeServer>> | undefined;
+	let dir: string | undefined;
+	afterEach(async () => {
+		await registry?.close();
+		if (dir) rmSync(dir, {recursive: true, force: true});
+		registry = dir = undefined;
+	});
+
+	it.skipIf(!existsSync(BIN))(
+		'never asks the npm registry for a newer version',
+		async () => {
+			registry = await fakeServer({'dist-tags': {latest: '999.0.0'}});
+			dir = mkdtempSync(join(tmpdir(), 'webveil-update-'));
+			const env = {
+				...process.env,
+				npm_config_registry: registry.url,
+				XDG_CACHE_HOME: dir,
+			};
+			// Async spawn: the fake registry answers from this process.
+			const status = await new Promise<number | null>((resolve) => {
+				const child = spawn(process.execPath, [BIN, '--incur-update-check'], {
+					env,
+					stdio: 'ignore',
+				});
+				child.on('exit', resolve);
+			});
+			expect(status).toBe(0);
+			expect(registry.requests).toEqual([]);
+			expect(existsSync(join(dir, 'incur'))).toBe(false);
 		},
 	);
 });

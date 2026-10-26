@@ -633,7 +633,12 @@ describe('searchcast backend: one cached instance per identity', () => {
 					if (msg.id !== undefined) replies.set(msg.id, msg.result);
 				}
 		});
-		await Mcp.serve('webveil', '0.0.0', commands, {input, output});
+		// `tools`: the bin's own MCP option (cli.ts), so `search` is a tool.
+		await Mcp.serve('webveil', '0.0.0', commands, {
+			input,
+			output,
+			tools: {discovery: 'direct'},
+		});
 		const send = (msg: unknown) => input.write(JSON.stringify(msg) + '\n');
 		const reply = async (id: number) => {
 			for (let i = 0; i < 200 && !replies.has(id); i++)

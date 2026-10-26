@@ -239,9 +239,33 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 		},
 	});
 
+	// Recorded decision (task upgrade-incur-0-7): `--mcp` keeps serving each
+	// command as its own MCP tool (`search`, `fetch`, `state_clear`). incur
+	// 0.4.15 made progressive discovery the default (four meta tools,
+	// `search_tools`/`get_tool_details`/`call_read_tool`/`call_write_tool`,
+	// instead of the commands), which would rename every tool an MCP client and
+	// the README know. With three small tools there is no schema bulk for
+	// progressive discovery to save. Alternative: adopt the new default, a
+	// breaking change for every configured MCP client.
+	//
+	// Recorded decision (task upgrade-incur-0-7): `update: false`. Since 0.4.21
+	// incur checks for a newer version on its own: a terminal run starts, once a
+	// day, a detached copy of the bin that asks registry.npmjs.org directly,
+	// outside the configured egress (a Tor or proxy user would leak their address
+	// and the fact they run webveil), and writes ~/.cache/incur/updates. webveil
+	// makes no request the user did not route, so the check is off. incur keeps
+	// the typed `--update` flag (`npm install --global webveil@latest`, through
+	// npm's own network settings): it runs only when typed, like `npm install`,
+	// though unlike the install commands it is not refused under a proxy egress
+	// (incur lists it in `--help` even with `update: false`).
+	// Alternative: intercept `--update` in `serveCli` and refuse it, a new
+	// refusal for a flag the user asked for by name and `--help` still lists.
+	// See work/notes/observations/2026-10-26-upgrade-incur-0-7-decisions.md.
 	const cli = Cli.create('webveil', {
 		description:
 			'Anonymous-capable, self-hosted, account-free web search + fetch for agents.',
+		mcp: {tools: {discovery: 'direct'}},
+		update: false,
 	})
 		.command('search', {
 			description: 'Search the web via the configured backend and egress.',

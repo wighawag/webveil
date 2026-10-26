@@ -37,8 +37,10 @@ webveil uses its networked `distilly/fetch` entrypoint with an injected egress f
   egress (`custom` and `searchcast` own their I/O and leave it unused).
 - **egress seam**: how outbound HTTP leaves the machine, one of `direct`, `http` (undici
   ProxyAgent, zero extra deps), or `socks5` (Tor `127.0.0.1:9050`, Mullvad
-  `10.64.0.1:1080`, via `socks-proxy-agent`). SOCKS5 is the mode that matters for
-  anonymity. Fail-loud if a configured proxy cannot be built (never silently un-proxied).
+  `10.64.0.1:1080`, via `fetch-socks`, which yields an undici dispatcher, the shape the
+  egress-bound `fetch` needs). SOCKS5 is the mode that matters for anonymity. The SOCKS
+  url may be `socks5://`, `socks://` or `socks5h://`; all three behave the same and
+  resolve host names at the proxy, never locally. Fail-loud if a configured proxy cannot be built (never silently un-proxied).
   Yields BOTH a proxied `http` helper (for backends) AND an egress-bound WHATWG `fetch`
   (undici `fetch` over the same dispatcher) injected into `distilly/fetch`. The SSRF
   guard lives in that egress fetch, so it covers distilly's rule-rewritten requests too.
@@ -74,7 +76,7 @@ pnpm workspace monorepo with two published packages: `packages/webveil` (the CLI
 tool, has a `webveil` bin) and `packages/pi-webveil` (the pi extension, depends on
 `webveil` via `workspace:*`). TypeScript (NodeNext, strict), `tsc` build, vitest, prettier
 (tabs, single quotes, no bracket spacing). Key deps: `incur` (CLI/MCP framework),
-`distilly` (extraction), `socks-proxy-agent` (SOCKS egress); undici (in Node) for HTTP
+`distilly` (extraction), `fetch-socks` (SOCKS egress, an undici dispatcher); undici (in Node) for HTTP
 proxy.
 
 The `searchcast` backend adds `searchcast` and `@searchcast/recipe` (the engine layer and its recipe format, installed with webveil; `searchcast` brings the pinned libcurl-impersonate as its optional dependency `@searchcast/libcurl-<platform>` on supported platforms) and, optionally, `@searchcast/browser` (the browser fallback in library mode, an optional peer, not installed with webveil).

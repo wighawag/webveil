@@ -577,6 +577,8 @@ or per folder in `webveil.json`:
 { "egress": { "mode": "socks5", "url": "socks5://10.64.0.1:1080" } }
 ```
 
+The SOCKS url may be `socks5://`, `socks://` or `socks5h://`. webveil treats all three the same: host names are always resolved at the proxy, never locally, so `socks5://` does not leak DNS to your local resolver and `socks5h://` is accepted but not required.
+
 > **`egress: socks5` is for a REMOTE backend, NOT a local SearXNG.** If your `baseUrl` is
 > a local SearXNG (`unix:` or loopback like `127.0.0.1` / `localhost`),
 > `WEBVEIL_EGRESS=socks5` is **rejected** (fail-loud), because webveil → local-SearXNG is

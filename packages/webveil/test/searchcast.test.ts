@@ -523,13 +523,13 @@ describe('searchcast backend: state persisted per identity (as between CLI calls
 		await searchWith(fakeFactory().create, socks);
 		const options = {cwd, globalPath};
 		expect(
-			await clearSearchcastState({...options, env: {...process.env}}),
+			(await clearSearchcastState({...options, env: {...process.env}})).cleared,
 		).toEqual([keyOf()]);
 		expect(existsSync(partitionDir(keyOf()))).toBe(false);
 		expect(existsSync(partitionDir(keyOf(socks)))).toBe(true);
 		await searchWith(fakeFactory().create);
 		expect(
-			(await clearSearchcastState({...options, all: true})).sort(),
+			(await clearSearchcastState({...options, all: true})).cleared.sort(),
 		).toEqual([keyOf(), keyOf(socks)].sort());
 		expect(readdirSync(stateRoot())).toEqual([]);
 	});
@@ -539,7 +539,10 @@ describe('searchcast backend: state persisted per identity (as between CLI calls
 		const key = searchcastIdentityKey(resolveConfig({cwd, globalPath, env}));
 		mkdirSync(partitionDir(key), {recursive: true});
 		writeFileSync(join(partitionDir(key), 'state.json'), '{}');
-		expect(await clearSearchcastState({cwd, globalPath, env})).toEqual([key]);
+		expect(await clearSearchcastState({cwd, globalPath, env})).toEqual({
+			cleared: [key],
+			kept: [],
+		});
 		expect(existsSync(partitionDir(key))).toBe(false);
 	});
 

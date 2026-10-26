@@ -225,17 +225,43 @@ export function createCli(deps: CliDeps = {}, options: CliOptions = {}) {
 	// is a `state` group (room for later state verbs) and, like every command,
 	// also an MCP tool: clearing only drops sessions, so an agent may do it.
 	// Alternative: a CLI-only flag on `search`, rejected as mixing two jobs.
+	//
+	// Recorded decision (task state-clear-keeps-owned-profile): a partition whose
+	// browser profile another live process owns is kept in part (state.ts
+	// `clearState`) and listed under `kept` as `{identity, pid}`; the output
+	// then also carries a `hint` string saying how to remove it (stop that
+	// process, or `--force`, the MCP tool's `force` argument). `kept` is always
+	// present (an empty list when nothing was kept), `hint` only when it is not
+	// empty. The hint is data, not an incur call-to-action, so an MCP client
+	// sees it too. Alternative considered: a stderr warning, rejected because
+	// it is lost over MCP and in a pipe.
 	const state = Cli.create('state', {
 		description:
 			'Persisted searchcast state (sessions, cooldowns) per identity.',
 	}).command('clear', {
 		description:
-			"Clear the current identity's state (this folder's egress and searchcast config), or every identity with --all.",
+			"Clear the current identity's state (this folder's egress and searchcast config), or every identity with --all. A browser profile another running webveil process owns is kept (listed under kept) unless --force.",
 		options: z.object({
 			all: z.boolean().optional().describe('Clear every identity'),
+			force: z
+				.boolean()
+				.optional()
+				.describe(
+					'Also remove a browser profile another running webveil process owns',
+				),
 		}),
 		async run(c) {
-			return {cleared: await clearState({all: c.options.all})};
+			const {cleared, kept} = await clearState({
+				all: c.options.all,
+				force: c.options.force,
+			});
+			if (kept.length === 0) return {cleared, kept};
+			const pids = [...new Set(kept.map((k) => k.pid))].join(', ');
+			return {
+				cleared,
+				kept,
+				hint: `Kept the browser profile of ${kept.length === 1 ? 'an identity' : `${kept.length} identities`} owned by a running webveil process (pid ${pids}); its other state was cleared. To remove the profile too, stop that process, or clear again with --force (MCP: force: true).`,
+			};
 		},
 	});
 

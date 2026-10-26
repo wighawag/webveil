@@ -28,3 +28,11 @@ covers: []
 Origin: observation `state-clear-ignores-profile-owner` (delete it once resolved). Human decision (2026-10-26): keep the owned profile and say so, `--force` to override; neither refuse the whole command nor only document. Reuse the owner and liveness helpers in the state module; do not duplicate the liveness rule.
 
 FIRST, check this task against current reality (launch snapshot; may have drifted). RECORD non-obvious in-scope decisions.
+
+## Decisions
+
+These are recorded in the JSDoc on `clearState` in `state.ts` and in the comment above `state` in `cli.ts`.
+1. **A kept partition is listed only under `kept`, not also under `cleared`.** `cleared` keeps meaning "the directory is gone". The alternative was listing it in both. This affects the CLI and MCP output.
+2. **A kept partition leaves the lock's own entries alone** (`state.lock` and any `state.lock.*`), because removing a waiter's half-built lock would make its lock attempt fail.
+3. **Breaking library change:** `clearState` and `clearSearchcastState` now return `{cleared, kept}` instead of a list of ids, and `clearState`'s third argument is now `{force, lock}` instead of the lock timing alone. The package is 0.x, so a minor bump allows this, and the changeset says so.
+4. **The hint is a `hint` field in the output** (present only when something was kept), not an incur call-to-action or a stderr warning, so MCP clients and pipes see it too.

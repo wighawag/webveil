@@ -152,13 +152,23 @@
 // - The trust rule is unchanged: `set:` is a value, the key decides. A
 //   `codeRecipes` entry from a project `webveil.json` is refused whatever its
 //   form; a `recipes` entry (data) may name a set from any layer.
-// - A `recipes` directory that is an installed set (directly under
-//   `recipesDir()`, by `set:` or by path, or holding serpcast's `.source.json`)
-//   loads its `*.json` files except hidden ones (`.source.json`) and
-//   `manifest.json`, which serpcast-recipe's `loadRecipes` would otherwise
-//   parse as recipes and fail on. The location counts, not only the marker,
-//   because a set placed declaratively (home-manager `xdg.dataFile` from
-//   `fetchzip`) has no `.source.json`. Other directories load as before.
+// - A `recipes` directory loads its `*.json` files except hidden ones (an
+//   installed set's `.source.json`) and `manifest.json`: @searchcast/recipe's
+//   `loadRecipes` rule since 0.1.1 (searchcast 0.5.0), so an installed set
+//   loads as just its recipes wherever it is, placed declaratively
+//   (home-manager `xdg.dataFile` from `fetchzip`, no `.source.json`) or not.
+//   Decision (task drop-recipe-metadata-workaround, 2026-10-26): webveil used
+//   to detect a set itself (by location or `.source.json`) and skip its
+//   metadata only there, because serpcast-recipe loaded every `*.json`; that
+//   workaround is gone and every directory follows the library's rule, so a
+//   non-set directory's `manifest.json` or hidden `*.json` is now skipped too,
+//   as `searchcast serve --recipes <dir>` does. The files are still listed
+//   here (`declarativePaths`, the same rule) and loaded one by one with
+//   `loadRecipeFile`, because `webveil doctor` reports each recipe's file and
+//   `loadRecipes` returns only the recipes. Alternatives: load with
+//   `loadRecipes` and report the directory as the file (changes doctor's
+//   output), or derive the file from the recipe name (wrong for a recipe
+//   whose JSON declares another name).
 // - Recipes that declare `decoyProne` (serpcast 0.4) need nothing here:
 //   searchcast guards them itself, and `decoyGuard` stays an addition.
 // - The `WEBVEIL_SEARCHCAST_CODE_RECIPES` split (config.ts) keeps `set:<name>`
@@ -200,8 +210,7 @@
 // - A `set:<name>` entry is resolved with searchcast's `recipeSetDir`: the set
 //   in `$XDG_DATA_HOME/searchcast/recipes`, else in serpcast's old
 //   `$XDG_DATA_HOME/serpcast/recipes` (read for one release), so a set
-//   installed by serpcast keeps working. The old recipes directory counts as a
-//   set location for `declarativePaths` too. The missing-set error names the
+//   installed by serpcast keeps working. The missing-set error names the
 //   new directory (where `webveil install-recipes` writes).
 // - Identity keys: a `set:` entry is resolved to its path before it is hashed
 //   (as before), so a config naming a set now installed in the new directory
@@ -318,8 +327,8 @@
 //   `searchcast:x` gets the unknown-engine error, with a hint naming the new
 //   prefix: library callers are not rewritten, like the other old spellings.
 
-import {existsSync, readdirSync, statSync} from 'node:fs';
-import {dirname, join} from 'node:path';
+import {readdirSync, statSync} from 'node:fs';
+import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {RecipeError} from '@searchcast/recipe';
 import {loadRecipeFile} from '@searchcast/recipe/node';
@@ -329,7 +338,6 @@ import {
 	DEFAULT_SESSION_IDLE_MS,
 	isCodeRecipe,
 	loadCodeRecipe,
-	oldDataDir,
 	recipeSetDir,
 	recipesDir,
 	SearchcastError,
@@ -390,13 +398,6 @@ const BROWSER = BROWSER_PREFIX;
 const RESERVED = [BROWSER_PREFIX, OLD_BROWSER_PREFIX];
 /** The prefix of an installed recipe set entry in `recipes`/`codeRecipes`. */
 const SET = 'set:';
-/** What `install-recipes` writes beside a set's recipes. */
-const SOURCE_FILE = '.source.json';
-/**
- * Where installed sets live: searchcast's recipes directory, then searchcast's
- * old one (read, never written, for one release: searchcast's ADR 0005).
- */
-const SET_BASES = () => [recipesDir(), join(oldDataDir(), 'recipes')];
 /** The optional browser-runner package library-mode engines need. */
 const BROWSER_PACKAGE = '@searchcast/browser';
 const SOCKS = ['socks5', 'socks', 'socks5h'];
@@ -527,21 +528,20 @@ function resolveRecipePath(config: Config, key: string, value: string): string {
 }
 
 /**
- * A `recipes` entry as its recipe files: a file as is, a directory as every
- * `*.json` inside, sorted (@searchcast/recipe's `loadRecipes` rule); an
- * installed set directory (directly under `recipesDir()` or serpcast's old
- * recipes directory, or holding the installer's `.source.json`) without
- * hidden files (`.source.json`) and the set's `manifest.json`, which are not
- * recipes.
+ * A `recipes` entry as its recipe files, by @searchcast/recipe 0.1.1's
+ * `loadRecipes` rule: a file as is, a directory as every `*.json` inside,
+ * sorted, except hidden files and `manifest.json` (an installed set's
+ * metadata). Listed here rather than loaded with `loadRecipes` only because
+ * `webveil doctor` names each recipe's file, which `loadRecipes` does not
+ * return (see the decisions above).
  */
 function declarativePaths(path: string): string[] {
 	if (!statSync(path).isDirectory()) return [path];
-	const isSet =
-		SET_BASES().includes(dirname(path)) || existsSync(join(path, SOURCE_FILE));
 	return readdirSync(path)
 		.sort()
-		.filter((f) => f.endsWith('.json'))
-		.filter((f) => !isSet || (!f.startsWith('.') && f !== 'manifest.json'))
+		.filter(
+			(f) => f.endsWith('.json') && !f.startsWith('.') && f !== 'manifest.json',
+		)
 		.map((f) => join(path, f));
 }
 

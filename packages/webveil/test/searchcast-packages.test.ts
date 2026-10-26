@@ -59,8 +59,8 @@ describe('webveil depends on searchcast, not serpcast', () => {
 			...pkg.optionalDependencies,
 		};
 		expect(Object.keys(all).filter((name) => OLD.test(name))).toEqual([]);
-		expect(pkg.dependencies.searchcast).toBe('^0.4.2');
-		expect(pkg.dependencies['@searchcast/recipe']).toBe('^0.1.0');
+		expect(pkg.dependencies.searchcast).toBe('^0.5.0');
+		expect(pkg.dependencies['@searchcast/recipe']).toBe('^0.1.1');
 		expect(pkg.peerDependencies).toEqual({
 			'@searchcast/browser': '>=0.1.0 <0.2.0',
 		});
@@ -73,6 +73,6 @@ describe('webveil depends on searchcast, not serpcast', () => {
 		const lock = readFileSync(join(repo, 'pnpm-lock.yaml'), 'utf8');
 		expect(lock).not.toMatch(/(^|[\s'"/])serpcast(-recipe)?@/m);
 		expect(lock).not.toMatch(/^\s+serpcast(-recipe)?:/m);
-		expect(lock).toMatch(/^\s+searchcast@0\.4\.\d+/m);
+		expect(lock).toMatch(/^\s+searchcast@0\.5\.\d+/m);
 	});
 });

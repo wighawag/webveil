@@ -884,6 +884,30 @@ export default {
 		expect(results[0]!.url).toBe('https://web.example/hit');
 	});
 
+	it("skips any directory's manifest.json and hidden files, as @searchcast/recipe's loadRecipes does, and loads a file named explicitly", async () => {
+		// A set copied elsewhere (not under a data directory, no .source.json).
+		const dir = join(root, 'elsewhere', 'copied');
+		writeRecipe(join(dir, 'web.json'), 'web');
+		writeJson(join(dir, 'manifest.json'), {name: 'copied', version: '1'});
+		writeJson(join(dir, '.notes.json'), {not: 'a recipe'});
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'searchcast',
+			searchcast: {engines: ['web'], recipes: [dir]},
+		});
+		const results = await searchWith(fakeFactory().create);
+		expect(results[0]!.url).toBe('https://web.example/hit');
+		await closeSearchcastInstances();
+		// Named by path, a manifest.json is parsed (and fails: not a recipe,
+		// reported under the manifest's own `name`).
+		writeJson(join(project, 'webveil.json'), {
+			backend: 'searchcast',
+			searchcast: {engines: ['web'], recipes: [join(dir, 'manifest.json')]},
+		});
+		await expect(searchWith(fakeFactory().create)).rejects.toThrow(
+			/recipe "copied"/,
+		);
+	});
+
 	it("still finds a set in serpcast's old data directory, by set: or by path, without its manifest.json", async () => {
 		const old = join(root, 'data', 'serpcast', 'recipes', 'legacy');
 		writeRecipe(join(old, 'web.json'), 'web');

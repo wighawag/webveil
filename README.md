@@ -164,7 +164,7 @@ webveil doctor                                             # library, config, en
    }
    ```
 
-   **Keep recipes in a directory of their own.** Every `*.json` file in a recipes directory is loaded as a recipe, so any other JSON file there (for example a `webveil.json`, via `"recipes": ["."]`) fails every search with a recipe error naming that file. Try a recipe on its own with `npx searchcast query --recipe ~/.config/webveil/recipes/web.json "hello world"`.
+   **Keep recipes in a directory of their own.** Every `*.json` file in a recipes directory is loaded as a recipe, except hidden files and `manifest.json` (an installed set's metadata), so any other JSON file there (for example a `webveil.json`, via `"recipes": ["."]`) fails every search with a recipe error naming that file. Try a recipe on its own with `npx searchcast query --recipe ~/.config/webveil/recipes/web.json "hello world"`.
 
 4. **Select the backend** in the global config, `~/.config/webveil/config.json`:
 
@@ -228,7 +228,7 @@ Point webveil at an installed set with `set:<name>` in `searchcast.recipes` (its
 }
 ```
 
-`set:my-set` is the whole set: every `*.json` file except its `manifest.json` for `recipes`, every `*.js` and `*.mjs` file for `codeRecipes`. `set:my-set/api.mjs` names one file, for a set that also holds helper modules that are not engines. The set is looked up in searchcast's recipes directory, then serpcast's old one (following `XDG_DATA_HOME` in webveil's environment), never in the cwd; a set that is not installed is an error saying how to install it. `codeRecipes` stays a global-config-or-env setting whatever its form (`WEBVEIL_SEARCHCAST_CODE_RECIPES=set:my-set` works too): a project `webveil.json` naming `set:...` there is refused like any other code recipe path. The plain path (`~/.local/share/searchcast/recipes/my-set`) works as well, but ignores `XDG_DATA_HOME`.
+`set:my-set` is the whole set: every `*.json` file except its `manifest.json` and `.source.json` for `recipes`, every `*.js` and `*.mjs` file for `codeRecipes`. `set:my-set/api.mjs` names one file, for a set that also holds helper modules that are not engines. The set is looked up in searchcast's recipes directory, then serpcast's old one (following `XDG_DATA_HOME` in webveil's environment), never in the cwd; a set that is not installed is an error saying how to install it. `codeRecipes` stays a global-config-or-env setting whatever its form (`WEBVEIL_SEARCHCAST_CODE_RECIPES=set:my-set` works too): a project `webveil.json` naming `set:...` there is refused like any other code recipe path. The plain path (`~/.local/share/searchcast/recipes/my-set`) works as well, but ignores `XDG_DATA_HOME`.
 
 #### A browser engine as the fallback (searchcast)
 

@@ -5,3 +5,7 @@ Noticed while building engine-neutral-no-em-dashes: the em dash in the first lin
 ## Update (2026-10-24)
 
 incur 0.7.1 is now published (webveil still pins 0.4.10). Check whether it makes the separator configurable before taking this upstream.
+
+## Update (2026-10-26)
+
+Checked while building `upgrade-incur-0-7`: incur 0.7.1 still hardcodes the separator (`dist/Help.js`, `formatRoot` and `formatCommand`, `` `${title} \u2014 ${description}` ``) and has no option to change it; its changelog from 0.4.11 to 0.7.1 has no entry about it. Still open: it needs an upstream incur change (a separator option, or a colon).

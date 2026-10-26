@@ -39,3 +39,7 @@ The code is fine; the SPEC DOCS now lie. Reconcile so the next reader/task is no
 
 This is a doc-vs-code drift fix, not a code change. Consider a one-line ADR amendment
 rather than a new ADR (the decision is small and follows from the existing dispatcher one).
+
+## Update (2026-10-24)
+
+`CONTEXT.md` still names `socks-proxy-agent` (egress seam and Stack sections) while the code uses `fetch-socks`; a two-line doc fix closes this note.

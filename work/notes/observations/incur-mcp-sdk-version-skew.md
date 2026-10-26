@@ -27,3 +27,7 @@ fixed incur to upgrade to yet, track incur releases.
 
 Filing an issue on the incur repo (see the proposed title/body the maintainer is
 posting). If already reported, add a comment with the `./stdio` subpath detail.
+
+## Update (2026-10-24)
+
+incur 0.7.1 is now published (webveil still pins 0.4.10 plus the direct SDK pin). The revisit condition above may now be met; check whether 0.7.x imports the `./stdio` subpath.

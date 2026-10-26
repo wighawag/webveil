@@ -73,6 +73,33 @@
 //   partition was idle past `sessionIdleMs` (searchcast's default when unset),
 //   the cached instance (and its browser) is closed first, then the profile
 //   deleted, so a long-lived MCP server is covered too, not only the CLI.
+//   (Since task profile-expiry-under-partition-lock this runs under the
+//   partition lock and only for the profile's owner: below.)
+//
+// Recorded decisions (task profile-expiry-under-partition-lock; the claim,
+// its marker and its liveness check: state.ts):
+// - Each search with a persistent profile first claims it (`useProfile`, one
+//   step under the partition lock). The process whose cached instance owns it
+//   keeps it until `closeSearchcastInstances` releases it, so a long-lived MCP
+//   server or pi extension owns its identity's profile while it runs.
+// - When another live process owns it, the search does NOT fail with
+//   Chromium's profile-lock error: this process builds (and caches) an
+//   instance WITHOUT `profile`, i.e. searchcast's temporary profile, which is
+//   per instance, so per identity and per process, and deleted on close; a
+//   fallback profile is never shared across identities (docs/adr/0004). The
+//   cached fallback is replaced by a persistent instance at the first search
+//   that finds the profile free again. Alternatives considered: failing loud
+//   (a second CLI call next to an MCP server would always fail, the very case
+//   the observation reported), or waiting for the owner (an MCP server never
+//   lets go).
+// - The fallback is said through the caller's warning sink (`onWarning`, now
+//   also on the backend's `SearchOptions`, handed by core `search()`), default
+//   stderr once per process: `PROFILE_BUSY_NOTE`, the same text every time, so
+//   each sink shows it once. Routed through `onWarning` rather than written to
+//   stderr directly because pi-webveil's sink keeps it out of pi's terminal UI
+//   (pi-webveil's `warningSink`); it then appears once in a tool result.
+// - The idle clock is touched by a fallback search too (the partition was
+//   used), as before for every search of the identity.
 //
 // Recorded decisions (task refuse-proxy-overriding-chrome-args):
 // - `chromeArgs` that would take the browser off `egress` are refused in
@@ -330,16 +357,17 @@ import {
 	reportDeprecations,
 } from '../spellings.js';
 import {
+	claimProfile,
 	clearState,
 	createStateStore,
-	deleteProfile,
-	isProfileIdle,
 	partitionDir,
 	profileDir,
+	releaseProfile,
 	stateRoot,
-	touchProfile,
 } from '../state.js';
+import type {LockTiming} from '../state.js';
 import {checkSearchcastTunables} from '../tunables.js';
+import {warnOnce} from '../spellings.js';
 import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
 import type {Backend, SearchResult} from './types.js';
 
@@ -384,6 +412,17 @@ const EGRESS_SWITCHES = new Set([
 	'host-rules',
 ]);
 const instances = new Map<string, Searchcast>();
+/** Identity keys whose cached instance owns the persistent profile (state.ts claim). */
+const owners = new Map<string, {partition: string; lock: LockTiming}>();
+/** Identity keys whose cached instance is a temporary-profile fallback. */
+const fallbacks = new Set<string>();
+
+/** What a search says when the persistent profile is another process's. */
+export const PROFILE_BUSY_NOTE =
+	'searchcast: the persistent browser profile of this identity ' +
+	'(searchcast.browser.persistProfile) is in use by another webveil ' +
+	'process, so this process uses a temporary browser profile instead ' +
+	'until that process ends';
 
 /** The package's `recipes/` directory (three levels above both `src/core/backends/` and `dist/core/backends/`). */
 const bundled = (file: string) =>
@@ -842,8 +881,14 @@ export async function clearSearchcastState(
 /** Close every cached instance (process shutdown; see registry closeBackends). */
 export async function closeSearchcastInstances(): Promise<void> {
 	const all = [...instances.values()];
+	const claims = [...owners.values()];
 	instances.clear();
+	owners.clear();
+	fallbacks.clear();
 	await Promise.allSettled(all.map((instance) => instance.close()));
+	await Promise.allSettled(
+		claims.map((c) => releaseProfile(c.partition, c.lock)),
+	);
 }
 
 /**
@@ -922,24 +967,48 @@ async function libraryOptions(
 	};
 }
 
+/** Drop the cached instance of `key` and close it (its browser). */
+async function dropInstance(key: string): Promise<void> {
+	const stale = instances.get(key);
+	instances.delete(key);
+	owners.delete(key);
+	fallbacks.delete(key);
+	await stale?.close();
+}
+
 /**
- * Before a persistent profile is used: if the partition was idle past the
- * session idle time, close the cached instance (its browser) and delete the
- * profile; then mark the partition used.
+ * Before a persistent profile is used, claim it under the partition lock
+ * (state.ts `claimProfile`: idle check, delete and touch in one step). Owned:
+ * a cached fallback instance is replaced, and an idle profile is deleted
+ * after this process's own browser on it is closed. Busy (another live
+ * process owns it): this search uses a temporary profile, said once. Returns
+ * whether the profile is this process's.
  */
-async function expireProfile(
+async function useProfile(
 	key: string,
 	partition: string,
 	s: SearchcastConfig,
-): Promise<void> {
-	const idleMs = num(s.sessionIdleMs) ?? DEFAULT_SESSION_IDLE_MS;
-	if (await isProfileIdle(partition, idleMs)) {
-		const stale = instances.get(key);
-		instances.delete(key);
-		await stale?.close();
-		await deleteProfile(partition);
+	warn: (message: string) => void,
+): Promise<boolean> {
+	const lock = {staleMs: s.state?.lockStaleMs, waitMs: s.state?.lockWaitMs};
+	const claim = await claimProfile(partition, {
+		idleMs: num(s.sessionIdleMs) ?? DEFAULT_SESSION_IDLE_MS,
+		lock,
+		beforeDelete: async () => {
+			if (owners.has(key)) await dropInstance(key);
+		},
+	});
+	if (claim === 'busy') {
+		if (!fallbacks.has(key)) {
+			await dropInstance(key);
+			fallbacks.add(key);
+		}
+		warn(PROFILE_BUSY_NOTE);
+		return false;
 	}
-	await touchProfile(partition);
+	if (fallbacks.has(key)) await dropInstance(key);
+	owners.set(key, {partition, lock});
+	return true;
 }
 
 /** Build the backend; everything (trust, recipes, instance) happens per search. */
@@ -955,8 +1024,10 @@ export function createSearchcastBackend(
 			const engines = chain(s, await loadEngines(s));
 			const key = searchcastIdentityKey(config, s);
 			const partition = partitionDir(key);
-			const persist = mode === 'library' && !!s.browser?.persistProfile;
-			if (persist) await expireProfile(key, partition, s);
+			const persist =
+				mode === 'library' &&
+				!!s.browser?.persistProfile &&
+				(await useProfile(key, partition, s, options.onWarning ?? warnOnce));
 			let instance = instances.get(key);
 			if (!instance) {
 				const browser =

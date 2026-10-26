@@ -68,6 +68,34 @@
 //   mtime, rejected because Chromium rewrites files inside it without
 //   necessarily touching the directory entry, so it is no use-clock.
 //
+// Recorded decisions (task profile-expiry-under-partition-lock; the backend
+// side: backends/searchcast.ts):
+// - A persistent profile has an OWNER: the process whose cached searchcast
+//   instance was built on it. `<partition>/browser-profile.owner` holds that
+//   process's pid; `claimProfile` takes it and `releaseProfile` (on
+//   `closeSearchcastInstances`) drops it. A marker whose pid is not alive (a
+//   crashed or killed owner) counts as no owner. Alternative considered:
+//   Chromium's own `SingletonLock` (`<host>-<pid>` symlink), rejected because
+//   the browser starts lazily, at the first browser search, so it is absent
+//   while an instance already points at the profile, and its format is
+//   Chromium's, not a contract. The claim is therefore conservative: it lasts
+//   as long as the instance is cached, browser started or not.
+// - `claimProfile` is ONE step under the partition lock (`withLock`): read the
+//   owner, check idleness, close the own browser and delete the profile if
+//   idle, take ownership, touch the idle clock. So two processes cannot both
+//   judge the profile idle, and a profile with a live owner in another process
+//   is never deleted, however long it was idle (its owner deletes it at its
+//   own next search, after closing its browser). The idle clock is still
+//   touched when another process owns the profile: the partition was used.
+// - Liveness is `process.kill(pid, 0)` (EPERM counts as alive). The pid is
+//   compared on this host only; a pid reused by an unrelated process after a
+//   crash keeps the profile "owned" until that process exits: the profile is
+//   then neither used nor deleted (searches fall back to a temporary profile)
+//   and `webveil state clear` still removes it. Alternative considered:
+//   recording the process start time (Linux `/proc` only), rejected as not
+//   portable for a rare, harmless case. A marker holding this process's own
+//   pid is this process's (or a dead one's with the same pid): it is reused.
+//
 // Recorded decisions (task webveil-installs-and-tunables; keys: config.ts
 // `searchcast.state`, rules: tunables.ts):
 // - LOCK_STALE_MS and LOCK_WAIT_MS are the defaults of `searchcast.state.
@@ -366,6 +394,93 @@ export async function touchProfile(
 	const marker = join(partition, PROFILE_USED);
 	await writeFile(marker, '', {mode: 0o600});
 	await utimes(marker, now / 1000, now / 1000);
+}
+
+const PROFILE_OWNER = 'browser-profile.owner';
+
+/** True when `pid` names a live process (EPERM: alive, another user's). */
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return codeOf(error) === 'EPERM';
+	}
+}
+
+/** The pid of the live process owning the partition's profile, if any. */
+async function profileOwner(partition: string): Promise<number | undefined> {
+	const text = await readFile(join(partition, PROFILE_OWNER), 'utf8').catch(
+		() => '',
+	);
+	const pid = Number(text.trim());
+	if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+	return pid === process.pid || alive(pid) ? pid : undefined;
+}
+
+export interface ClaimProfileOptions {
+	/** The partition's idle time past which the profile is deleted. */
+	idleMs: number;
+	/** The clock, in ms since the epoch. */
+	now?: number;
+	/** The partition lock's timing. */
+	lock?: LockTiming;
+	/**
+	 * Awaited under the lock just before an idle profile is deleted: close this
+	 * process's browser on it, if any.
+	 */
+	beforeDelete?: () => Promise<void>;
+}
+
+/**
+ * Take the partition's browser profile for this process, as one step under
+ * the partition lock (see the decisions above): `busy` (nothing deleted) when
+ * a live browser owner in another process holds it, else `owned`, the profile
+ * deleted first if the partition was idle past `idleMs`. The idle clock is
+ * touched either way.
+ */
+export async function claimProfile(
+	partition: string,
+	{idleMs, now = Date.now(), lock, beforeDelete}: ClaimProfileOptions,
+): Promise<'owned' | 'busy'> {
+	return withLock(
+		partition,
+		async () => {
+			const owner = await profileOwner(partition);
+			let claim: 'owned' | 'busy' = 'busy';
+			if (owner === undefined || owner === process.pid) {
+				if (await isProfileIdle(partition, idleMs, now)) {
+					await beforeDelete?.();
+					await deleteProfile(partition);
+				}
+				await writeFile(join(partition, PROFILE_OWNER), `${process.pid}\n`, {
+					mode: 0o600,
+				});
+				claim = 'owned';
+			}
+			await touchProfile(partition, now);
+			return claim;
+		},
+		{},
+		lock,
+	);
+}
+
+/** Drop this process's claim on the partition's profile (another's is kept). */
+export async function releaseProfile(
+	partition: string,
+	lock?: LockTiming,
+): Promise<void> {
+	if (!(await stat(partition).catch(() => undefined))) return;
+	await withLock(
+		partition,
+		async () => {
+			if ((await profileOwner(partition)) === process.pid)
+				await rm(join(partition, PROFILE_OWNER), {force: true});
+		},
+		{},
+		lock,
+	);
 }
 
 /**

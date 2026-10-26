@@ -1,5 +1,25 @@
 # webveil
 
+## 0.16.0
+
+### Minor Changes
+
+- bb97364: webveil now runs on incur 0.7.1 (was 0.4.10). The commands, `--help`, `--llms`, `skills` and `webveil --mcp` work as before.
+
+  - **`--mcp` serves the same tools**: `search`, `fetch` and `state_clear`. incur now defaults to progressive tool discovery (`search_tools`, `get_tool_details`, `call_read_tool`, `call_write_tool`); webveil keeps each command as its own tool, so configured MCP clients need no change.
+  - **No update check.** incur now checks the npm registry for a newer version, once a day, from a detached process, outside the configured egress. webveil turns that off: it makes no request you did not route. incur's new `--update` global flag is listed in `--help`; it runs `npm install --global webveil@latest`, only when you type it.
+  - **No direct `@modelcontextprotocol/server` dependency any more.** incur 0.7 loads the SDK's `./stdio` entry itself and pins the SDK version it needs (`2.0.0-alpha.4`), so the `2.0.0-alpha.2` pin webveil carried to keep `--mcp` working is gone.
+  - The first line of `--help` still separates the name from the description with an em dash: incur writes it and has no option to change it.
+
+### Patch Changes
+
+- b45909a: Require `searchcast` `^0.5.0` and `@searchcast/recipe` `^0.1.1`, whose `loadRecipes` skips an installed recipe set's `manifest.json` and `.source.json`. webveil no longer detects a set itself to skip them: every `searchcast.recipes` directory now loads its `*.json` files except hidden ones and `manifest.json`, as `searchcast serve --recipes <dir>` does, so a set copied anywhere (without `.source.json`) loads too. Installed sets load as before.
+- 1a8cf78: A persistent searchcast browser profile (`searchcast.browser.persistProfile`) is now safe with several webveil processes of the same identity (parallel CLI calls, or the CLI next to a running MCP server or pi extension).
+
+  - **One owner at a time.** The process that searches with the profile first owns it (its pid in `<identity>/browser-profile.owner`) until it closes. Another process of the same identity no longer fails on Chromium's profile lock: it searches with a temporary profile of its own, deleted when it ends, and says so once (on stderr; in pi, as a tool warning).
+  - **No deletion under a running browser.** The idle check, the delete and the use mark now run as one step under the identity's state lock, and a profile owned by another live process is never deleted, however long it was idle. A crashed owner holds nothing: its claim is dropped at the next search.
+  - The default (a temporary profile per process) is unchanged.
+
 ## 0.15.0
 
 ### Minor Changes

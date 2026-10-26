@@ -4,7 +4,8 @@
 // test file (test/setup-state.ts), which also asserts the real one untouched.
 
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {spawn} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
+import type {ChildProcess} from 'node:child_process';
 import {
 	existsSync,
 	mkdirSync,
@@ -20,9 +21,12 @@ import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {
+	claimProfile,
 	clearState,
 	createStateStore,
 	partitionDir,
+	profileDir,
+	releaseProfile,
 	stateRoot,
 	withLock,
 } from '../src/core/state.js';
@@ -303,4 +307,168 @@ describe('clearState', () => {
 	it('is a no-op on a missing root', async () => {
 		expect(await clearState(join(root, 'absent'))).toEqual([]);
 	});
+});
+
+describe('claimProfile: the persistent browser profile under the partition lock', () => {
+	const IDLE = 60_000;
+	let dir: string;
+	let cookie: string;
+	const owner = () => join(dir, 'browser-profile.owner');
+	/** A profile holding a cookie, its partition idle past IDLE. */
+	const idleProfile = () => {
+		mkdirSync(profileDir(dir), {recursive: true});
+		writeFileSync(cookie, 'session');
+		const used = join(dir, 'browser-profile.used');
+		writeFileSync(used, '');
+		const old = (Date.now() - 2 * IDLE) / 1000;
+		utimesSync(used, old, old);
+	};
+	/** The pid of a process that has exited. */
+	const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+
+	beforeEach(() => {
+		dir = partitionDir(A, root);
+		cookie = join(profileDir(dir), 'Cookies');
+	});
+
+	it('takes a free profile: deletes it when idle, records the owner, touches the clock', async () => {
+		idleProfile();
+		let closed = 0;
+		const claim = await claimProfile(dir, {
+			idleMs: IDLE,
+			beforeDelete: async () => void closed++,
+		});
+		expect(claim).toBe('owned');
+		expect(closed).toBe(1);
+		expect(existsSync(cookie)).toBe(false);
+		expect(readFileSync(owner(), 'utf8').trim()).toBe(String(process.pid));
+		expect(mode(owner())).toBe(0o600);
+		const used = statSync(join(dir, 'browser-profile.used')).mtimeMs;
+		expect(Date.now() - used).toBeLessThan(IDLE);
+		expect(readdirSync(dir)).not.toContain('state.lock');
+	});
+
+	it('keeps a recently used profile, and its own claim', async () => {
+		idleProfile();
+		await claimProfile(dir, {idleMs: IDLE});
+		mkdirSync(profileDir(dir), {recursive: true});
+		writeFileSync(cookie, 'again');
+		expect(await claimProfile(dir, {idleMs: IDLE})).toBe('owned');
+		expect(readFileSync(cookie, 'utf8')).toBe('again');
+	});
+
+	it('takes over the claim of a process that is gone (and an unreadable one)', async () => {
+		for (const stale of [String(deadPid()), 'not a pid']) {
+			idleProfile();
+			writeFileSync(owner(), stale);
+			expect(await claimProfile(dir, {idleMs: IDLE})).toBe('owned');
+			expect(existsSync(cookie)).toBe(false);
+		}
+	});
+
+	it('never deletes a profile a live process owns, however idle; still touches the clock', async () => {
+		idleProfile();
+		writeFileSync(owner(), String(process.ppid));
+		let closed = 0;
+		const claim = await claimProfile(dir, {
+			idleMs: IDLE,
+			beforeDelete: async () => void closed++,
+		});
+		expect(claim).toBe('busy');
+		expect(closed).toBe(0);
+		expect(readFileSync(cookie, 'utf8')).toBe('session');
+		expect(readFileSync(owner(), 'utf8')).toBe(String(process.ppid));
+		const used = statSync(join(dir, 'browser-profile.used')).mtimeMs;
+		expect(Date.now() - used).toBeLessThan(IDLE);
+	});
+
+	it('waits for the partition lock before checking, deleting and touching', async () => {
+		idleProfile();
+		let claimed: Promise<string> | undefined;
+		await withLock(dir, async () => {
+			claimed = claimProfile(dir, {idleMs: IDLE});
+			await new Promise((r) => setTimeout(r, 150));
+			expect(existsSync(cookie)).toBe(true);
+			expect(existsSync(owner())).toBe(false);
+		});
+		expect(await claimed).toBe('owned');
+		expect(existsSync(cookie)).toBe(false);
+	});
+
+	it('releases only its own claim', async () => {
+		await claimProfile(dir, {idleMs: IDLE});
+		await releaseProfile(dir);
+		expect(existsSync(owner())).toBe(false);
+		writeFileSync(owner(), String(process.ppid));
+		await releaseProfile(dir);
+		expect(readFileSync(owner(), 'utf8')).toBe(String(process.ppid));
+		await releaseProfile(join(root, B)); // no partition: nothing made
+		expect(existsSync(join(root, B))).toBe(false);
+	});
+
+	it('racing processes: exactly one owns it, it is deleted once, the others are busy', async () => {
+		idleProfile();
+		const here = fileURLToPath(new URL('.', import.meta.url));
+		const tsx = join(here, '..', 'node_modules', '.bin', 'tsx');
+		const module = join(here, '..', 'src', 'core', 'state.ts');
+		const log = join(root, 'deletes.log');
+		const script = join(root, 'claimer.mts');
+		writeFileSync(
+			script,
+			`import {appendFileSync} from 'node:fs';
+import {claimProfile} from ${JSON.stringify(module)};
+const claim = await claimProfile(process.argv[2], {
+	idleMs: ${IDLE},
+	beforeDelete: async () => appendFileSync(${JSON.stringify(log)}, 'x\\n'),
+});
+process.stdout.write(claim + '\\n');
+// Stay alive (the owner's browser) until the test closes stdin.
+process.stdin.resume();
+process.stdin.on('end', () => process.exit(0));
+`,
+		);
+		const children: ChildProcess[] = [];
+		try {
+			const claims = await Promise.all(
+				[0, 1, 2, 3].map(
+					() =>
+						new Promise<string>((resolve, reject) => {
+							const child = spawn(tsx, [script, dir], {
+								stdio: ['pipe', 'pipe', 'inherit'],
+							});
+							children.push(child);
+							let out = '';
+							child.stdout!.on('data', (d) => {
+								out += String(d);
+								if (out.includes('\n')) resolve(out.trim());
+							});
+							child.on('error', reject);
+							child.on('exit', (code) =>
+								reject(new Error(`claimer exited ${code}`)),
+							);
+						}),
+				),
+			);
+			expect(claims.sort()).toEqual(['busy', 'busy', 'busy', 'owned']);
+			expect(readFileSync(log, 'utf8')).toBe('x\n');
+			// The owner is alive: this process is busy too, however idle.
+			mkdirSync(profileDir(dir), {recursive: true});
+			writeFileSync(cookie, 'owner session');
+			expect(await claimProfile(dir, {idleMs: 0})).toBe('busy');
+			expect(existsSync(cookie)).toBe(true);
+		} finally {
+			await Promise.all(
+				children.map(
+					(child) =>
+						new Promise((r) => {
+							if (child.exitCode !== null) return r(undefined);
+							child.once('exit', r);
+							child.stdin!.end();
+						}),
+				),
+			);
+		}
+		// Every claimer is gone: the profile is free again.
+		expect(await claimProfile(dir, {idleMs: IDLE})).toBe('owned');
+	}, 60_000);
 });

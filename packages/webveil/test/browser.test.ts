@@ -5,11 +5,13 @@
 // Endpoint mode talks to a fake `searchcast serve` on a Unix socket in a temp
 // dir. Config comes from real files, so trust is exercised as users hit it.
 
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import {spawn} from 'node:child_process';
 import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	utimesSync,
 	writeFileSync,
@@ -28,6 +30,7 @@ import type {
 import {
 	closeSearchcastInstances,
 	createSearchcastBackend,
+	PROFILE_BUSY_NOTE,
 	searchcastIdentityKey,
 } from '../src/core/backends/searchcast.js';
 import type {SearchcastDeps} from '../src/core/backends/searchcast.js';
@@ -36,7 +39,12 @@ import {resolveConfig} from '../src/core/config.js';
 import {EgressError} from '../src/core/egress.js';
 import {search} from '../src/core/search.js';
 import {TrustError} from '../src/core/trust.js';
-import {partitionDir, profileDir, stateRoot} from '../src/core/state.js';
+import {
+	partitionDir,
+	profileDir,
+	stateRoot,
+	withLock,
+} from '../src/core/state.js';
 
 let root: string;
 let globalPath: string;
@@ -652,6 +660,105 @@ describe('searchcast browser profile, per identity', () => {
 		utimesSync(join(partition, 'browser-profile.used'), old, old);
 		await searchWith(fakes().deps);
 		expect(existsSync(cookie)).toBe(false);
+	});
+
+	/** An idle profile holding a cookie, owned by the process `owner`. */
+	function ownedProfile(owner: number) {
+		writeProject({browser: {persistProfile: true}, sessionIdleMs: 60_000});
+		const partition = partitionDir(keyOf());
+		const cookie = join(profileDir(partition), 'Cookies');
+		mkdirSync(dirname(cookie), {recursive: true});
+		writeFileSync(cookie, 'session');
+		writeFileSync(join(partition, 'browser-profile.owner'), String(owner));
+		const used = join(partition, 'browser-profile.used');
+		writeFileSync(used, '');
+		const old = (Date.now() - 120_000) / 1000;
+		utimesSync(used, old, old);
+		return {partition, cookie};
+	}
+
+	it('owned by a live process: never deleted; this one uses a temporary profile, said once on stderr', async () => {
+		const {cookie} = ownedProfile(process.ppid);
+		const fake = fakes();
+		const stderr = vi
+			.spyOn(process.stderr, 'write')
+			.mockImplementation(() => true);
+		try {
+			const first = await searchWith(fake.deps);
+			const second = await searchWith(fake.deps);
+			expect(first.map((r) => r.title)).toEqual(['alpha browser hit']);
+			expect(second).toEqual(first);
+			const said = stderr.mock.calls.map((c) => String(c[0]));
+			expect(said.filter((m) => m.includes(PROFILE_BUSY_NOTE))).toHaveLength(1);
+		} finally {
+			stderr.mockRestore();
+		}
+		expect(readFileSync(cookie, 'utf8')).toBe('session');
+		// One fallback instance, reused, on searchcast's temporary profile.
+		expect(fake.built).toHaveLength(1);
+		expect(fake.built[0]!.searchcast?.profile).toBeUndefined();
+		const temp = fake.browser.browsers[0]!.userDataDir;
+		expect(temp.startsWith(stateRoot())).toBe(false);
+		await closeSearchcastInstances();
+		expect(existsSync(temp)).toBe(false);
+	});
+
+	it("goes to the caller's warning sink when there is one", async () => {
+		ownedProfile(process.ppid);
+		const warnings: string[] = [];
+		await searchWith(fakes().deps, {}, (m) => warnings.push(m));
+		expect(warnings).toEqual([PROFILE_BUSY_NOTE]);
+	});
+
+	it('is taken over (the fallback replaced) once its owner is gone, and released on close', async () => {
+		const other = spawn(process.execPath, [
+			'-e',
+			'setTimeout(() => {}, 60000)',
+		]);
+		try {
+			const {partition, cookie} = ownedProfile(other.pid!);
+			const fake = fakes();
+			await searchWith(fake.deps, {}, () => {});
+			expect(fake.built[0]!.searchcast?.profile).toBeUndefined();
+			expect(existsSync(cookie)).toBe(true);
+
+			await new Promise((r) => {
+				other.once('exit', r);
+				other.kill();
+			});
+			// The fallback search touched the idle clock: idle again first.
+			const old = (Date.now() - 120_000) / 1000;
+			utimesSync(join(partition, 'browser-profile.used'), old, old);
+			await searchWith(fake.deps, {}, () => {});
+			// The fallback instance (and its browser) closed, a persistent one
+			// built; the profile was idle, so it was deleted first.
+			expect(fake.closed).toHaveLength(1);
+			expect(fake.built).toHaveLength(2);
+			expect(fake.built[1]!.searchcast?.profile).toBe(profileDir(partition));
+			expect(existsSync(cookie)).toBe(false);
+			const owner = join(partition, 'browser-profile.owner');
+			expect(readFileSync(owner, 'utf8').trim()).toBe(String(process.pid));
+
+			await closeSearchcastInstances();
+			expect(existsSync(owner)).toBe(false);
+		} finally {
+			other.kill();
+		}
+	});
+
+	it('waits for the partition lock before the idle check and delete', async () => {
+		const {partition, cookie} = ownedProfile(process.pid);
+		const fake = fakes();
+		let searched: Promise<unknown> | undefined;
+		await withLock(partition, async () => {
+			searched = searchWith(fake.deps);
+			await new Promise((r) => setTimeout(r, 150));
+			expect(existsSync(cookie)).toBe(true);
+			expect(fake.built).toHaveLength(0);
+		});
+		await searched;
+		expect(existsSync(cookie)).toBe(false);
+		expect(fake.built[0]!.searchcast?.profile).toBe(profileDir(partition));
 	});
 });
 

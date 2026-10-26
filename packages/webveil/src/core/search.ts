@@ -139,10 +139,14 @@ export async function search(
 			: carryProvenance(config, {...config, baseUrl: transport.baseUrl});
 	const backend = getBackend(backendConfig.backend, backendConfig);
 	// Hand the backend ONLY the proxied helper (no maxResults: dedup happens
-	// here, over the full set, so the clamp below is over UNIQUE results).
+	// here, over the full set, so the clamp below is over UNIQUE results), and
+	// the caller's warning sink for a backend's notices (backends/searchcast.ts).
 	let raw: SearchResult[];
 	try {
-		raw = await backend.search(query, http, {signal: options.signal});
+		raw = await backend.search(query, http, {
+			signal: options.signal,
+			...(options.onWarning && {onWarning: options.onWarning}),
+		});
 	} catch (error) {
 		// A user who relied on the old SearXNG default learns why search now
 		// behaves differently (config.ts). The message is extended in place so

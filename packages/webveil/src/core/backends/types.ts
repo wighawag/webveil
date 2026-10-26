@@ -29,6 +29,12 @@ export interface FetchResult {
 export interface SearchOptions {
 	maxResults?: number;
 	signal?: AbortSignal;
+	/**
+	 * Receives a backend's notices for the caller (the searchcast backend's
+	 * persistent-profile fallback). Default: each printed once per process on
+	 * stderr.
+	 */
+	onWarning?: (message: string) => void;
 }
 
 export interface FetchOptions {

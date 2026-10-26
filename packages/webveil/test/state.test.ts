@@ -294,18 +294,133 @@ describe('clearState', () => {
 	});
 
 	it('removes one identity partition', async () => {
-		expect(await clearState(root, A)).toEqual([A]);
+		expect(await clearState(root, A)).toEqual({cleared: [A], kept: []});
 		expect(readdirSync(root).sort()).toEqual([B, 'not-a-partition']);
-		expect(await clearState(root, A)).toEqual([]);
+		expect(await clearState(root, A)).toEqual({cleared: [], kept: []});
 	});
 
 	it('removes every partition, and only partitions', async () => {
-		expect((await clearState(root)).sort()).toEqual([A, B]);
+		const {cleared, kept} = await clearState(root);
+		expect(cleared.sort()).toEqual([A, B]);
+		expect(kept).toEqual([]);
 		expect(readdirSync(root)).toEqual(['not-a-partition']);
 	});
 
 	it('is a no-op on a missing root', async () => {
-		expect(await clearState(join(root, 'absent'))).toEqual([]);
+		expect(await clearState(join(root, 'absent'))).toEqual({
+			cleared: [],
+			kept: [],
+		});
+	});
+});
+
+describe('clearState: a browser profile another live process owns', () => {
+	const KEPT = [
+		'browser-profile',
+		'browser-profile.owner',
+		'browser-profile.used',
+	];
+	let child: ChildProcess | undefined;
+	/** A real live process that is not this one. */
+	const liveOther = async () => {
+		child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)'], {
+			stdio: 'ignore',
+		});
+		await new Promise((r) => child!.once('spawn', r));
+		return child.pid!;
+	};
+	/** The pid of a process that has exited. */
+	const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+	/** Give the partition of `id` a profile, owner `owner`, a clock, a recipe file. */
+	const withProfile = (id: string, owner?: string) => {
+		const dir = partitionDir(id, root);
+		mkdirSync(profileDir(dir), {recursive: true});
+		writeFileSync(join(profileDir(dir), 'Cookies'), 'session');
+		writeFileSync(join(dir, 'browser-profile.used'), '');
+		if (owner !== undefined)
+			writeFileSync(join(dir, 'browser-profile.owner'), owner);
+		return dir;
+	};
+
+	beforeEach(async () => {
+		// sessions, cooldowns and code-recipe state all live in state.json
+		await createStateStore(partitionDir(A, root)).set('engine/x/session', 1);
+		await createStateStore(partitionDir(A, root)).set('cooldown/x', 2);
+		await createStateStore(partitionDir(A, root)).set('recipe/x/state', 3);
+		await createStateStore(partitionDir(B, root)).set('k', 1);
+	});
+	afterEach(() => {
+		child?.kill('SIGKILL');
+		child = undefined;
+	});
+
+	it('keeps the profile, its owner and clock, removes the rest, and reports the owner', async () => {
+		const pid = await liveOther();
+		const dir = withProfile(A, `${pid}\n`);
+		expect(await clearState(root, A)).toEqual({
+			cleared: [],
+			kept: [{identity: A, pid}],
+		});
+		expect(readdirSync(dir).sort()).toEqual(KEPT);
+		expect(readFileSync(join(profileDir(dir), 'Cookies'), 'utf8')).toBe(
+			'session',
+		);
+		expect(readFileSync(join(dir, 'browser-profile.owner'), 'utf8')).toBe(
+			`${pid}\n`,
+		);
+	});
+
+	it('removes the partition entirely with no owner, a dead one, an unreadable one, or this process', async () => {
+		for (const owner of [
+			undefined,
+			String(deadPid()),
+			'not a pid',
+			String(process.pid),
+		]) {
+			const dir = withProfile(A, owner);
+			expect(await clearState(root, A)).toEqual({cleared: [A], kept: []});
+			expect(existsSync(dir)).toBe(false);
+		}
+	});
+
+	it('force removes everything, owned or not', async () => {
+		const pid = await liveOther();
+		const dir = withProfile(A, String(pid));
+		expect(await clearState(root, A, {force: true})).toEqual({
+			cleared: [A],
+			kept: [],
+		});
+		expect(existsSync(dir)).toBe(false);
+	});
+
+	it('applies the same rule to every partition', async () => {
+		const pid = await liveOther();
+		const dir = withProfile(A, String(pid));
+		withProfile(B);
+		expect(await clearState(root)).toEqual({
+			cleared: [B],
+			kept: [{identity: A, pid}],
+		});
+		expect(readdirSync(root)).toEqual([A]);
+		expect(readdirSync(dir).sort()).toEqual(KEPT);
+		const forced = await clearState(root, undefined, {force: true});
+		expect(forced).toEqual({cleared: [A], kept: []});
+		expect(readdirSync(root)).toEqual([]);
+	});
+
+	it('reads the owner under the partition lock, so it cannot race a claim', async () => {
+		const pid = await liveOther();
+		const dir = withProfile(A);
+		let cleared: ReturnType<typeof clearState> | undefined;
+		await withLock(dir, async () => {
+			cleared = clearState(root, A);
+			await new Promise((r) => setTimeout(r, 150));
+			expect(existsSync(dir)).toBe(true);
+			// a claim landing while the clear waits for the lock
+			writeFileSync(join(dir, 'browser-profile.owner'), String(pid));
+		});
+		expect(await cleared).toEqual({cleared: [], kept: [{identity: A, pid}]});
+		expect(readdirSync(dir).sort()).toEqual(KEPT);
 	});
 });
 

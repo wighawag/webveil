@@ -247,12 +247,69 @@ async function fakeServer(
 
 describe('webveil CLI: state clear command', () => {
 	it('clears the current identity by default and every identity with --all', async () => {
-		const clearState = vi.fn(async () => ['a'.repeat(64)]);
+		const clearState = vi.fn(async () => ({
+			cleared: ['a'.repeat(64)],
+			kept: [],
+		}));
 		const out = await run(createCli({clearState}), ['state', 'clear']);
-		expect(clearState.mock.calls[0]![0]).toEqual({all: undefined});
+		expect(clearState.mock.calls[0]![0]).toEqual({
+			all: undefined,
+			force: undefined,
+		});
 		expect(out).toContain('a'.repeat(64));
+		expect(out).not.toContain('hint');
 		await run(createCli({clearState}), ['state', 'clear', '--all']);
-		expect(clearState.mock.calls[1]![0]).toEqual({all: true});
+		expect(clearState.mock.calls[1]![0]).toEqual({all: true, force: undefined});
+		await run(createCli({clearState}), ['state', 'clear', '--force']);
+		expect(clearState.mock.calls[2]![0]).toEqual({all: undefined, force: true});
+	});
+
+	it('keeps a profile another live process owns, says so, and --force removes it', async () => {
+		const id = 'd'.repeat(64);
+		const dir = partitionDir(id);
+		const owner = spawn(
+			process.execPath,
+			['-e', 'setInterval(() => {}, 1e6)'],
+			{
+				stdio: 'ignore',
+			},
+		);
+		try {
+			await new Promise((r) => owner.once('spawn', r));
+			await createStateStore(dir).set('k', 1);
+			mkdirSync(join(dir, 'browser-profile'));
+			writeFileSync(join(dir, 'browser-profile.owner'), String(owner.pid));
+			const out = await run(createCli(), [
+				'state',
+				'clear',
+				'--all',
+				'--format',
+				'json',
+			]);
+			const data = JSON.parse(out) as {
+				cleared: string[];
+				kept: {identity: string; pid: number}[];
+				hint: string;
+			};
+			expect(data.cleared).toEqual([]);
+			expect(data.kept).toEqual([{identity: id, pid: owner.pid}]);
+			expect(data.hint).toContain(`pid ${owner.pid}`);
+			expect(data.hint).toContain('--force');
+			expect(existsSync(join(dir, 'state.json'))).toBe(false);
+			expect(existsSync(join(dir, 'browser-profile'))).toBe(true);
+			const forced = await run(createCli(), [
+				'state',
+				'clear',
+				'--all',
+				'--force',
+				'--format',
+				'json',
+			]);
+			expect(JSON.parse(forced)).toEqual({cleared: [id], kept: []});
+			expect(existsSync(dir)).toBe(false);
+		} finally {
+			owner.kill('SIGKILL');
+		}
 	});
 
 	it('really removes every partition under XDG_STATE_HOME with --all', async () => {
@@ -335,6 +392,62 @@ describe('webveil CLI: MCP frontend (--mcp)', () => {
 			);
 			expect(backend.requests).toHaveLength(1);
 			expect(backend.requests[0]).toContain('q=webveil+mcp');
+		},
+	);
+});
+
+describe('webveil CLI: state_clear over MCP', () => {
+	let dir: string | undefined;
+	afterEach(() => {
+		if (dir) rmSync(dir, {recursive: true, force: true});
+		dir = undefined;
+	});
+
+	it.skipIf(!existsSync(BIN))(
+		'keeps a profile another live process owns, and the force argument removes it',
+		async () => {
+			dir = mkdtempSync(join(tmpdir(), 'webveil-mcp-clear-'));
+			const env = {...process.env, XDG_STATE_HOME: join(dir, 'state')};
+			const id = 'e'.repeat(64);
+			const partition = partitionDir(id, stateRoot(env));
+			const owner = spawn(
+				process.execPath,
+				['-e', 'setInterval(() => {}, 1e6)'],
+				{stdio: 'ignore'},
+			);
+			try {
+				await new Promise((r) => owner.once('spawn', r));
+				const prepare = () => {
+					mkdirSync(join(partition, 'browser-profile'), {recursive: true});
+					writeFileSync(join(partition, 'state.json'), '{}');
+					writeFileSync(
+						join(partition, 'browser-profile.owner'),
+						String(owner.pid),
+					);
+				};
+				const call = (args: Record<string, unknown>) =>
+					mcpExchange(
+						[
+							{
+								method: 'tools/call',
+								params: {name: 'state_clear', arguments: args},
+							},
+						],
+						{cwd: dir, env},
+					) as Promise<[{isError?: boolean; content?: {text: string}[]}]>;
+				prepare();
+				const [kept] = await call({all: true});
+				expect(kept.isError).not.toBe(true);
+				expect(JSON.stringify(kept.content)).toContain(String(owner.pid));
+				expect(existsSync(join(partition, 'state.json'))).toBe(false);
+				expect(existsSync(join(partition, 'browser-profile'))).toBe(true);
+				prepare();
+				const [forced] = await call({all: true, force: true});
+				expect(forced.isError).not.toBe(true);
+				expect(existsSync(partition)).toBe(false);
+			} finally {
+				owner.kill('SIGKILL');
+			}
 		},
 	);
 });

@@ -483,30 +483,89 @@ export async function releaseProfile(
 	);
 }
 
+/** A partition `clearState` kept in part: its profile's live owner. */
+export interface KeptProfile {
+	/** The identity key of the partition. */
+	identity: string;
+	/** The pid of the other live process owning its browser profile. */
+	pid: number;
+}
+
+/** What `clearState` did. */
+export interface ClearStateResult {
+	/** Identity keys whose partition was removed entirely. */
+	cleared: string[];
+	/** Partitions emptied except a profile another live process owns. */
+	kept: KeptProfile[];
+}
+
+export interface ClearStateOptions {
+	/** Remove a profile another live process owns too. */
+	force?: boolean;
+	/** The partition lock's timing. */
+	lock?: LockTiming;
+}
+
+/** What a partition kept in part keeps: the profile, its owner and clock. */
+const PROFILE_FILES = new Set([PROFILE_DIR, PROFILE_OWNER, PROFILE_USED]);
+
 /**
  * Remove the partition of `identity`, or with none every partition under
- * `root`. Returns the identity keys removed.
+ * `root`, each under its lock.
+ *
+ * Recorded decisions (task state-clear-keeps-owned-profile; human decision
+ * 2026-10-26: keep the owned profile and say so, `force` to override):
+ * - A partition whose browser profile another live process owns (the
+ *   `profileOwner` rule `claimProfile` uses: a dead pid, an unreadable marker
+ *   or this process's own pid do not count) is emptied of everything but
+ *   `browser-profile`, `browser-profile.owner` and `browser-profile.used`,
+ *   and reported under `kept`, NOT `cleared` (it was not removed). The
+ *   owner is read and the files removed in one step under the partition
+ *   lock, so a claim cannot slip in between. Alternatives considered:
+ *   refusing the whole command (rejected by the human decision), and listing
+ *   the partition in both `cleared` and `kept`, rejected because `cleared`
+ *   has always meant "the directory is gone".
+ * - The lock's own entries (`state.lock`, held by this call, and any
+ *   `state.lock.*` of a waiter or a crashed one) are left alone in a kept
+ *   partition: removing a waiter's half-built lock would fail its take.
+ * - `force` removes the whole partition, owned or not, as before this task.
+ * - The return shape changed from the bare identity list to
+ *   `{cleared, kept}` (a 0.x minor: breaking for library callers of this and
+ *   `clearSearchcastState`); the CLI output gains `kept` beside `cleared`.
  */
 export async function clearState(
 	root: string,
 	identity?: string,
-	lock: LockTiming = {},
-): Promise<string[]> {
+	{force = false, lock = {}}: ClearStateOptions = {},
+): Promise<ClearStateResult> {
 	const ids =
 		identity !== undefined
 			? [identity]
 			: (await readdir(root).catch(() => [])).filter((n) => IDENTITY.test(n));
-	const cleared: string[] = [];
+	const result: ClearStateResult = {cleared: [], kept: []};
 	for (const id of ids) {
 		const dir = partitionDir(id, root);
 		if (!(await stat(dir).catch(() => undefined))) continue;
-		await withLock(
+		const owner = await withLock(
 			dir,
-			() => rm(dir, {recursive: true, force: true}),
+			async () => {
+				const pid = force ? undefined : await profileOwner(dir);
+				if (pid === undefined || pid === process.pid) {
+					await rm(dir, {recursive: true, force: true});
+					return undefined;
+				}
+				for (const name of await readdir(dir)) {
+					if (PROFILE_FILES.has(name)) continue;
+					if (name === LOCK_FILE || name.startsWith(`${LOCK_FILE}.`)) continue;
+					await rm(join(dir, name), {recursive: true, force: true});
+				}
+				return pid;
+			},
 			{},
 			lock,
 		);
-		cleared.push(id);
+		if (owner === undefined) result.cleared.push(id);
+		else result.kept.push({identity: id, pid: owner});
 	}
-	return cleared;
+	return result;
 }

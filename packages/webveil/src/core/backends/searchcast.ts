@@ -373,7 +373,7 @@ import {
 	releaseProfile,
 	stateRoot,
 } from '../state.js';
-import type {LockTiming} from '../state.js';
+import type {ClearStateResult, LockTiming} from '../state.js';
 import {checkSearchcastTunables} from '../tunables.js';
 import {warnOnce} from '../spellings.js';
 import {assertTrusted, resolveExecutablePath, sourceOf} from '../trust.js';
@@ -848,17 +848,20 @@ export function searchcastIdentityKey(
 
 /**
  * Clear persisted searchcast state: the partition of the identity resolved from
- * `options` (cwd, env, global config), or with `all` every partition. Returns
- * the identity keys removed.
+ * `options` (cwd, env, global config), or with `all` every partition. A browser
+ * profile another live process owns is kept (and reported under `kept`) unless
+ * `force` (state.ts `clearState`).
  */
 export async function clearSearchcastState(
 	options: ResolveOptions & {
 		all?: boolean;
+		force?: boolean;
 		onWarning?: (message: string) => void;
 	} = {},
-): Promise<string[]> {
+): Promise<ClearStateResult> {
 	const root = stateRoot(options.env ?? process.env, options.homeDir);
-	if (options.all) return clearState(root);
+	const force = options.force;
+	if (options.all) return clearState(root, undefined, {force});
 	let key: string;
 	let s: SearchcastConfig;
 	try {
@@ -873,8 +876,8 @@ export async function clearSearchcastState(
 		);
 	}
 	return clearState(root, key, {
-		staleMs: s.state?.lockStaleMs,
-		waitMs: s.state?.lockWaitMs,
+		force,
+		lock: {staleMs: s.state?.lockStaleMs, waitMs: s.state?.lockWaitMs},
 	});
 }
 

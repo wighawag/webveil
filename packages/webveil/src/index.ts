@@ -117,7 +117,12 @@ export {
 	partitionDir,
 	stateRoot,
 } from './core/state.js';
-export type {StateStoreOptions} from './core/state.js';
+export type {
+	ClearStateOptions,
+	ClearStateResult,
+	KeptProfile,
+	StateStoreOptions,
+} from './core/state.js';
 
 // core search (the framework-agnostic search() both frontends call)
 export {search} from './core/search.js';

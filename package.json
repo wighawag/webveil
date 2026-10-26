@@ -18,6 +18,8 @@
     "---------------------- FORMAT ----------------------": "",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "loc": "node scripts/loc-table.mjs",
+    "loc:check": "node scripts/loc-table.mjs --check",
     "---------------------- DEV ----------------------": "",
     "dev": "ldenv pnpm --filter './packages/*' dev",
     "build": "ldenv pnpm --filter './packages/*' build",

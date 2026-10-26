@@ -26,3 +26,12 @@ The README "Size discipline" table drifts because each task only updates the row
 Origin: observation `readme-loc-table-stale-rows` (delete it once resolved). The README's LOC definition must stay what its header says; if rows currently mix metrics (lines vs non-blank lines), pick the header's definition and record it. The searchcast repo gets the same kind of script in its own task; you may reuse the idea but not a shared dependency.
 
 FIRST, check this task against current reality (launch snapshot; may have drifted). RECORD non-obvious in-scope decisions.
+
+## Decisions
+
+These are recorded in the comment at the top of `scripts/loc-table.mjs`:
+1. **LOC means the plain line count**, like `wc -l`, with blank and comment lines included. That's what the README header says. I rejected counting only non-blank lines because it would quietly change what the header means.
+2. **The gate runs through the test suite**, the same way `scripts/text-rules.mjs` does, so `dorfl.json` and the CI workflow are untouched. The alternative was adding `pnpm loc:check` to the verify command, but that would be a second definition of the gate to keep in sync.
+3. **A "source file" is any file under `packages/*/src`**, whatever its extension. A package with source files but no README table is an error, because the heading and table are written by hand.
+4. **A row whose file is gone fails in both modes** rather than being removed automatically, since its label and target may belong to a file that was renamed.
+5. **Tables are re-aligned the way prettier aligns them.** This is only cosmetic: `*.md` is excluded from prettier in this repo.

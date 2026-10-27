@@ -13,27 +13,3 @@ allowBuilds:
   '@parcel/watcher': true
   esbuild: true
   koffi: false
-# searchcast 0.2 and its packages (serpcast renamed, task
-# move-to-searchcast-packages) were published on 2026-09-30, inside the
-# release-age window: pinned exact versions, as was done for serpcast.
-# searchcast 0.3.0 (code recipes' author headers, task
-# marginalia-key-via-header) was published the same day.
-# searchcast 0.4.0 (ipfs:// recipe sets, task install-recipes-from-ipfs) was
-# published 2026-10-01, inside the window too.
-# searchcast 0.4.2 (IPFS install suggestions as data, task
-# ipfs-install-suggestions) was published 2026-10-01 as well.
-# searchcast 0.5.0 and @searchcast/recipe 0.1.1 (`loadRecipes` skips a set's
-# metadata, task drop-recipe-metadata-workaround) were published 2026-10-26.
-minimumReleaseAgeExclude:
-  - searchcast@0.2.0
-  - searchcast@0.3.0
-  - searchcast@0.4.0
-  - searchcast@0.4.2
-  - searchcast@0.5.0
-  - '@searchcast/recipe@0.1.0'
-  - '@searchcast/recipe@0.1.1'
-  - '@searchcast/libcurl-linux-x64@0.1.0'
-  - '@searchcast/libcurl-linux-arm64@0.1.0'
-  - '@searchcast/libcurl-darwin-x64@0.1.0'
-  - '@searchcast/libcurl-darwin-arm64@0.1.0'
-  - '@searchcast/libcurl-win32-x64@0.1.0'
